@@ -3,6 +3,7 @@ import { useUI } from '../store/ui';
 
 const ACTIONS = [
   { id: 'tab:chat', label: 'Go to: Chat / Run' },
+  { id: 'tab:cli', label: 'Go to: CLI Console' },
   { id: 'tab:history', label: 'Go to: History' },
   { id: 'tab:settings', label: 'Go to: Settings' },
   { id: 'tab:upgrades', label: 'Go to: OpenClaw Upgrades' },

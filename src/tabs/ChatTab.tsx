@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useSettings } from '../store/ui';
 import { splitThinking } from '../lib/thinking';
+import { newMetrics, recordDelta, finalize, view, formatView, MetricsSnapshot } from '../lib/metrics';
 import ImageUploader from '../components/ImageUploader';
 
 type Msg = { role: 'user' | 'assistant'; content: string; images?: string[]; thinking?: string };
@@ -16,6 +17,8 @@ export default function ChatTab() {
   const [busy, setBusy] = useState(false);
   const [liveThinking, setLiveThinking] = useState('');
   const [liveContent, setLiveContent] = useState('');
+  const [metrics, setMetrics] = useState<MetricsSnapshot | null>(null);
+  const metricsRef = useRef<MetricsSnapshot | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -24,7 +27,14 @@ export default function ChatTab() {
 
   useEffect(() => {
     const off = window.api.ollama.onChunk((c: any) => {
-      if (c.delta) setLiveContent(prev => prev + c.delta);
+      if (c.delta) {
+        setLiveContent(prev => prev + c.delta);
+        if (metricsRef.current) {
+          const next = recordDelta(metricsRef.current, c.delta);
+          metricsRef.current = next;
+          setMetrics(next);
+        }
+      }
       if (c.thinking) setLiveThinking(prev => prev + c.thinking);
     });
     return off;
@@ -35,6 +45,9 @@ export default function ChatTab() {
   async function send() {
     if (!input.trim() && images.length === 0) return;
     setBusy(true); setLiveContent(''); setLiveThinking('');
+    const m0 = newMetrics();
+    metricsRef.current = m0;
+    setMetrics(m0);
     const userMsg: Msg = { role: 'user', content: input, images };
     const next = [...msgs, userMsg];
     setMsgs(next);
@@ -62,7 +75,7 @@ export default function ChatTab() {
           apiKey: s.openaiCompatKey,
           model: backend === 'vision' ? s.visionModel : model,
           messages,
-          stream: false
+          stream: true
         });
         response = r.content;
       } else if (backend === 'chat') {
@@ -70,19 +83,23 @@ export default function ChatTab() {
           baseUrl: s.ollamaUrl,
           model,
           messages: next.map(m => ({ role: m.role, content: m.content })),
-          stream: false
+          stream: true
         });
         response = r.content;
         thinking = r.thinking || '';
       } else {
-        response = `(${backend} CLI mode not wired here — use the Runner via the palette. Args: see Settings.)`;
+        response = `(${backend} CLI mode: open the CLI Console tab to start a session.)`;
       }
       const parsed = splitThinking(response);
       const asst: Msg = { role: 'assistant', content: parsed.visible || response, thinking: thinking || parsed.thinking };
       setMsgs(m => [...m, asst]);
+      const finalMetrics = finalize(metricsRef.current ?? m0);
+      metricsRef.current = finalMetrics;
+      setMetrics(finalMetrics);
       await window.api.history.add({
         backend, model, prompt: userMsg.content, response: asst.content,
-        thinking: asst.thinking, meta: { images: images.length }
+        thinking: asst.thinking,
+        meta: { images: images.length, metrics: view(finalMetrics) }
       });
     } catch (e: any) {
       setMsgs(m => [...m, { role: 'assistant', content: `Error: ${e.message}` }]);
@@ -111,6 +128,12 @@ export default function ChatTab() {
         </select>
         {s.showThinking && (liveThinking || msgs.some(m => m.thinking)) && (
           <span className="badge ok">thinking enabled</span>
+        )}
+        <div style={{ flex: 1 }} />
+        {metrics && (
+          <span className="label" title="tokens (whitespace), tokens/sec, time-to-first-token, elapsed">
+            {formatView(view(metrics))}
+          </span>
         )}
       </div>
 

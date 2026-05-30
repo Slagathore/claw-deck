@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { useSettings, useUI } from './store/ui';
 import ChatTab from './tabs/ChatTab';
+import CliConsoleTab from './tabs/CliConsoleTab';
 import HistoryTab from './tabs/HistoryTab';
 import SettingsTab from './tabs/SettingsTab';
 import UpgradesTab from './tabs/UpgradesTab';
@@ -31,6 +32,7 @@ export default function App() {
         <h1>Claw Deck</h1>
         {([
           ['chat', 'Chat / Run'],
+          ['cli', 'CLI Console'],
           ['history', 'History'],
           ['settings', 'Settings'],
           ['upgrades', 'OpenClaw Upgrades'],
@@ -48,6 +50,7 @@ export default function App() {
       </aside>
       <main className="main">
         {tab === 'chat' && <ChatTab />}
+        {tab === 'cli' && <CliConsoleTab />}
         {tab === 'history' && <HistoryTab />}
         {tab === 'settings' && <SettingsTab />}
         {tab === 'upgrades' && <UpgradesTab kind="openclaw" title="OpenClaw Upgrades" />}
