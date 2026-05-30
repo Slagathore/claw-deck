@@ -1,6 +1,7 @@
 import { ipcMain, BrowserWindow } from 'electron';
 import { spawn, ChildProcess } from 'child_process';
 import { randomUUID } from 'crypto';
+import { getActiveMcpEnv } from './mcp';
 
 interface Session { proc: ChildProcess; backend: string; }
 const sessions = new Map<string, Session>();
@@ -15,7 +16,7 @@ export function registerRunnerHandlers(getWindow: () => BrowserWindow | null) {
     const id = randomUUID();
     const proc = spawn(opts.binary, opts.args ?? [], {
       cwd: opts.cwd,
-      env: { ...process.env, ...(opts.env ?? {}) },
+      env: { ...process.env, ...getActiveMcpEnv(), ...(opts.env ?? {}) },
       shell: false
     });
     sessions.set(id, { proc, backend: opts.backend });

@@ -18,6 +18,7 @@ const DEFAULTS = {
   virusTotalApiKey: '',
   yaraRulesPath: '',
   yaraBinary: '',
+  mcpServers: [] as { name: string; command: string; args?: string[]; env?: Record<string, string>; cwd?: string; enabled?: boolean }[],
   quietMode: false,
   airgapped: false
 };

@@ -23,6 +23,16 @@ export default function CliConsoleTab() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const offRef = useRef<null | (() => void)>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const [mcp, setMcp] = useState<{ name: string; status: string; pid?: number; lastError?: string; enabled: boolean }[]>([]);
+
+  async function reloadMcp() {
+    try { setMcp((await window.api.mcp.list()) as any); } catch { /* ignore */ }
+  }
+  useEffect(() => {
+    reloadMcp();
+    const t = setInterval(reloadMcp, 4000);
+    return () => clearInterval(t);
+  }, []);
 
   useEffect(() => {
     offRef.current?.();
@@ -113,6 +123,21 @@ export default function CliConsoleTab() {
         </div>
         <div className="label">
           Using binary: <code>{pickBinary() || '(unset — open Settings)'}</code>
+        </div>
+        <div className="row" style={{ flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+          <span className="label">MCP:</span>
+          {mcp.length === 0 && <span className="label">none configured</span>}
+          {mcp.map(m => (
+            <span key={m.name} className={`badge ${m.status === 'running' ? 'ok' : m.status === 'error' ? 'bad' : ''}`} title={m.lastError || ''}>
+              {m.name}:{m.status}{m.pid ? ` (${m.pid})` : ''}
+            </span>
+          ))}
+          {mcp.some(m => m.status !== 'running' && m.enabled) && (
+            <button onClick={async () => { await window.api.mcp.startAll(); reloadMcp(); }}>Start all</button>
+          )}
+          {mcp.filter(m => m.status === 'running').map(m => (
+            <button key={'stop-' + m.name} onClick={async () => { await window.api.mcp.stop(m.name); reloadMcp(); }}>Stop {m.name}</button>
+          ))}
         </div>
       </div>
 

@@ -9,6 +9,7 @@ import { registerScreenshotHandlers } from './ipc/screenshot';
 import { registerSettingsHandlers } from './ipc/settings';
 import { registerHistoryHandlers } from './ipc/history';
 import { registerPromptHandlers } from './ipc/prompts';
+import { registerMcpHandlers, stopAllMcp } from './ipc/mcp';
 
 const isDev = !app.isPackaged;
 
@@ -47,6 +48,7 @@ app.whenReady().then(async () => {
   registerSecurityHandlers();
   registerScreenshotHandlers(desktopCapturer, screen);
   registerPromptHandlers();
+  registerMcpHandlers();
 
   ipcMain.handle('app:pickPath', async (_e, opts: { properties?: string[] }) => {
     const r = await dialog.showOpenDialog({
@@ -62,5 +64,6 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
+  stopAllMcp();
   if (process.platform !== 'darwin') app.quit();
 });

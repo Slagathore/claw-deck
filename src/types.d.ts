@@ -45,6 +45,12 @@ declare global {
         upsert: (p: { id?: number; name: string; template: string; tags?: string[]; defaults?: Record<string, string> }) => Promise<number>;
         delete: (id: number) => Promise<boolean>;
       };
+      mcp: {
+        list: () => Promise<{ name: string; command: string; args: string[]; enabled: boolean; status: string; pid?: number; startedAt?: number; exitCode?: number | null; lastError?: string }[]>;
+        start: (name: string) => Promise<{ ok: boolean; status?: string; pid?: number; reason?: string }>;
+        stop: (name: string) => Promise<{ ok: boolean }>;
+        startAll: () => Promise<{ name: string; ok: boolean; status?: string; pid?: number; reason?: string }[]>;
+      };
     };
   }
 }

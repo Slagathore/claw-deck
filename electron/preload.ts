@@ -53,5 +53,11 @@ contextBridge.exposeInMainWorld('api', {
     list: () => invoke('prompts:list'),
     upsert: (p: any) => invoke('prompts:upsert', p),
     delete: (id: number) => invoke('prompts:delete', id)
+  },
+  mcp: {
+    list: () => invoke('mcp:list'),
+    start: (name: string) => invoke('mcp:start', name),
+    stop: (name: string) => invoke('mcp:stop', name),
+    startAll: () => invoke('mcp:startAll')
   }
 });

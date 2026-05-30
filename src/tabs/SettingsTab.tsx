@@ -97,6 +97,39 @@ export default function SettingsTab() {
         <input value={draft.yaraBinary ?? ''} onChange={e => set('yaraBinary', e.target.value)} placeholder="yara" />
       </div>
 
+      <div className="card col">
+        <h3 style={{ margin: 0 }}>MCP Servers</h3>
+        <div className="label">Configure Model Context Protocol servers to launch alongside CLI sessions. Running PIDs are passed to OpenClaw / Claude Code via <code>MCP_SERVERS_JSON</code>.</div>
+        {(draft.mcpServers ?? []).map((srv: any, i: number) => (
+          <div key={i} className="row" style={{ gap: 6, alignItems: 'flex-start', borderTop: '1px solid #1c2030', paddingTop: 8 }}>
+            <div className="col" style={{ flex: 1, gap: 4 }}>
+              <input placeholder="name" value={srv.name ?? ''} onChange={e => {
+                const next = [...draft.mcpServers]; next[i] = { ...srv, name: e.target.value }; set('mcpServers', next);
+              }} />
+              <input placeholder="command (e.g. npx)" value={srv.command ?? ''} onChange={e => {
+                const next = [...draft.mcpServers]; next[i] = { ...srv, command: e.target.value }; set('mcpServers', next);
+              }} />
+              <input placeholder="args (space-separated; quote with double quotes)"
+                value={Array.isArray(srv.args) ? srv.args.join(' ') : ''}
+                onChange={e => {
+                  const args = e.target.value.match(/(?:[^\s"]+|"[^"]*")+/g)?.map(s => s.replace(/^"|"$/g, '')) ?? [];
+                  const next = [...draft.mcpServers]; next[i] = { ...srv, args }; set('mcpServers', next);
+                }}
+              />
+              <label className="label" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <input type="checkbox" checked={srv.enabled !== false} onChange={e => {
+                  const next = [...draft.mcpServers]; next[i] = { ...srv, enabled: e.target.checked }; set('mcpServers', next);
+                }} /> enabled
+              </label>
+            </div>
+            <button onClick={() => {
+              const next = [...draft.mcpServers]; next.splice(i, 1); set('mcpServers', next);
+            }}>×</button>
+          </div>
+        ))}
+        <button onClick={() => set('mcpServers', [...(draft.mcpServers ?? []), { name: '', command: '', args: [], enabled: true }])}>+ Add MCP server</button>
+      </div>
+
       <div className="row">
         <button className="primary" onClick={() => save(draft)}>Save</button>
         <button onClick={() => setDraft(data)}>Revert</button>
