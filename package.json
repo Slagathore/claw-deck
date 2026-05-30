@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "Desktop GUI for OpenClaw + Claude Code over Ollama, with vision, screenshots, secure upgrades, and history.",
   "main": "dist-electron/main.js",
+  "bin": {
+    "claw-deck": "bin/claw-deck.js"
+  },
   "scripts": {
     "dev": "concurrently -k \"vite\" \"npm:dev:electron\"",
     "dev:electron": "wait-on tcp:5173 && tsc -p electron/tsconfig.json && electron .",
