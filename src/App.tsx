@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useSettings, useUI } from './store/ui';
 import ChatTab from './tabs/ChatTab';
 import CliConsoleTab from './tabs/CliConsoleTab';
@@ -10,12 +10,34 @@ import UpgradesTab from './tabs/UpgradesTab';
 import SelfUpgradeTab from './tabs/SelfUpgradeTab';
 import SecurityTab from './tabs/SecurityTab';
 import CommandPalette from './components/CommandPalette';
+import StatusBar from './components/StatusBar';
+import OnboardingWizard, { shouldShowOnboarding } from './components/OnboardingWizard';
+
+type TabDef = readonly [key: string, icon: string, label: string, hint: string];
+
+const TABS: readonly TabDef[] = [
+  ['chat',     '💬', 'Chat',           'Talk to your local LLM. Auto-routes to chat / vision / reasoning. Streaming + tokens/sec.'],
+  ['cli',      '🐚', 'Run a CLI',      'Spawn OpenClaw or Claude Code as a subprocess with live stdout streaming.'],
+  ['terminal', '⌨️', 'Terminal',       'General-purpose shell — PowerShell / cmd / Git Bash / WSL / custom. Supports UAC elevation.'],
+  ['history',  '📜', 'History',        'Searchable log of every chat turn. Click ↳ to branch a prior prompt back into Chat.'],
+  ['prompts',  '📋', 'Prompts',        'Reusable prompt templates with {{variable}} substitution.'],
+  ['settings', '⚙️', 'Settings',       'Configure Ollama URL, models, CLI paths, signing keys, MCP servers.'],
+  ['upgrades', '⬆️', 'OpenClaw',       'Install/update OpenClaw through the hardened gate (allowlist → hash → signature → AV+YARA → VirusTotal).'],
+  ['self',     '🔄', 'Update Claw Deck','Check for Claw Deck updates from your configured GitHub release feed.'],
+  ['security', '🛡️', 'Security',       'Append-only, hash-chained ledger of every install / scan decision.']
+] as const;
 
 export default function App() {
   const { tab, setTab, paletteOpen, togglePalette } = useUI();
-  const { load, loaded } = useSettings();
+  const { data: s, load, loaded } = useSettings();
+  const [wizardOpen, setWizardOpen] = useState(false);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (loaded && shouldShowOnboarding()) setWizardOpen(true);
+  }, [loaded]);
+
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
@@ -28,29 +50,35 @@ export default function App() {
 
   if (!loaded) return <div style={{ padding: 30 }}>Loading…</div>;
 
+  // Show a red dot on Settings if Ollama URL or default chat model is empty.
+  const settingsNeedsAttention = !s.ollamaUrl || !s.chatModel;
+
   return (
     <div className="app">
       <aside className="sidebar">
         <h1>Claw Deck</h1>
-        {([
-          ['chat',     'Chat / Run',          'Talk to your local LLM. Auto-routes to chat / vision / reasoning models. Streaming + token/sec meter.'],
-          ['cli',      'CLI Console',         'Spawn OpenClaw or Claude Code as a subprocess with live stdout streaming and per-session tabs.'],
-          ['terminal', 'Terminal',            'General-purpose shell tab — PowerShell / cmd / Git Bash / WSL / custom. Supports elevation.'],
-          ['history',  'History',             'Searchable log of every chat turn. Click ↳ to branch a prior prompt back into Chat.'],
-          ['prompts',  'Prompt Vault',        'Reusable prompt templates with {{variable}} substitution. "Use in Chat" sends the rendered prompt to the Chat tab.'],
-          ['settings', 'Settings',            'Configure Ollama URL, model names, CLI paths, upgrade policy, signing keys, MCP servers, etc.'],
-          ['upgrades', 'OpenClaw Upgrades',   'Install/update OpenClaw releases through the hardened gate (allowlist → hash → signature → AV+YARA → VirusTotal).'],
-          ['self',     'Self-Upgrade',        'Check for Claw Deck updates from your configured GitHub release feed; same gate as above.'],
-          ['security', 'Security & Audit',    'Append-only, hash-chained ledger of every install / scan decision. Tamper-evident.']
-        ] as const).map(([k, label, hint]) => (
-          <button key={k} className={`tab-btn ${tab === k ? 'active' : ''}`} onClick={() => setTab(k)} title={hint}>
-            {label}
+        {TABS.map(([k, ico, label, hint]) => (
+          <button
+            key={k}
+            className={`tab-btn ${tab === k ? 'active' : ''}`}
+            onClick={() => setTab(k as any)}
+            title={hint}
+          >
+            <span className="ico">{ico}</span>
+            <span>{label}</span>
+            {k === 'settings' && settingsNeedsAttention && <span className="dot" title="Required settings are blank" />}
           </button>
         ))}
         <div style={{ flex: 1 }} />
-        <div className="label" style={{ padding: '6px 8px' }}>
-          <span className="kbd">Ctrl</span> + <span className="kbd">K</span> palette
-        </div>
+        <button
+          className="tab-btn"
+          onClick={() => setWizardOpen(true)}
+          title="Re-run the first-launch tour"
+          style={{ fontSize: 12, opacity: .85 }}
+        >
+          <span className="ico">❓</span>
+          <span>Show tour</span>
+        </button>
       </aside>
       <main className="main">
         {tab === 'chat' && <ChatTab />}
@@ -63,7 +91,9 @@ export default function App() {
         {tab === 'self' && <SelfUpgradeTab />}
         {tab === 'security' && <SecurityTab />}
       </main>
+      <StatusBar />
       {paletteOpen && <CommandPalette onClose={togglePalette} />}
+      {wizardOpen && <OnboardingWizard onClose={() => setWizardOpen(false)} />}
     </div>
   );
 }

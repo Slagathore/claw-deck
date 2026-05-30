@@ -16,13 +16,82 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   background: var(--bg); color: var(--text); font-size: 14px;
 }
-.app { display: grid; grid-template-columns: 220px 1fr; height: 100vh; }
-.sidebar { background: var(--panel); border-right: 1px solid var(--border); padding: 14px 10px; display: flex; flex-direction: column; gap: 6px; }
+.app { display: grid; grid-template-columns: 220px 1fr; grid-template-rows: 1fr 26px; height: 100vh; }
+.sidebar { grid-row: 1 / 3; background: var(--panel); border-right: 1px solid var(--border); padding: 14px 10px; display: flex; flex-direction: column; gap: 6px; overflow: auto; }
 .sidebar h1 { font-size: 16px; margin: 4px 8px 14px; letter-spacing: .3px; }
-.tab-btn { background: transparent; color: var(--text); border: 1px solid transparent; border-radius: 8px; padding: 10px 12px; text-align: left; cursor: pointer; font-size: 13px; }
+.tab-btn { position: relative; background: transparent; color: var(--text); border: 1px solid transparent; border-radius: 8px; padding: 10px 12px; text-align: left; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 8px; }
 .tab-btn:hover { background: var(--panel-2); }
 .tab-btn.active { background: var(--panel-2); border-color: var(--border); color: var(--accent); }
-.main { overflow: auto; padding: 18px 22px; }
+.tab-btn .ico { font-size: 14px; width: 16px; text-align: center; opacity: .85; }
+.tab-btn .dot { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); width: 7px; height: 7px; border-radius: 50%; background: var(--bad); box-shadow: 0 0 0 2px var(--panel); }
+.main { overflow: auto; padding: 18px 22px; grid-row: 1; grid-column: 2; }
+
+/* --- Status bar (bottom strip across main column) --- */
+.statusbar {
+  grid-row: 2; grid-column: 2;
+  background: var(--panel); border-top: 1px solid var(--border);
+  display: flex; align-items: center; gap: 14px;
+  padding: 0 14px; font-size: 11px; color: var(--muted);
+  user-select: none; overflow: hidden;
+}
+.statusbar .item { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.statusbar .item.clickable { cursor: pointer; }
+.statusbar .item.clickable:hover { color: var(--text); }
+.statusbar .item .ledge { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+.statusbar .item .ledge.ok { background: var(--good); box-shadow: 0 0 4px var(--good); }
+.statusbar .item .ledge.bad { background: var(--bad); box-shadow: 0 0 4px var(--bad); }
+.statusbar .item .ledge.warn { background: var(--warn); }
+.statusbar .spacer { flex: 1; }
+
+/* --- Inline error banner --- */
+.banner { border-left: 3px solid var(--bad); background: rgba(248,113,113,.08); padding: 10px 12px; border-radius: 6px; display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.banner.warn { border-left-color: var(--warn); background: rgba(251,191,36,.08); }
+.banner.info { border-left-color: var(--accent); background: rgba(124,156,255,.08); }
+.banner a, .banner button.link { color: var(--accent); background: none; border: none; padding: 0; cursor: pointer; text-decoration: underline; font-size: 13px; }
+
+/* --- Quickstart cards (empty Chat state) --- */
+.quickstart { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+.quickstart .qs {
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+  padding: 12px; text-align: left; cursor: pointer; color: var(--text);
+  display: flex; flex-direction: column; gap: 4px;
+}
+.quickstart .qs:hover { border-color: var(--accent); }
+.quickstart .qs .qs-title { font-weight: 600; font-size: 13px; }
+.quickstart .qs .qs-sub { color: var(--muted); font-size: 11px; }
+
+/* --- Send button (bigger primary action) --- */
+.send-btn { padding: 12px 18px !important; font-size: 14px !important; font-weight: 600; min-height: 44px; }
+
+/* --- Slash command menu --- */
+.slash-menu {
+  position: absolute; bottom: 100%; left: 0; margin-bottom: 6px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  padding: 4px; min-width: 280px; z-index: 50; box-shadow: 0 8px 24px rgba(0,0,0,.4);
+}
+.slash-menu .row-item { padding: 8px 10px; border-radius: 6px; cursor: pointer; display: flex; gap: 8px; align-items: baseline; }
+.slash-menu .row-item.sel { background: var(--panel-2); }
+.slash-menu .row-item code { color: var(--accent); }
+.slash-menu .row-item .desc { color: var(--muted); font-size: 11px; }
+
+/* --- Onboarding wizard --- */
+.wizard-backdrop {
+  position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 200;
+  display: flex; align-items: center; justify-content: center;
+}
+.wizard {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  width: 560px; max-width: 90vw; padding: 22px 24px;
+  box-shadow: 0 20px 60px rgba(0,0,0,.6);
+}
+.wizard h2 { margin: 0 0 6px; font-size: 18px; }
+.wizard .step-dots { display: flex; gap: 6px; margin: 8px 0 16px; }
+.wizard .step-dots span { width: 8px; height: 8px; border-radius: 50%; background: var(--border); }
+.wizard .step-dots span.active { background: var(--accent); }
+.wizard .step-dots span.done { background: var(--good); }
+.wizard .wizard-body { min-height: 140px; }
+.wizard .wizard-foot { display: flex; gap: 8px; margin-top: 18px; }
+.wizard .wizard-foot .spacer { flex: 1; }
 .row { display: flex; gap: 10px; align-items: center; }
 .col { display: flex; flex-direction: column; gap: 10px; }
 .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }

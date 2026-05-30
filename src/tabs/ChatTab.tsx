@@ -7,6 +7,16 @@ import { summarizeRunning, RunningModel } from '../lib/vram';
 import ImageUploader from '../components/ImageUploader';
 import RegionSelect from '../components/RegionSelect';
 import WelcomeCard from '../components/WelcomeCard';
+import QuickstartCards from '../components/QuickstartCards';
+import SlashMenu from '../components/SlashMenu';
+
+const PLACEHOLDERS = [
+  'Ask something… (Shift+Enter for newline)',
+  'Try: "Summarize this code: …"',
+  'Try: "/vision describe this screenshot"',
+  'Try: "/reason solve this puzzle: …"',
+  'Tip: paste an image to auto-route to vision'
+];
 
 type Msg = { role: 'user' | 'assistant'; content: string; images?: string[]; thinking?: string };
 
@@ -25,8 +35,11 @@ export default function ChatTab() {
   const [metrics, setMetrics] = useState<MetricsSnapshot | null>(null);
   const [region, setRegion] = useState<string | null>(null);
   const [running, setRunning] = useState<RunningModel[]>([]);
+  const [ollamaError, setOllamaError] = useState<string | null>(null);
+  const [placeholderIdx, setPlaceholderIdx] = useState(0);
   const metricsRef = useRef<MetricsSnapshot | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     const p = consumePending();
@@ -34,8 +47,17 @@ export default function ChatTab() {
   }, [consumePending]);
 
   useEffect(() => {
-    window.api.ollama.listModels(s.ollamaUrl).then(r => setModels(r.models ?? []));
+    window.api.ollama.listModels(s.ollamaUrl)
+      .then(r => { setModels(r.models ?? []); setOllamaError(null); })
+      .catch(e => setOllamaError(e?.message || 'failed to reach Ollama'));
   }, [s.ollamaUrl]);
+
+  // Rotate placeholder hints every 5s while input is empty.
+  useEffect(() => {
+    if (input.length > 0 || msgs.length > 0) return;
+    const t = setInterval(() => setPlaceholderIdx(i => (i + 1) % PLACEHOLDERS.length), 5000);
+    return () => clearInterval(t);
+  }, [input, msgs.length]);
 
   useEffect(() => {
     let cancelled = false;
@@ -199,8 +221,18 @@ export default function ChatTab() {
         )}
       </div>
 
+      {ollamaError && (
+        <div className="banner">
+          <span>Ollama isn't reachable at <code>{s.ollamaUrl}</code> — {ollamaError}</span>
+          <button className="link" onClick={() => useUI.getState().setTab('settings')}>Fix in Settings</button>
+          <button className="link" onClick={() => window.api.ollama.listModels(s.ollamaUrl).then(r => { setModels(r.models ?? []); setOllamaError(null); }).catch(e => setOllamaError(e?.message || 'failed'))}>Retry</button>
+        </div>
+      )}
+
       <div className="card" style={{ flex: 1, overflow: 'auto' }}>
-        {msgs.length === 0 && <div className="label">No messages yet. Type below, attach images, or screenshot.</div>}
+        {msgs.length === 0 && (
+          <QuickstartCards onPick={p => { setInput(p); textareaRef.current?.focus(); }} />
+        )}
         {msgs.map((m, i) => (
           <div key={i}>
             <div className={`msg ${m.role}`}>
@@ -227,17 +259,30 @@ export default function ChatTab() {
       </div>
 
       <ImageUploader value={images} onChange={setImages} />
-      <div className="row">
-        <textarea
-          placeholder="Ask something… (Shift+Enter for newline)"
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
-        />
+      <div className="row" style={{ alignItems: 'stretch' }}>
+        <div style={{ flex: 1, position: 'relative' }}>
+          <SlashMenu
+            query={input}
+            onPick={cmd => {
+              const rest = input.replace(/^\s*\S*/, '');
+              setInput(cmd + (rest.startsWith(' ') ? rest : ' ' + rest.trimStart()));
+              textareaRef.current?.focus();
+            }}
+          />
+          <textarea
+            ref={textareaRef}
+            placeholder={PLACEHOLDERS[placeholderIdx]}
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
+          />
+        </div>
         <div className="col" style={{ width: 180 }}>
-          <button onClick={captureScreen} disabled={busy}>Screenshot</button>
-          <button onClick={captureRegion} disabled={busy}>Region…</button>
-          <button className="primary" onClick={send} disabled={busy}>Send</button>
+          <button onClick={captureScreen} disabled={busy} title="Capture full screen and attach">📷 Screenshot</button>
+          <button onClick={captureRegion} disabled={busy} title="Capture, then drag to select a region">✂️ Region…</button>
+          <button className="primary send-btn" onClick={send} disabled={busy} title="Send (Enter)">
+            {busy ? 'Sending…' : '▶ Send'}
+          </button>
         </div>
       </div>
       {region && (

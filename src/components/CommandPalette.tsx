@@ -2,16 +2,17 @@ import React, { useEffect, useState } from 'react';
 import { useUI } from '../store/ui';
 
 const ACTIONS = [
-  { id: 'tab:chat', label: 'Go to: Chat / Run' },
-  { id: 'tab:cli', label: 'Go to: CLI Console' },
+  { id: 'tab:chat', label: 'Go to: Chat' },
+  { id: 'tab:cli', label: 'Go to: Run a CLI' },
   { id: 'tab:terminal', label: 'Go to: Terminal' },
   { id: 'tab:history', label: 'Go to: History' },
-  { id: 'tab:prompts', label: 'Go to: Prompt Vault' },
+  { id: 'tab:prompts', label: 'Go to: Prompts' },
   { id: 'tab:settings', label: 'Go to: Settings' },
   { id: 'tab:upgrades', label: 'Go to: OpenClaw Upgrades' },
-  { id: 'tab:self', label: 'Go to: Self-Upgrade' },
+  { id: 'tab:self', label: 'Go to: Update Claw Deck' },
   { id: 'tab:security', label: 'Go to: Security & Audit' },
-  { id: 'screenshot', label: 'Capture screenshot' }
+  { id: 'screenshot', label: 'Capture screenshot' },
+  { id: 'onboarding', label: 'Re-run first-launch tour' }
 ];
 
 export default function CommandPalette({ onClose }: { onClose: () => void }) {
@@ -35,6 +36,10 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
     if (!id) return;
     if (id.startsWith('tab:')) setTab(id.slice(4) as any);
     if (id === 'screenshot') await window.api.screenshot.captureScreen();
+    if (id === 'onboarding') {
+      try { localStorage.removeItem('clawdeck:onboarded'); } catch { /* ignore */ }
+      window.location.reload();
+    }
   }
 
   return (
