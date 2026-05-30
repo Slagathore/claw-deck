@@ -40,6 +40,11 @@ declare global {
         captureRegion: () => Promise<{ dataUrl?: string; error?: string }>;
       };
       app: { pickPath: (opts?: any) => Promise<string | null> };
+      prompts: {
+        list: () => Promise<{ id: number; name: string; template: string; tags: string; defaults: string; updated_at: number }[]>;
+        upsert: (p: { id?: number; name: string; template: string; tags?: string[]; defaults?: Record<string, string> }) => Promise<number>;
+        delete: (id: number) => Promise<boolean>;
+      };
     };
   }
 }

@@ -8,6 +8,7 @@ import { registerSecurityHandlers } from './ipc/security';
 import { registerScreenshotHandlers } from './ipc/screenshot';
 import { registerSettingsHandlers } from './ipc/settings';
 import { registerHistoryHandlers } from './ipc/history';
+import { registerPromptHandlers } from './ipc/prompts';
 
 const isDev = !app.isPackaged;
 
@@ -45,6 +46,7 @@ app.whenReady().then(async () => {
   registerUpgradeHandlers();
   registerSecurityHandlers();
   registerScreenshotHandlers(desktopCapturer, screen);
+  registerPromptHandlers();
 
   ipcMain.handle('app:pickPath', async (_e, opts: { properties?: string[] }) => {
     const r = await dialog.showOpenDialog({

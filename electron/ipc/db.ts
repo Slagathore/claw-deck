@@ -48,6 +48,15 @@ export async function initDb() {
       prev_hash TEXT,
       hash TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS prompts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      template TEXT NOT NULL,
+      tags TEXT NOT NULL DEFAULT '[]',
+      defaults TEXT NOT NULL DEFAULT '{}',
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_prompts_name ON prompts(name);
   `);
   // additive migrations — safe to run on every boot
   migrate('upgrades', 'install_path', 'TEXT');

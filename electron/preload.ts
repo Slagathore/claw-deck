@@ -48,5 +48,10 @@ contextBridge.exposeInMainWorld('api', {
   },
   app: {
     pickPath: (opts?: any) => invoke('app:pickPath', opts ?? {})
+  },
+  prompts: {
+    list: () => invoke('prompts:list'),
+    upsert: (p: any) => invoke('prompts:upsert', p),
+    delete: (id: number) => invoke('prompts:delete', id)
   }
 });

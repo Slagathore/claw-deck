@@ -3,6 +3,7 @@ import { useSettings, useUI } from './store/ui';
 import ChatTab from './tabs/ChatTab';
 import CliConsoleTab from './tabs/CliConsoleTab';
 import HistoryTab from './tabs/HistoryTab';
+import PromptVaultTab from './tabs/PromptVaultTab';
 import SettingsTab from './tabs/SettingsTab';
 import UpgradesTab from './tabs/UpgradesTab';
 import SelfUpgradeTab from './tabs/SelfUpgradeTab';
@@ -34,6 +35,7 @@ export default function App() {
           ['chat', 'Chat / Run'],
           ['cli', 'CLI Console'],
           ['history', 'History'],
+          ['prompts', 'Prompt Vault'],
           ['settings', 'Settings'],
           ['upgrades', 'OpenClaw Upgrades'],
           ['self', 'Self-Upgrade'],
@@ -52,6 +54,7 @@ export default function App() {
         {tab === 'chat' && <ChatTab />}
         {tab === 'cli' && <CliConsoleTab />}
         {tab === 'history' && <HistoryTab />}
+        {tab === 'prompts' && <PromptVaultTab />}
         {tab === 'settings' && <SettingsTab />}
         {tab === 'upgrades' && <UpgradesTab kind="openclaw" title="OpenClaw Upgrades" />}
         {tab === 'self' && <SelfUpgradeTab />}
