@@ -22,7 +22,9 @@ declare global {
         ps: (baseUrl?: string) => Promise<{ running: { name: string; size?: number; sizeVram?: number; expiresAt?: number }[]; error?: string }>;
         chat: (req: any) => Promise<{ content: string; thinking?: string; raw?: any }>;
         vision: (req: any) => Promise<{ content: string; raw?: any }>;
+        pull: (opts: { baseUrl?: string; model: string; id: string }) => Promise<{ ok: boolean; error?: string }>;
         onChunk: (cb: (c: any) => void) => () => void;
+        onPullProgress: (cb: (c: { id: string; status?: string; completed?: number; total?: number; error?: string }) => void) => () => void;
       };
       upgrades: {
         check: (kind: 'openclaw' | 'self') => Promise<any>;

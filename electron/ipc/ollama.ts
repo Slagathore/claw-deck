@@ -88,6 +88,47 @@ export function registerOllamaHandlers() {
     }
     return streamReader(r, 'openai');
   });
+
+  // Pull a model from the Ollama registry, streaming { status, completed, total }
+  // chunks back to the renderer on the 'ollama:pull' channel keyed by id.
+  ipcMain.handle('ollama:pull', async (_e, opts: { baseUrl?: string; model: string; id: string }) => {
+    const baseUrl = (opts.baseUrl || 'http://localhost:11434').replace(/\/$/, '');
+    const id = opts.id;
+    try {
+      const r = await fetch(`${baseUrl}/api/pull`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: opts.model, stream: true })
+      });
+      if (!r.ok || !r.body) {
+        broadcast('ollama:pull', { id, status: 'error', error: `HTTP ${r.status}` });
+        return { ok: false, error: `HTTP ${r.status}` };
+      }
+      const reader = r.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop() ?? '';
+        for (const line of lines) {
+          const t = line.trim();
+          if (!t) continue;
+          try {
+            const j: any = JSON.parse(t);
+            broadcast('ollama:pull', { id, ...j });
+          } catch { /* ignore */ }
+        }
+      }
+      broadcast('ollama:pull', { id, status: 'done' });
+      return { ok: true };
+    } catch (e: any) {
+      broadcast('ollama:pull', { id, status: 'error', error: e.message });
+      return { ok: false, error: e.message };
+    }
+  });
 }
 
 async function streamReader(r: Response, mode: 'native' | 'openai') {

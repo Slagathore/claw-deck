@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-type Tab = 'chat' | 'cli' | 'terminal' | 'history' | 'prompts' | 'settings' | 'upgrades' | 'self' | 'security';
+type Tab = 'chat' | 'assistant' | 'library' | 'cli' | 'terminal' | 'history' | 'prompts' | 'settings' | 'upgrades' | 'self' | 'security';
 
 interface UIState {
   tab: Tab;

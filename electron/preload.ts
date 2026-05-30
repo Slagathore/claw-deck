@@ -29,7 +29,9 @@ contextBridge.exposeInMainWorld('api', {
     ps: (baseUrl?: string) => invoke('ollama:ps', baseUrl),
     chat: (req: any) => invoke('ollama:chat', req),
     vision: (req: any) => invoke('ollama:vision', req),
-    onChunk: (cb: (c: any) => void) => on('ollama:chunk', cb)
+    pull: (opts: { baseUrl?: string; model: string; id: string }) => invoke('ollama:pull', opts),
+    onChunk: (cb: (c: any) => void) => on('ollama:chunk', cb),
+    onPullProgress: (cb: (c: any) => void) => on('ollama:pull', cb)
   },
   upgrades: {
     check: (kind: 'openclaw' | 'self') => invoke('upgrades:check', kind),

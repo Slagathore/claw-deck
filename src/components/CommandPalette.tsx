@@ -3,6 +3,8 @@ import { useUI } from '../store/ui';
 
 const ACTIONS = [
   { id: 'tab:chat', label: 'Go to: Chat' },
+  { id: 'tab:assistant', label: 'Go to: Assistant (plan & execute)' },
+  { id: 'tab:library', label: 'Go to: Library (models / MCP / tools)' },
   { id: 'tab:cli', label: 'Go to: Run a CLI' },
   { id: 'tab:terminal', label: 'Go to: Terminal' },
   { id: 'tab:history', label: 'Go to: History' },
