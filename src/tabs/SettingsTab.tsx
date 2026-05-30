@@ -57,6 +57,24 @@ export default function SettingsTab() {
         <label><input type="checkbox" checked={draft.policy?.autoScan !== false} onChange={e => set('policy', { ...(draft.policy ?? {}), autoScan: e.target.checked })} /> Auto-scan downloads</label>
       </div>
 
+      <div className="card col">
+        <h3 style={{ margin: 0 }}>Upgrade Feeds</h3>
+        <label className="label">OpenClaw release feeds (GitHub <code>owner/repo</code>, comma-separated)</label>
+        <input
+          value={(draft.feeds?.openclaw ?? []).join(', ')}
+          onChange={e => set('feeds', { ...(draft.feeds ?? {}), openclaw: e.target.value.split(',').map((x: string) => x.trim()).filter(Boolean) })}
+        />
+        <label className="label">Self-upgrade feeds (Claw Deck itself)</label>
+        <input
+          value={(draft.feeds?.self ?? []).join(', ')}
+          onChange={e => set('feeds', { ...(draft.feeds ?? {}), self: e.target.value.split(',').map((x: string) => x.trim()).filter(Boolean) })}
+        />
+        <label className="label">GitHub token (optional; raises API rate limit)</label>
+        <input type="password" value={draft.githubToken ?? ''} onChange={e => set('githubToken', e.target.value)} />
+        <label className="label">VirusTotal API key (optional; enables hash reputation lookup)</label>
+        <input type="password" value={draft.virusTotalApiKey ?? ''} onChange={e => set('virusTotalApiKey', e.target.value)} />
+      </div>
+
       <div className="row">
         <button className="primary" onClick={() => save(draft)}>Save</button>
         <button onClick={() => setDraft(data)}>Revert</button>

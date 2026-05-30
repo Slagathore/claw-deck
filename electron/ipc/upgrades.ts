@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { getDb } from './db';
 import { isHostAllowed, scanFile, sha256OfFile, appendAudit, quarantineDir } from './security';
+import { fetchSources, FeedSource } from './feeds';
 
 interface UpgradeManifest {
   kind: 'openclaw' | 'self';
@@ -28,12 +29,32 @@ export function registerUpgradeHandlers() {
   });
 
   ipcMain.handle('upgrades:check', async (_e, kind: 'openclaw' | 'self') => {
-    // Real implementation would call the upstream release feed. We expose a stub
-    // shape so the UI can render & the user can paste a manifest to install.
+    const settings = await fetchSettings();
+    if (settings.airgapped) {
+      return {
+        kind,
+        candidates: [],
+        note: 'Air-gapped mode is enabled — no remote feeds polled.'
+      };
+    }
+    const feeds: Record<string, string[] | undefined> = settings.feeds ?? {};
+    const repos: string[] = (feeds[kind] ?? []).filter(Boolean);
+    if (repos.length === 0) {
+      return {
+        kind,
+        candidates: [],
+        note: `No release feeds configured for "${kind}". Add GitHub repos in Settings → Upgrade Feeds.`
+      };
+    }
+    const sources: FeedSource[] = repos.map(repo => ({ repo }));
+    const candidates = await fetchSources(sources, { githubToken: settings.githubToken, timeoutMs: 8000 });
+    appendAudit('upgrade:checked', { kind, repos, found: candidates.length });
     return {
       kind,
-      candidates: [] as UpgradeManifest[],
-      note: 'Paste a manifest in the install dialog. Allowlisted hosts are checked first.'
+      candidates,
+      note: candidates.length === 0
+        ? 'No releases found (or all requests failed). Check the repo names and network.'
+        : `Found ${candidates.length} release(s).`
     };
   });
 
