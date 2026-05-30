@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useSettings, useUI } from '../store/ui';
 import { splitThinking } from '../lib/thinking';
 import { newMetrics, recordDelta, finalize, view, formatView, MetricsSnapshot } from '../lib/metrics';
+import { routeRequest } from '../lib/router';
 import ImageUploader from '../components/ImageUploader';
 import RegionSelect from '../components/RegionSelect';
 
@@ -10,7 +11,7 @@ type Msg = { role: 'user' | 'assistant'; content: string; images?: string[]; thi
 export default function ChatTab() {
   const { data: s } = useSettings();
   const consumePending = useUI(state => state.consumePending);
-  const [backend, setBackend] = useState<'chat' | 'vision' | 'openclaw' | 'claude'>('chat');
+  const [backend, setBackend] = useState<'auto' | 'chat' | 'vision' | 'openclaw' | 'claude'>('auto');
   const [model, setModel] = useState<string>(s.chatModel || 'llama3.2');
   const [models, setModels] = useState<string[]>([]);
   const [input, setInput] = useState('');
@@ -56,7 +57,27 @@ export default function ChatTab() {
     const m0 = newMetrics();
     metricsRef.current = m0;
     setMetrics(m0);
-    const userMsg: Msg = { role: 'user', content: input, images };
+
+    // Route if backend === 'auto'
+    let resolvedBackend: 'chat' | 'vision' | 'openclaw' | 'claude';
+    let resolvedModel: string;
+    let cleanedPrompt = input;
+    let routeReason: string | undefined;
+    if (backend === 'auto') {
+      const routed = routeRequest({
+        prompt: input, imageCount: images.length,
+        settings: { chatModel: s.chatModel, reasoningModel: s.reasoningModel, visionModel: s.visionModel }
+      });
+      cleanedPrompt = routed.cleanedPrompt;
+      routeReason = routed.reason;
+      resolvedBackend = routed.backend === 'reasoning' ? 'chat' : routed.backend; // reasoning rides the chat path with a different model
+      resolvedModel = routed.model;
+    } else {
+      resolvedBackend = backend;
+      resolvedModel = model;
+    }
+
+    const userMsg: Msg = { role: 'user', content: cleanedPrompt, images };
     const next = [...msgs, userMsg];
     setMsgs(next);
     setInput(''); setImages([]);
@@ -64,7 +85,7 @@ export default function ChatTab() {
     try {
       let response = '';
       let thinking = '';
-      if (backend === 'vision' || images.length > 0) {
+      if (resolvedBackend === 'vision' || (resolvedBackend !== 'openclaw' && resolvedBackend !== 'claude' && images.length > 0)) {
         // OpenAI-compat vision path (works for Gemini-flash through Ollama OpenAI endpoint)
         const messages = next.map(m => {
           if (m.images && m.images.length > 0) {
@@ -81,22 +102,22 @@ export default function ChatTab() {
         const r = await window.api.ollama.vision({
           openaiCompatUrl: s.openaiCompatUrl,
           apiKey: s.openaiCompatKey,
-          model: backend === 'vision' ? s.visionModel : model,
+          model: resolvedBackend === 'vision' ? s.visionModel : resolvedModel,
           messages,
           stream: true
         });
         response = r.content;
-      } else if (backend === 'chat') {
+      } else if (resolvedBackend === 'chat') {
         const r = await window.api.ollama.chat({
           baseUrl: s.ollamaUrl,
-          model,
+          model: resolvedModel,
           messages: next.map(m => ({ role: m.role, content: m.content })),
           stream: true
         });
         response = r.content;
         thinking = r.thinking || '';
       } else {
-        response = `(${backend} CLI mode: open the CLI Console tab to start a session.)`;
+        response = `(${resolvedBackend} CLI mode: open the CLI Console tab to start a session.)`;
       }
       const parsed = splitThinking(response);
       const asst: Msg = { role: 'assistant', content: parsed.visible || response, thinking: thinking || parsed.thinking };
@@ -105,17 +126,18 @@ export default function ChatTab() {
       metricsRef.current = finalMetrics;
       setMetrics(finalMetrics);
       await window.api.history.add({
-        backend, model, prompt: userMsg.content, response: asst.content,
+        backend: resolvedBackend, model: resolvedModel, prompt: userMsg.content, response: asst.content,
         thinking: asst.thinking,
         meta: {
           images: images.length,
           metrics: view(finalMetrics),
+          routed: backend === 'auto' ? routeReason : undefined,
           snapshot: {
             ts: Date.now(),
-            backend, model,
+            backend: resolvedBackend, model: resolvedModel,
             ollamaUrl: s.ollamaUrl,
-            openaiCompatUrl: backend === 'vision' ? s.openaiCompatUrl : undefined,
-            visionModel: backend === 'vision' ? s.visionModel : undefined
+            openaiCompatUrl: resolvedBackend === 'vision' ? s.openaiCompatUrl : undefined,
+            visionModel: resolvedBackend === 'vision' ? s.visionModel : undefined
           }
         }
       });
@@ -140,6 +162,7 @@ export default function ChatTab() {
     <div className="col" style={{ height: '100%' }}>
       <div className="row">
         <select value={backend} onChange={e => setBackend(e.target.value as any)}>
+          <option value="auto">Auto (route by content)</option>
           <option value="chat">Ollama Chat</option>
           <option value="vision">Vision (OpenAI-compat)</option>
           <option value="openclaw">OpenClaw CLI</option>

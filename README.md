@@ -15,16 +15,19 @@ with malware / bad-actor checks before any update is installed.
 
 | Area | What you get |
 |---|---|
-| Chat / Run | Ollama native chat, OpenAI-compat vision (Gemini-flash workaround), CLI runner for OpenClaw / Claude Code |
+| Chat / Run | Ollama native chat (streaming), OpenAI-compat vision (Gemini-flash workaround), `Auto` backend that picks chat/vision/reasoning by rules + `/vision` `/reason` `/chat` slash commands |
+| CLI Console | Multi-session runners for OpenClaw / Claude Code: per-session stdout/stderr stream, start/stop, cwd picker, shell-style arg parser |
+| Live metrics | Tok/s · TTFT · elapsed shown live in the chat header, persisted into history |
 | Thinking pane | Parses `<think>…</think>` blocks (DeepSeek-R1 / QwQ) + native Anthropic-style `thinking` |
-| Images | Multi-image attach + 1-click **desktop screenshot** |
-| History | SQLite, searchable, deletable |
-| Settings | Persistent — Ollama URL, OpenAI-compat URL/key, model names, CLI paths, policy |
-| OpenClaw Upgrades | Manifest install → allowlist → hash → AV scan → install → ledger |
-| Self-Upgrade | Same hardened path, scoped to Claw Deck itself |
-| Security & Audit | Append-only, **hash-chained tamper-evident** log |
+| Images | Multi-image attach + 1-click **desktop screenshot** + **region-select** crop |
+| History | SQLite, searchable, deletable, **branch** (↳) reuses a prior prompt as the new input |
+| Reproducibility | Each turn auto-records model, backend, base URL, timestamp into `history.meta.snapshot` |
+| Settings | Persistent — Ollama URL, OpenAI-compat URL/key, model names, CLI paths, upgrade policy, signing keys, GitHub PAT, VirusTotal key |
+| Release feeds | GitHub Releases poller per `kind` (openclaw / self); release notes shown before install; "Use" button prefills install form |
+| OpenClaw / Self-Upgrade | Manifest install → allowlist → quarantine → SHA-256 → **Ed25519 sig verify** → AV scan → **VirusTotal hash lookup** → copy to `installPath` with backup → ledger → **real rollback** |
+| Security & Audit | Append-only, **hash-chained tamper-evident** log of every gate decision |
 | Command Palette | `Ctrl+K` everywhere |
-| Air-gapped mode | One toggle disables all upgrade downloads |
+| Air-gapped mode | One toggle disables all upgrade downloads (incl. feed polling) |
 
 ## Gemini-flash through Ollama (OpenAI path)
 
@@ -64,10 +67,12 @@ Every upgrade is gated, in order:
 2. **HTTPS + allowlist** — host must be in `settings.policy.allowlist`.
 3. **Download to quarantine** — `userData/quarantine/<ts>-<file>`.
 4. **SHA-256 hash compare** vs expected.
-5. **Signature** (informational; can be marked required by policy).
+5. **Ed25519 signature verify** — when the manifest carries `signature`, it is checked against `policy.signingKeys` (PEM or raw 32-byte hex). `policy.requireSignature` rejects unsigned manifests.
 6. **AV scan** — Windows Defender (`MpCmdRun.exe`) + ClamAV if available.
-7. **Ledger entry + tamper-evident audit append**.
-8. **Rollback** available from the Upgrades tab.
+7. **VirusTotal hash lookup** (optional) — when `virusTotalApiKey` is set, the file SHA-256 is queried against VT v3 (no upload); non-zero malicious/suspicious blocks the install.
+8. **Install with backup** — when manifest carries `installPath`, the vetted file is copied there and any pre-existing file is backed up to `<path>.bak-<ts>`.
+9. **Ledger entry + tamper-evident audit append**.
+10. **Real rollback** — restores the backed-up file (or removes the installed file when no backup exists).
 
 ## Data Locations
 
