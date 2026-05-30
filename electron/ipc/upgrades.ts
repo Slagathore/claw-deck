@@ -111,7 +111,10 @@ export function registerUpgradeHandlers() {
     // 4. AV scan (+ optional VirusTotal hash reputation)
     let scanResults: any[] = [];
     if (settings.policy?.autoScan !== false) {
-      scanResults = await scanFile(dest);
+      scanResults = await scanFile(dest, {
+        yaraRulesPath: settings.yaraRulesPath,
+        yaraBinary: settings.yaraBinary
+      });
       const bad = scanResults.find(s => !s.ok);
       if (bad) {
         appendAudit('upgrade:scan_failed', { manifest: m, scanResults });

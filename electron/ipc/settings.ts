@@ -16,6 +16,8 @@ const DEFAULTS = {
   feeds: { openclaw: [] as string[], self: ['Slagathore/claw-deck'] },
   githubToken: '',
   virusTotalApiKey: '',
+  yaraRulesPath: '',
+  yaraBinary: '',
   quietMode: false,
   airgapped: false
 };

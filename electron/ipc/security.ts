@@ -4,8 +4,14 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import { spawn } from 'child_process';
 import { getDb } from './db';
+import { yaraScan } from './yara';
 
 interface ScanResult { ok: boolean; engine: string; detail: string; }
+
+export interface ScanOptions {
+  yaraRulesPath?: string;
+  yaraBinary?: string;
+}
 
 export async function sha256OfFile(file: string): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -54,21 +60,37 @@ async function clamscan(file: string): Promise<ScanResult> {
   });
 }
 
-export async function scanFile(file: string): Promise<ScanResult[]> {
-  const results = await Promise.all([defenderScan(file), clamscan(file)]);
+export async function scanFile(file: string, opts: ScanOptions = {}): Promise<ScanResult[]> {
+  const results = await Promise.all([
+    defenderScan(file),
+    clamscan(file),
+    yaraScan(file, { rulesPath: opts.yaraRulesPath, binary: opts.yaraBinary })
+  ]);
   return results;
 }
 
 export function registerSecurityHandlers() {
   ipcMain.handle('security:hash', (_e, file: string) => sha256OfFile(file));
   ipcMain.handle('security:scan', async (_e, file: string) => {
-    const results = await scanFile(file);
+    const settings = await loadSettings();
+    const results = await scanFile(file, {
+      yaraRulesPath: settings.yaraRulesPath,
+      yaraBinary: settings.yaraBinary
+    });
     appendAudit('scan', { file, results });
     return results;
   });
   ipcMain.handle('security:audit', () => {
     return getDb().prepare('SELECT * FROM audit ORDER BY id DESC LIMIT 500').all();
   });
+}
+
+function loadSettings(): Promise<any> {
+  const db = getDb();
+  const rows = db.prepare('SELECT key,value FROM settings').all() as { key: string; value: string }[];
+  const out: any = {};
+  for (const r of rows) try { out[r.key] = JSON.parse(r.value); } catch { out[r.key] = r.value; }
+  return Promise.resolve(out);
 }
 
 export function appendAudit(kind: string, payload: any) {

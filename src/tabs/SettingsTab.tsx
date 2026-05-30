@@ -88,6 +88,13 @@ export default function SettingsTab() {
         <input type="password" value={draft.githubToken ?? ''} onChange={e => set('githubToken', e.target.value)} />
         <label className="label">VirusTotal API key (optional; enables hash reputation lookup)</label>
         <input type="password" value={draft.virusTotalApiKey ?? ''} onChange={e => set('virusTotalApiKey', e.target.value)} />
+        <label className="label">YARA rules file (optional; <code>.yar</code> / <code>.yara</code>, recursive)</label>
+        <div className="row">
+          <input value={draft.yaraRulesPath ?? ''} onChange={e => set('yaraRulesPath', e.target.value)} placeholder="path to rules file" style={{ flex: 1 }} />
+          <button onClick={async () => { const p = await window.api.app.pickPath(); if (p) set('yaraRulesPath', p); }}>Pick</button>
+        </div>
+        <label className="label">YARA binary (optional override; defaults to <code>yara</code> on PATH)</label>
+        <input value={draft.yaraBinary ?? ''} onChange={e => set('yaraBinary', e.target.value)} placeholder="yara" />
       </div>
 
       <div className="row">
