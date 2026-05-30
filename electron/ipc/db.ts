@@ -49,6 +49,16 @@ export async function initDb() {
       hash TEXT NOT NULL
     );
   `);
+  // additive migrations — safe to run on every boot
+  migrate('upgrades', 'install_path', 'TEXT');
+  migrate('upgrades', 'backup_path', 'TEXT');
+}
+
+function migrate(table: string, col: string, type: string) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (!cols.some(c => c.name === col)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);
+  }
 }
 
 export function getDb(): Database.Database {

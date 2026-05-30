@@ -12,7 +12,7 @@ const DEFAULTS = {
   claudeCodePath: 'claude',
   theme: 'dark',
   showThinking: true,
-  policy: { allowlist: ['github.com', 'releases.openclaw.org', 'objects.githubusercontent.com'], requireSignature: false, autoScan: true },
+  policy: { allowlist: ['github.com', 'releases.openclaw.org', 'objects.githubusercontent.com'], requireSignature: false, autoScan: true, signingKeys: [] as { name: string; format: 'pem' | 'hex'; key: string }[] },
   feeds: { openclaw: [] as string[], self: ['Slagathore/claw-deck'] },
   githubToken: '',
   virusTotalApiKey: '',

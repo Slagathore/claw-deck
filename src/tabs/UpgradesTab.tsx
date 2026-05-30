@@ -17,6 +17,8 @@ export default function UpgradesTab({ kind, title }: { kind: 'openclaw' | 'self'
   const [version, setVersion] = useState('');
   const [name, setName] = useState(kind === 'self' ? 'claw-deck' : 'openclaw');
   const [sha, setSha] = useState('');
+  const [signature, setSignature] = useState('');
+  const [installPath, setInstallPath] = useState('');
   const [status, setStatus] = useState<any>(null);
   const [busy, setBusy] = useState(false);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
@@ -48,7 +50,12 @@ export default function UpgradesTab({ kind, title }: { kind: 'openclaw' | 'self'
   async function install() {
     setBusy(true); setStatus(null);
     try {
-      const r = await window.api.upgrades.install({ kind, name, version, url, sha256: sha });
+      const r = await window.api.upgrades.install({
+        kind, name, version, url,
+        sha256: sha || undefined,
+        signature: signature || undefined,
+        installPath: installPath || undefined
+      });
       setStatus(r);
       await refresh();
     } finally { setBusy(false); }
@@ -97,6 +104,11 @@ export default function UpgradesTab({ kind, title }: { kind: 'openclaw' | 'self'
           <input placeholder="version" value={version} onChange={e => setVersion(e.target.value)} /></div>
         <input placeholder="download URL (https, must be allowlisted)" value={url} onChange={e => setUrl(e.target.value)} />
         <input placeholder="expected SHA-256 (recommended)" value={sha} onChange={e => setSha(e.target.value)} />
+        <input placeholder="Ed25519 signature, base64 (optional)" value={signature} onChange={e => setSignature(e.target.value)} />
+        <div className="row">
+          <input placeholder="install path (optional — enables real rollback)" value={installPath} onChange={e => setInstallPath(e.target.value)} style={{ flex: 1 }} />
+          <button onClick={async () => { const p = await window.api.app.pickPath({ properties: ['openFile', 'promptToCreate'] }); if (p) setInstallPath(p); }}>Pick</button>
+        </div>
         <div className="row">
           <button className="primary" disabled={busy || !url || !version} onClick={install}>Download, Scan, Install</button>
         </div>

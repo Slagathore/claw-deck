@@ -4,6 +4,8 @@ import * as path from 'path';
 import { getDb } from './db';
 import { isHostAllowed, scanFile, sha256OfFile, appendAudit, quarantineDir } from './security';
 import { fetchSources, FeedSource } from './feeds';
+import { verifyEd25519, KeySpec } from './signing';
+import { vtLookup, installWithBackup, restoreBackup } from './reputation';
 
 interface UpgradeManifest {
   kind: 'openclaw' | 'self';
@@ -11,7 +13,8 @@ interface UpgradeManifest {
   version: string;
   url: string;            // download URL
   sha256?: string;        // expected hash
-  signature?: string;     // signature blob (informational)
+  signature?: string;     // base64 ed25519 detached signature over the binary
+  installPath?: string;   // absolute path; when set, vetted binary is copied here
   notes?: string;
 }
 
@@ -90,14 +93,22 @@ export function registerUpgradeHandlers() {
       return { ok: false, reason: `SHA-256 mismatch. expected ${m.sha256} got ${actual}` };
     }
 
-    // 3. Signature placeholder (require if policy says so)
-    if (settings.policy?.requireSignature && !m.signature) {
+    // 3. Signature verification (Ed25519 over the downloaded bytes)
+    const signingKeys: KeySpec[] = settings.policy?.signingKeys ?? [];
+    if (m.signature) {
+      const v = verifyEd25519(buf, m.signature, signingKeys);
+      if (!v.ok) {
+        appendAudit('upgrade:signature_invalid', { manifest: m, reason: v.reason });
+        try { fs.unlinkSync(dest); } catch {}
+        return { ok: false, reason: `Signature verification failed: ${v.reason}` };
+      }
+    } else if (settings.policy?.requireSignature) {
       appendAudit('upgrade:no_signature', { manifest: m });
       try { fs.unlinkSync(dest); } catch {}
       return { ok: false, reason: 'Policy requires a signature; none provided.' };
     }
 
-    // 4. AV scan
+    // 4. AV scan (+ optional VirusTotal hash reputation)
     let scanResults: any[] = [];
     if (settings.policy?.autoScan !== false) {
       scanResults = await scanFile(dest);
@@ -108,22 +119,51 @@ export function registerUpgradeHandlers() {
         return { ok: false, reason: `Scan failed (${bad.engine}): ${bad.detail}`, scanResults };
       }
     }
+    if (settings.virusTotalApiKey) {
+      const vt = await vtLookup(actual, settings.virusTotalApiKey, { timeoutMs: 8000 });
+      if (vt) {
+        scanResults.push({ engine: 'virustotal', ok: vt.ok, detail: vt.detail });
+        if (!vt.ok) {
+          appendAudit('upgrade:vt_flagged', { manifest: m, sha256: actual, vt });
+          try { fs.unlinkSync(dest); } catch {}
+          return { ok: false, reason: vt.detail, scanResults };
+        }
+      }
+    }
 
-    // 5. Record
+    // 5. Install: if installPath is set, copy from quarantine (with backup);
+    //    otherwise the quarantined file IS the install location.
+    let installPath: string | null = null;
+    let backup: string | null = null;
+    if (m.installPath) {
+      try {
+        const r = installWithBackup(dest, m.installPath);
+        installPath = m.installPath;
+        backup = r.backup;
+      } catch (e: any) {
+        appendAudit('upgrade:install_copy_failed', { manifest: m, error: e?.message });
+        return { ok: false, reason: `Install copy failed: ${e?.message}`, scanResults };
+      }
+    }
+
+    // 6. Record
     const db = getDb();
     const info = db.prepare(`
-      INSERT INTO upgrades(kind,name,version,source_url,sha256,signature,installed_at,status,rollback_path,notes)
-      VALUES(?,?,?,?,?,?,?,?,?,?)
-    `).run(m.kind, m.name, m.version, m.url, actual, m.signature ?? null, Date.now(), 'installed', dest, m.notes ?? null);
+      INSERT INTO upgrades(kind,name,version,source_url,sha256,signature,installed_at,status,rollback_path,install_path,backup_path,notes)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+    `).run(m.kind, m.name, m.version, m.url, actual, m.signature ?? null, Date.now(), 'installed', dest, installPath, backup, m.notes ?? null);
 
-    appendAudit('upgrade:installed', { manifest: m, sha256: actual, file: dest, scanResults });
-    return { ok: true, id: info.lastInsertRowid, sha256: actual, file: dest, scanResults };
+    appendAudit('upgrade:installed', { manifest: m, sha256: actual, file: dest, installPath, backup, scanResults });
+    return { ok: true, id: info.lastInsertRowid, sha256: actual, file: dest, installPath, backup, scanResults };
   });
 
   ipcMain.handle('upgrades:rollback', (_e, id: number) => {
     const db = getDb();
+    const row = db.prepare('SELECT * FROM upgrades WHERE id=?').get(id) as any | undefined;
+    if (!row) return { ok: false, reason: 'no such upgrade' };
+    const changed = restoreBackup(row.install_path ?? null, row.backup_path ?? null);
     db.prepare("UPDATE upgrades SET status='rolled_back' WHERE id=?").run(id);
-    appendAudit('upgrade:rollback', { id });
-    return true;
+    appendAudit('upgrade:rollback', { id, changed, installPath: row.install_path, backup: row.backup_path });
+    return { ok: true, changed };
   });
 }

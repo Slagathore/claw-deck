@@ -26,7 +26,7 @@ declare global {
         check: (kind: 'openclaw' | 'self') => Promise<any>;
         install: (manifest: any) => Promise<any>;
         list: () => Promise<any[]>;
-        rollback: (id: number) => Promise<boolean>;
+        rollback: (id: number) => Promise<{ ok: boolean; changed?: boolean; reason?: string }>;
       };
       security: {
         scanFile: (file: string) => Promise<any[]>;

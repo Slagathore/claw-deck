@@ -55,6 +55,21 @@ export default function SettingsTab() {
         />
         <label><input type="checkbox" checked={!!draft.policy?.requireSignature} onChange={e => set('policy', { ...(draft.policy ?? {}), requireSignature: e.target.checked })} /> Require signature</label>
         <label><input type="checkbox" checked={draft.policy?.autoScan !== false} onChange={e => set('policy', { ...(draft.policy ?? {}), autoScan: e.target.checked })} /> Auto-scan downloads</label>
+
+        <label className="label">Ed25519 signing keys (one per line: <code>name|pem|&lt;PEM&gt;</code> or <code>name|hex|&lt;64 hex chars&gt;</code>)</label>
+        <textarea
+          rows={4}
+          placeholder="release-key|hex|3a7f...&#10;build-key|pem|-----BEGIN PUBLIC KEY-----..."
+          value={(draft.policy?.signingKeys ?? []).map((k: any) => `${k.name}|${k.format}|${k.key.replace(/\n/g, '\\n')}`).join('\n')}
+          onChange={e => {
+            const lines = e.target.value.split('\n').map(l => l.trim()).filter(Boolean);
+            const keys = lines.map(line => {
+              const [name, format, ...rest] = line.split('|');
+              return { name, format, key: rest.join('|').replace(/\\n/g, '\n') };
+            }).filter(k => k.name && (k.format === 'pem' || k.format === 'hex') && k.key);
+            set('policy', { ...(draft.policy ?? {}), signingKeys: keys });
+          }}
+        />
       </div>
 
       <div className="card col">
