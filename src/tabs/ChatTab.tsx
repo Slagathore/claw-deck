@@ -6,6 +6,7 @@ import { routeRequest } from '../lib/router';
 import { summarizeRunning, RunningModel } from '../lib/vram';
 import ImageUploader from '../components/ImageUploader';
 import RegionSelect from '../components/RegionSelect';
+import WelcomeCard from '../components/WelcomeCard';
 
 type Msg = { role: 'user' | 'assistant'; content: string; images?: string[]; thinking?: string };
 
@@ -173,6 +174,7 @@ export default function ChatTab() {
 
   return (
     <div className="col" style={{ height: '100%' }}>
+      <WelcomeCard models={models} running={running} />
       <div className="row">
         <select value={backend} onChange={e => setBackend(e.target.value as any)}>
           <option value="auto">Auto (route by content)</option>

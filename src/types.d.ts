@@ -14,6 +14,7 @@ declare global {
       runner: {
         start: (opts: any) => Promise<{ id: string }>;
         stop: (id: string) => Promise<boolean>;
+        input: (id: string, data: string) => Promise<boolean>;
         onEvent: (cb: (e: any) => void) => () => void;
       };
       ollama: {
@@ -50,6 +51,10 @@ declare global {
         start: (name: string) => Promise<{ ok: boolean; status?: string; pid?: number; reason?: string }>;
         stop: (name: string) => Promise<{ ok: boolean }>;
         startAll: () => Promise<{ name: string; ok: boolean; status?: string; pid?: number; reason?: string }[]>;
+      };
+      terminal: {
+        shells: () => Promise<{ id: string; label: string; binary: string; args: string[]; available: boolean }[]>;
+        launchElevated: (opts: { binary: string; args?: string[]; cwd?: string }) => Promise<{ ok: boolean; pid?: number; reason?: string }>;
       };
     };
   }

@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('api', {
   runner: {
     start: (opts: any) => invoke('runner:start', opts),
     stop: (id: string) => invoke('runner:stop', id),
+    input: (id: string, data: string) => invoke('runner:input', id, data),
     onEvent: (cb: (e: any) => void) => on('runner:event', cb)
   },
   ollama: {
@@ -60,5 +61,9 @@ contextBridge.exposeInMainWorld('api', {
     start: (name: string) => invoke('mcp:start', name),
     stop: (name: string) => invoke('mcp:stop', name),
     startAll: () => invoke('mcp:startAll')
+  },
+  terminal: {
+    shells: () => invoke('terminal:shells'),
+    launchElevated: (opts: { binary: string; args?: string[]; cwd?: string }) => invoke('terminal:launchElevated', opts)
   }
 });

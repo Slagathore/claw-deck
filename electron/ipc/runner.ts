@@ -12,7 +12,7 @@ export function registerRunnerHandlers(getWindow: () => BrowserWindow | null) {
     if (w) w.webContents.send('runner:event', { id, kind, data, ts: Date.now() });
   }
 
-  ipcMain.handle('runner:start', (_e, opts: { backend: 'openclaw' | 'claude'; binary: string; args?: string[]; cwd?: string; env?: Record<string, string> }) => {
+  ipcMain.handle('runner:start', (_e, opts: { backend: 'openclaw' | 'claude' | 'shell'; binary: string; args?: string[]; cwd?: string; env?: Record<string, string> }) => {
     const id = randomUUID();
     const proc = spawn(opts.binary, opts.args ?? [], {
       cwd: opts.cwd,
@@ -35,6 +35,13 @@ export function registerRunnerHandlers(getWindow: () => BrowserWindow | null) {
     const s = sessions.get(id);
     if (!s) return false;
     s.proc.kill();
+    return true;
+  });
+
+  ipcMain.handle('runner:input', (_e, id: string, data: string) => {
+    const s = sessions.get(id);
+    if (!s || !s.proc.stdin || s.proc.stdin.destroyed) return false;
+    s.proc.stdin.write(data.endsWith('\n') ? data : data + '\n');
     return true;
   });
 }

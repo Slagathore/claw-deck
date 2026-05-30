@@ -4,6 +4,7 @@ import { useUI } from '../store/ui';
 const ACTIONS = [
   { id: 'tab:chat', label: 'Go to: Chat / Run' },
   { id: 'tab:cli', label: 'Go to: CLI Console' },
+  { id: 'tab:terminal', label: 'Go to: Terminal' },
   { id: 'tab:history', label: 'Go to: History' },
   { id: 'tab:prompts', label: 'Go to: Prompt Vault' },
   { id: 'tab:settings', label: 'Go to: Settings' },

@@ -10,6 +10,7 @@ import { registerSettingsHandlers } from './ipc/settings';
 import { registerHistoryHandlers } from './ipc/history';
 import { registerPromptHandlers } from './ipc/prompts';
 import { registerMcpHandlers, stopAllMcp } from './ipc/mcp';
+import { registerTerminalHandlers } from './ipc/terminal';
 
 const isDev = !app.isPackaged;
 
@@ -49,6 +50,7 @@ app.whenReady().then(async () => {
   registerScreenshotHandlers(desktopCapturer, screen);
   registerPromptHandlers();
   registerMcpHandlers();
+  registerTerminalHandlers();
 
   ipcMain.handle('app:pickPath', async (_e, opts: { properties?: string[] }) => {
     const r = await dialog.showOpenDialog({

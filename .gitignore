@@ -1,6 +1,7 @@
 node_modules
 dist
 dist-electron
+dist-installer
 .vite
 .DS_Store
 *.log
