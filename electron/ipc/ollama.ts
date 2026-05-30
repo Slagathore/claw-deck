@@ -1,0 +1,111 @@
+import { ipcMain, BrowserWindow, webContents } from 'electron';
+
+/**
+ * Ollama integration with two paths:
+ *  - Native Ollama API  (POST /api/chat)
+ *  - OpenAI-compatible  (POST {openaiCompatUrl}/chat/completions)
+ *
+ * The OpenAI path is the one used for vision + Gemini-style models that have
+ * tool-calling issues on the native Anthropic/Ollama-native path. Forum-recommended
+ * workaround: send images as OpenAI vision `image_url` parts with base64 data URI.
+ */
+
+interface ChatReq {
+  baseUrl: string;
+  model: string;
+  messages: any[];
+  stream?: boolean;
+  options?: Record<string, any>;
+}
+interface VisionReq {
+  openaiCompatUrl: string;
+  apiKey?: string;
+  model: string;
+  messages: any[];          // OpenAI-format messages, may include image_url parts
+  stream?: boolean;
+}
+
+function broadcast(channel: string, payload: any) {
+  for (const wc of webContents.getAllWebContents()) wc.send(channel, payload);
+}
+
+export function registerOllamaHandlers() {
+  ipcMain.handle('ollama:listModels', async (_e, baseUrl: string = 'http://localhost:11434') => {
+    try {
+      const r = await fetch(`${baseUrl.replace(/\/$/, '')}/api/tags`);
+      if (!r.ok) return { error: `HTTP ${r.status}`, models: [] };
+      const j: any = await r.json();
+      return { models: (j.models ?? []).map((m: any) => m.name) };
+    } catch (e: any) {
+      return { error: e.message, models: [] };
+    }
+  });
+
+  ipcMain.handle('ollama:chat', async (_e, req: ChatReq) => {
+    const url = `${req.baseUrl.replace(/\/$/, '')}/api/chat`;
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: req.model, messages: req.messages, stream: !!req.stream, options: req.options ?? {} })
+    });
+    if (!req.stream) {
+      const j: any = await r.json();
+      return { content: j.message?.content ?? '', raw: j };
+    }
+    return streamReader(r, 'native');
+  });
+
+  ipcMain.handle('ollama:vision', async (_e, req: VisionReq) => {
+    const url = `${req.openaiCompatUrl.replace(/\/$/, '')}/chat/completions`;
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(req.apiKey ? { Authorization: `Bearer ${req.apiKey}` } : {})
+      },
+      body: JSON.stringify({ model: req.model, messages: req.messages, stream: !!req.stream })
+    });
+    if (!req.stream) {
+      const j: any = await r.json();
+      return { content: j.choices?.[0]?.message?.content ?? '', raw: j };
+    }
+    return streamReader(r, 'openai');
+  });
+}
+
+async function streamReader(r: Response, mode: 'native' | 'openai') {
+  if (!r.body) return { content: '' };
+  const reader = r.body.getReader();
+  const decoder = new TextDecoder();
+  let full = '';
+  let thinking = '';
+  let buf = '';
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split('\n');
+    buf = lines.pop() ?? '';
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      if (mode === 'openai' && trimmed.startsWith('data:')) {
+        const payload = trimmed.slice(5).trim();
+        if (payload === '[DONE]') continue;
+        try {
+          const j = JSON.parse(payload);
+          const delta = j.choices?.[0]?.delta?.content ?? '';
+          if (delta) { full += delta; broadcast('ollama:chunk', { delta, mode }); }
+        } catch { /* ignore */ }
+      } else if (mode === 'native') {
+        try {
+          const j = JSON.parse(trimmed);
+          const delta = j.message?.content ?? '';
+          if (delta) { full += delta; broadcast('ollama:chunk', { delta, mode }); }
+          if (j.message?.thinking) { thinking += j.message.thinking; broadcast('ollama:chunk', { thinking: j.message.thinking, mode }); }
+        } catch { /* ignore */ }
+      }
+    }
+  }
+  return { content: full, thinking };
+}
