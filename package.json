@@ -13,6 +13,9 @@
     "build:electron": "tsc -p electron/tsconfig.json",
     "build": "npm run build:renderer && npm run build:electron",
     "start": "npm run build && electron .",
+    "dist": "npm run build && electron-builder --win nsis portable --publish never",
+    "dist:portable": "npm run build && electron-builder --win portable --publish never",
+    "dist:nsis": "npm run build && electron-builder --win nsis --publish never",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc -p tsconfig.json --noEmit && tsc -p electron/tsconfig.json --noEmit",
@@ -40,7 +43,27 @@
   },
   "build": {
     "appId": "com.cole.clawdeck",
-    "files": ["dist/**/*", "dist-electron/**/*", "package.json"],
-    "directories": { "buildResources": "public" }
+    "productName": "Claw Deck",
+    "files": ["dist/**/*", "dist-electron/**/*", "bin/**/*", "package.json"],
+    "directories": { "buildResources": "public", "output": "dist-installer" },
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ],
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-portable-${arch}.${ext}"
+    },
+    "publish": [
+      { "provider": "github", "owner": "Slagathore", "repo": "claw-deck" }
+    ]
   }
 }

@@ -47,7 +47,8 @@ contextBridge.exposeInMainWorld('api', {
     captureRegion: () => invoke('screenshot:region')
   },
   app: {
-    pickPath: (opts?: any) => invoke('app:pickPath', opts ?? {})
+    pickPath: (opts?: any) => invoke('app:pickPath', opts ?? {}),
+    version: () => invoke('app:version')
   },
   prompts: {
     list: () => invoke('prompts:list'),

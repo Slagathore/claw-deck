@@ -57,6 +57,12 @@ app.whenReady().then(async () => {
     return r.canceled ? null : r.filePaths[0];
   });
 
+  ipcMain.handle('app:version', () => ({
+    version: app.getVersion(),
+    platform: process.platform,
+    arch: process.arch
+  }));
+
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

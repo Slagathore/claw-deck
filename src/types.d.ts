@@ -39,7 +39,7 @@ declare global {
         captureScreen: (sourceId?: string) => Promise<{ dataUrl?: string; error?: string; name?: string }>;
         captureRegion: () => Promise<{ dataUrl?: string; error?: string }>;
       };
-      app: { pickPath: (opts?: any) => Promise<string | null> };
+      app: { pickPath: (opts?: any) => Promise<string | null>; version: () => Promise<{ version: string; platform: string; arch: string }> };
       prompts: {
         list: () => Promise<{ id: number; name: string; template: string; tags: string; defaults: string; updated_at: number }[]>;
         upsert: (p: { id?: number; name: string; template: string; tags?: string[]; defaults?: Record<string, string> }) => Promise<number>;

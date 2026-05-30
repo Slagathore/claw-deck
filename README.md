@@ -79,6 +79,53 @@ Every upgrade is gated, in order:
 - DB: `%APPDATA%/claw-deck/data/clawdeck.db`
 - Quarantine: `%APPDATA%/claw-deck/quarantine/`
 
+## Headless CLI
+
+Once installed, `claw-deck` is available as a CLI for scripting (it reads the
+same settings DB the GUI writes):
+
+```powershell
+claw-deck run --task "Summarize this PR" --model llama3
+claw-deck run --task "Describe this image" --image ./screenshot.png
+claw-deck settings --json
+claw-deck help
+```
+
+## Building Installers (Phase 4)
+
+```powershell
+npm run dist           # builds renderer + electron + NSIS installer + portable .exe
+npm run dist:portable  # portable only
+npm run dist:nsis      # NSIS installer only
+```
+
+Outputs land in `dist-installer/`. Configure code-signing via
+[electron-builder env vars](https://www.electron.build/code-signing):
+
+```powershell
+$env:CSC_LINK          = "C:\path\to\cert.pfx"   # or base64 contents
+$env:CSC_KEY_PASSWORD  = "<password>"
+npm run dist
+```
+
+Without those vars, electron-builder produces unsigned binaries.
+
+## Auto-Update Channel
+
+The **Self-Upgrade** tab includes a "Check for updates" button that:
+
+1. Polls the GitHub release feeds configured under
+   *Settings → Upgrade Feeds → Self-upgrade feeds* (default
+   `Slagathore/claw-deck`).
+2. Compares the latest release version to `app.getVersion()` using semver.
+3. Auto-picks the right asset for your platform/architecture (`.exe` on Windows,
+   `.dmg` on macOS, `.AppImage` on Linux; arm64/x64 disambiguated).
+4. Runs the asset through the full Phase-2 gate (allowlist → hash → Ed25519 →
+   AV+YARA → VirusTotal → install with backup → ledger).
+
+The manual install form remains available for one-off upgrades that aren't
+published as a GitHub release.
+
 ## License
 
 MIT
