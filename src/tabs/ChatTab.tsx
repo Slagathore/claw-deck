@@ -1,13 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useSettings } from '../store/ui';
+import { useSettings, useUI } from '../store/ui';
 import { splitThinking } from '../lib/thinking';
 import { newMetrics, recordDelta, finalize, view, formatView, MetricsSnapshot } from '../lib/metrics';
 import ImageUploader from '../components/ImageUploader';
+import RegionSelect from '../components/RegionSelect';
 
 type Msg = { role: 'user' | 'assistant'; content: string; images?: string[]; thinking?: string };
 
 export default function ChatTab() {
   const { data: s } = useSettings();
+  const consumePending = useUI(state => state.consumePending);
   const [backend, setBackend] = useState<'chat' | 'vision' | 'openclaw' | 'claude'>('chat');
   const [model, setModel] = useState<string>(s.chatModel || 'llama3.2');
   const [models, setModels] = useState<string[]>([]);
@@ -18,8 +20,14 @@ export default function ChatTab() {
   const [liveThinking, setLiveThinking] = useState('');
   const [liveContent, setLiveContent] = useState('');
   const [metrics, setMetrics] = useState<MetricsSnapshot | null>(null);
+  const [region, setRegion] = useState<string | null>(null);
   const metricsRef = useRef<MetricsSnapshot | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const p = consumePending();
+    if (p) setInput(p);
+  }, [consumePending]);
 
   useEffect(() => {
     window.api.ollama.listModels(s.ollamaUrl).then(r => setModels(r.models ?? []));
@@ -99,7 +107,17 @@ export default function ChatTab() {
       await window.api.history.add({
         backend, model, prompt: userMsg.content, response: asst.content,
         thinking: asst.thinking,
-        meta: { images: images.length, metrics: view(finalMetrics) }
+        meta: {
+          images: images.length,
+          metrics: view(finalMetrics),
+          snapshot: {
+            ts: Date.now(),
+            backend, model,
+            ollamaUrl: s.ollamaUrl,
+            openaiCompatUrl: backend === 'vision' ? s.openaiCompatUrl : undefined,
+            visionModel: backend === 'vision' ? s.visionModel : undefined
+          }
+        }
       });
     } catch (e: any) {
       setMsgs(m => [...m, { role: 'assistant', content: `Error: ${e.message}` }]);
@@ -111,6 +129,11 @@ export default function ChatTab() {
   async function captureScreen() {
     const r = await window.api.screenshot.captureScreen();
     if (r.dataUrl) setImages(imgs => [...imgs, r.dataUrl!]);
+  }
+
+  async function captureRegion() {
+    const r = await window.api.screenshot.captureScreen();
+    if (r.dataUrl) setRegion(r.dataUrl);
   }
 
   return (
@@ -174,9 +197,17 @@ export default function ChatTab() {
         />
         <div className="col" style={{ width: 180 }}>
           <button onClick={captureScreen} disabled={busy}>Screenshot</button>
+          <button onClick={captureRegion} disabled={busy}>Region…</button>
           <button className="primary" onClick={send} disabled={busy}>Send</button>
         </div>
       </div>
+      {region && (
+        <RegionSelect
+          src={region}
+          onCancel={() => setRegion(null)}
+          onCrop={url => { setImages(imgs => [...imgs, url]); setRegion(null); }}
+        />
+      )}
     </div>
   );
 }

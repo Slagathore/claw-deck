@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react';
+import { useUI } from '../store/ui';
 
 export default function HistoryTab() {
   const [rows, setRows] = useState<any[]>([]);
   const [q, setQ] = useState('');
+  const branch = useUI(s => s.branchFromHistory);
   async function refresh() { setRows(await window.api.history.list({ search: q })); }
   useEffect(() => { refresh(); }, []);
   return (
@@ -23,7 +25,10 @@ export default function HistoryTab() {
                 <td>{r.model}</td>
                 <td style={{ maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.prompt}</td>
                 <td style={{ maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.response}</td>
-                <td><button onClick={async () => { await window.api.history.delete(r.id); refresh(); }}>×</button></td>
+                <td>
+                  <button title="Branch: send this prompt as the new chat input" onClick={() => branch(r.prompt)}>↳</button>
+                  <button onClick={async () => { await window.api.history.delete(r.id); refresh(); }}>×</button>
+                </td>
               </tr>
             ))}
           </tbody>

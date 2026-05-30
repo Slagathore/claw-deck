@@ -7,13 +7,23 @@ interface UIState {
   setTab: (t: Tab) => void;
   paletteOpen: boolean;
   togglePalette: () => void;
+  pendingPrompt: string | null;
+  branchFromHistory: (prompt: string) => void;
+  consumePending: () => string | null;
 }
 
 export const useUI = create<UIState>(set => ({
   tab: 'chat',
   setTab: (t) => set({ tab: t }),
   paletteOpen: false,
-  togglePalette: () => set(s => ({ paletteOpen: !s.paletteOpen }))
+  togglePalette: () => set(s => ({ paletteOpen: !s.paletteOpen })),
+  pendingPrompt: null,
+  branchFromHistory: (prompt) => set({ pendingPrompt: prompt, tab: 'chat' }),
+  consumePending: () => {
+    let p: string | null = null;
+    set(s => { p = s.pendingPrompt; return { pendingPrompt: null }; });
+    return p;
+  }
 }));
 
 interface SettingsState {
