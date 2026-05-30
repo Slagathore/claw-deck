@@ -27,6 +27,7 @@ interface StepRun {
 export default function AssistantTab() {
   const { data: s, save } = useSettings();
   const setTab = useUI(u => u.setTab);
+  const consumePending = useUI(u => u.consumePending);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -35,6 +36,13 @@ export default function AssistantTab() {
   const [runningPlan, setRunningPlan] = useState<number | null>(null); // turn idx of plan currently executing
   const [autoApprove, setAutoApprove] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const target = useUI.getState().pendingTarget;
+    if (target !== 'assistant') return;
+    const p = consumePending();
+    if (p) setInput(p);
+  }, [consumePending]);
 
   useEffect(() => {
     const off = window.api.ollama.onChunk((c: any) => {
@@ -54,15 +62,18 @@ export default function AssistantTab() {
     await runPlanner(newTurns);
   }
 
-  async function runPlanner(history: Turn[]) {
+  async function runPlanner(history: Turn[], strictRetry: boolean = false) {
     if (!s.chatModel) {
       setTurns(t => [...t, { role: 'assistant', content: 'Error: no chat model is set. Open Settings or run the first-launch tour to pick one.' }]);
       return;
     }
     setBusy(true);
     setLiveContent('');
+    const sys = strictRetry
+      ? PLANNER_SYSTEM_PROMPT + '\n\nIMPORTANT: The user wants you to DO something. You MUST output a single fenced ```json block with summary + steps. Do NOT output prose-only. If unsure, emit a single-step plan of type "note" explaining what you would need.'
+      : PLANNER_SYSTEM_PROMPT;
     const messages = [
-      { role: 'system', content: PLANNER_SYSTEM_PROMPT },
+      { role: 'system', content: sys },
       ...history.map(t => ({ role: t.role, content: t.content }))
     ];
     try {
@@ -85,6 +96,13 @@ export default function AssistantTab() {
       setBusy(false);
       setLiveContent('');
     }
+  }
+
+  async function retryAsPlan(turnIdx: number) {
+    // Re-run from the user turn that produced this assistant reply, with strict JSON reminder.
+    const sliced = turns.slice(0, turnIdx); // drop the failed assistant turn
+    setTurns(sliced);
+    await runPlanner(sliced, true);
   }
 
   async function runPlan(turnIdx: number, plan: Plan) {
@@ -227,8 +245,16 @@ export default function AssistantTab() {
                 onRun={() => runPlan(i, t.parsed!.plan!)}
               />
             )}
-            {t.parsed && !t.parsed.ok && t.role === 'assistant' && (
-              <div className="banner warn">Couldn't parse a plan: {t.parsed.error}</div>
+            {t.parsed && !t.parsed.ok && t.role === 'assistant' && t.parsed.intent === 'malformed' && (
+              <div className="banner warn" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ flex: 1 }}>Couldn't parse a plan: {t.parsed.error}</span>
+                <button onClick={() => retryAsPlan(i)} disabled={busy}>↻ Retry as plan</button>
+              </div>
+            )}
+            {t.parsed && !t.parsed.ok && t.role === 'assistant' && t.parsed.intent === 'explanation' && (
+              <div className="row" style={{ marginTop: 4, justifyContent: 'flex-end' }}>
+                <button onClick={() => retryAsPlan(i)} disabled={busy} title="Ask the model to redo this as an executable plan">⚡ Turn this into a plan</button>
+              </div>
             )}
           </div>
         ))}

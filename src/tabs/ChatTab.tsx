@@ -23,6 +23,7 @@ type Msg = { role: 'user' | 'assistant'; content: string; images?: string[]; thi
 export default function ChatTab() {
   const { data: s } = useSettings();
   const consumePending = useUI(state => state.consumePending);
+  const branchToAssistant = useUI(state => state.branchToAssistant);
   const [backend, setBackend] = useState<'auto' | 'chat' | 'vision' | 'openclaw' | 'claude'>('auto');
   const [model, setModel] = useState<string>(s.chatModel || 'llama3.2');
   const [models, setModels] = useState<string[]>([]);
@@ -42,6 +43,8 @@ export default function ChatTab() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
+    const target = useUI.getState().pendingTarget;
+    if (target !== 'chat') return;
     const p = consumePending();
     if (p) setInput(p);
   }, [consumePending]);
@@ -280,6 +283,11 @@ export default function ChatTab() {
         <div className="col" style={{ width: 180 }}>
           <button onClick={captureScreen} disabled={busy} title="Capture full screen and attach">📷 Screenshot</button>
           <button onClick={captureRegion} disabled={busy} title="Capture, then drag to select a region">✂️ Region…</button>
+          <button
+            onClick={() => { if (input.trim()) branchToAssistant(input); }}
+            disabled={busy || !input.trim()}
+            title="Send this as a task to the Assistant (plan-and-execute agent)"
+          >🤖 To Assistant</button>
           <button className="primary send-btn" onClick={send} disabled={busy} title="Send (Enter)">
             {busy ? 'Sending…' : '▶ Send'}
           </button>

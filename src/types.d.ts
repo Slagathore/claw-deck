@@ -23,6 +23,8 @@ declare global {
         chat: (req: any) => Promise<{ content: string; thinking?: string; raw?: any }>;
         vision: (req: any) => Promise<{ content: string; raw?: any }>;
         pull: (opts: { baseUrl?: string; model: string; id: string }) => Promise<{ ok: boolean; error?: string }>;
+        stop: (opts: { baseUrl?: string; model: string }) => Promise<{ ok: boolean; error?: string }>;
+        delete: (opts: { baseUrl?: string; model: string }) => Promise<{ ok: boolean; error?: string; status?: number }>;
         onChunk: (cb: (c: any) => void) => () => void;
         onPullProgress: (cb: (c: { id: string; status?: string; completed?: number; total?: number; error?: string }) => void) => () => void;
       };
@@ -42,7 +44,17 @@ declare global {
         captureScreen: (sourceId?: string) => Promise<{ dataUrl?: string; error?: string; name?: string }>;
         captureRegion: () => Promise<{ dataUrl?: string; error?: string }>;
       };
-      app: { pickPath: (opts?: any) => Promise<string | null>; version: () => Promise<{ version: string; platform: string; arch: string }> };
+      app: {
+        pickPath: (opts?: any) => Promise<string | null>;
+        version: () => Promise<{ version: string; platform: string; arch: string; closeToTray?: boolean }>;
+        setCloseToTray: (value: boolean) => Promise<{ ok: boolean; closeToTray: boolean }>;
+        quit: () => Promise<void>;
+        show: () => Promise<{ ok: boolean }>;
+      };
+      audit: {
+        scan: (path: string) => Promise<import('../electron/lib/scanner').AuditReport>;
+        pickAndScan: () => Promise<import('../electron/lib/scanner').AuditReport>;
+      };
       prompts: {
         list: () => Promise<{ id: number; name: string; template: string; tags: string; defaults: string; updated_at: number }[]>;
         upsert: (p: { id?: number; name: string; template: string; tags?: string[]; defaults?: Record<string, string> }) => Promise<number>;
@@ -53,10 +65,24 @@ declare global {
         start: (name: string) => Promise<{ ok: boolean; status?: string; pid?: number; reason?: string }>;
         stop: (name: string) => Promise<{ ok: boolean }>;
         startAll: () => Promise<{ name: string; ok: boolean; status?: string; pid?: number; reason?: string }[]>;
+        stopAll: () => Promise<{ stopped: number }>;
       };
       terminal: {
         shells: () => Promise<{ id: string; label: string; binary: string; args: string[]; available: boolean }[]>;
         launchElevated: (opts: { binary: string; args?: string[]; cwd?: string }) => Promise<{ ok: boolean; pid?: number; reason?: string }>;
+      };
+      selfUpgrade: {
+        status: () => Promise<any>;
+        facts: () => Promise<any>;
+        baselineAudit: () => Promise<any>;
+        reflect: (opts: any) => Promise<any>;
+        parseManualPatch: (text: string) => Promise<any>;
+        run: (opts: any) => Promise<any>;
+        rollback: (snapshotId: string) => Promise<{ ok: boolean; reason?: string }>;
+        snapshot: (label?: string) => Promise<{ ok: boolean; snapshot?: any; reason?: string }>;
+        setOrigin: (url: string) => Promise<{ ok: boolean; reason?: string }>;
+        openSourceRoot: () => Promise<{ ok: boolean; path: string }>;
+        onEvent: (cb: (e: any) => void) => () => void;
       };
     };
   }

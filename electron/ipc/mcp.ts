@@ -141,4 +141,10 @@ export function registerMcpHandlers() {
     }
     return out;
   });
+
+  ipcMain.handle('mcp:stopAll', () => {
+    const names = Array.from(running.keys());
+    for (const n of names) stopOne(n);
+    return { stopped: names.length };
+  });
 }

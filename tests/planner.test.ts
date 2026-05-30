@@ -65,10 +65,10 @@ describe('planner.parsePlan', () => {
     expect(out.error).toMatch(/pullModel\.model/);
   });
 
-  it('reports no-plan-found when no JSON present', () => {
+  it('reports explanation intent when no JSON present', () => {
     const out = parsePlan('Just an explanation, no plan.');
     expect(out.ok).toBe(false);
-    expect(out.error).toMatch(/No JSON plan/);
+    expect(out.intent).toBe('explanation');
   });
 
   it('accepts every supported step type', () => {

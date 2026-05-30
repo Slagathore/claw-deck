@@ -66,14 +66,25 @@ export default function StatusBar() {
         {models.length} model{models.length === 1 ? '' : 's'}
       </span>
       {running.length > 0 && (
-        <span className="item" title={running.map(r => r.name).join(', ')}>
+        <span
+          className="item clickable"
+          onClick={async () => {
+            if (confirm(`Unload all ${running.length} model(s) from VRAM?`)) {
+              for (const m of running) await window.api.ollama.stop({ baseUrl: s.ollamaUrl, model: m.name });
+            }
+          }}
+          title={`${running.map(r => r.name).join(', ')} — click to unload all from VRAM`}
+        >
           ▶ {running.length} loaded · {vramText} VRAM
         </span>
       )}
       <span
         className="item clickable"
-        onClick={() => setTab('settings')}
-        title="Configured MCP servers (Model Context Protocol)"
+        onClick={async () => {
+          const r = await window.api.mcp.startAll();
+          console.log('startAll', r);
+        }}
+        title="Start every enabled MCP server"
       >
         MCP: {mcpRunning}/{mcpCount}
       </span>

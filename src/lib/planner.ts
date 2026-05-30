@@ -38,11 +38,48 @@ export interface ParsedPlan {
   plan?: Plan;
   error?: string;
   raw?: string;     // the chunk we extracted (or full text)
+  /** 'explanation' = model answered in prose (no JSON attempted) — NOT an error.
+   *  'malformed'   = model tried to give a plan but it didn't parse.
+   *  'valid'       = parsed cleanly. */
+  intent?: 'explanation' | 'malformed' | 'valid';
 }
 
 const STEP_TYPES = new Set([
   'pullModel', 'setSetting', 'addMcpServer', 'shell', 'openTab', 'webFetch', 'note'
 ]);
+
+/** Strip <think>...</think> blocks (deepseek-r1, qwq, qwen3-thinking, etc.). */
+function stripThinking(text: string): string {
+  if (!text) return '';
+  return text
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/<thinking>[\s\S]*?<\/thinking>/gi, '')
+    .replace(/<\|thinking\|>[\s\S]*?<\|\/thinking\|>/gi, '')
+    .trim();
+}
+
+/** Repair common JSON dialect issues emitted by small models:
+ *   - smart quotes “” ‘’ → "
+ *   - single-quoted strings → double-quoted
+ *   - trailing commas before } or ]
+ *   - // and /* ... *\/ comments
+ *   - JS bareword keys (foo: → "foo":)
+ */
+export function repairJsonish(s: string): string {
+  if (!s) return s;
+  let out = s
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/\/\/.*$/gm, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  // single-quoted strings → double-quoted (only if they don't span lines or contain unescaped ")
+  out = out.replace(/'([^'\\\n]*(?:\\.[^'\\\n]*)*)'/g, (_m, body) => `"${body.replace(/"/g, '\\"')}"`);
+  // bareword object keys → quoted keys
+  out = out.replace(/([{,]\s*)([A-Za-z_$][A-Za-z0-9_$]*)\s*:/g, '$1"$2":');
+  // trailing commas
+  out = out.replace(/,(\s*[}\]])/g, '$1');
+  return out;
+}
 
 /**
  * Extract the first JSON object that looks like a plan from arbitrary LLM
@@ -53,23 +90,28 @@ const STEP_TYPES = new Set([
  */
 export function extractPlanJson(text: string): { json: string | null; raw: string } {
   if (!text) return { json: null, raw: '' };
+  const cleaned = stripThinking(text);
   // 1. fenced json
-  const jsonFence = /```json\s*([\s\S]*?)```/i.exec(text);
-  if (jsonFence) return { json: jsonFence[1].trim(), raw: jsonFence[0] };
+  const jsonFence = /```json\s*([\s\S]*?)```/i.exec(cleaned);
+  if (jsonFence) {
+    const repaired = repairJsonish(jsonFence[1].trim());
+    try { JSON.parse(repaired); return { json: repaired, raw: jsonFence[0] }; } catch { /* fall through to balanced parse */ }
+    return { json: jsonFence[1].trim(), raw: jsonFence[0] };
+  }
   // 2. any fenced block
-  const anyFence = /```\s*([\s\S]*?)```/i.exec(text);
+  const anyFence = /```\s*([\s\S]*?)```/i.exec(cleaned);
   if (anyFence) {
-    const candidate = anyFence[1].trim();
-    try { JSON.parse(candidate); return { json: candidate, raw: anyFence[0] }; } catch { /* fall through */ }
+    const repaired = repairJsonish(anyFence[1].trim());
+    try { JSON.parse(repaired); return { json: repaired, raw: anyFence[0] }; } catch { /* fall through */ }
   }
   // 3. first balanced { ... }
-  const start = text.indexOf('{');
-  if (start < 0) return { json: null, raw: text };
+  const start = cleaned.indexOf('{');
+  if (start < 0) return { json: null, raw: cleaned };
   let depth = 0;
   let inStr = false;
   let esc = false;
-  for (let i = start; i < text.length; i++) {
-    const c = text[i];
+  for (let i = start; i < cleaned.length; i++) {
+    const c = cleaned[i];
     if (inStr) {
       if (esc) { esc = false; continue; }
       if (c === '\\') { esc = true; continue; }
@@ -81,42 +123,55 @@ export function extractPlanJson(text: string): { json: string | null; raw: strin
     else if (c === '}') {
       depth--;
       if (depth === 0) {
-        const candidate = text.slice(start, i + 1);
-        try { JSON.parse(candidate); return { json: candidate, raw: candidate }; }
-        catch { return { json: null, raw: text }; }
+        const candidate = cleaned.slice(start, i + 1);
+        const repaired = repairJsonish(candidate);
+        try { JSON.parse(repaired); return { json: repaired, raw: candidate }; }
+        catch {
+          try { JSON.parse(candidate); return { json: candidate, raw: candidate }; }
+          catch { return { json: null, raw: cleaned }; }
+        }
       }
     }
   }
-  return { json: null, raw: text };
+  return { json: null, raw: cleaned };
 }
 
 export function parsePlan(text: string): ParsedPlan {
+  const cleaned = stripThinking(text || '');
   const { json, raw } = extractPlanJson(text);
-  if (!json) return { ok: false, error: 'No JSON plan found in model output.', raw };
+  if (!json) {
+    // Distinguish a pure-prose explanation (fine — not an error) from a model
+    // that visibly TRIED to emit JSON (e.g. has a ``` fence or a stray '{' / "steps":).
+    const looksLikeAttempt = /```|"steps"\s*:|"summary"\s*:|\bsteps\b\s*:/i.test(cleaned);
+    if (!looksLikeAttempt) {
+      return { ok: false, intent: 'explanation', raw: cleaned };
+    }
+    return { ok: false, intent: 'malformed', error: 'No JSON plan found in model output.', raw };
+  }
   let obj: any;
   try { obj = JSON.parse(json); }
-  catch (e: any) { return { ok: false, error: `Invalid JSON: ${e.message}`, raw: json }; }
-  if (typeof obj !== 'object' || obj === null) return { ok: false, error: 'Plan must be an object.', raw: json };
-  if (typeof obj.summary !== 'string') return { ok: false, error: 'Plan.summary must be a string.', raw: json };
-  if (!Array.isArray(obj.steps)) return { ok: false, error: 'Plan.steps must be an array.', raw: json };
+  catch (e: any) { return { ok: false, intent: 'malformed', error: `Invalid JSON: ${e.message}`, raw: json }; }
+  if (typeof obj !== 'object' || obj === null) return { ok: false, intent: 'malformed', error: 'Plan must be an object.', raw: json };
+  if (typeof obj.summary !== 'string') return { ok: false, intent: 'malformed', error: 'Plan.summary must be a string.', raw: json };
+  if (!Array.isArray(obj.steps)) return { ok: false, intent: 'malformed', error: 'Plan.steps must be an array.', raw: json };
   const steps: PlanStep[] = [];
   for (let i = 0; i < obj.steps.length; i++) {
     const s = obj.steps[i];
-    if (typeof s !== 'object' || s === null) return { ok: false, error: `Step ${i} is not an object.`, raw: json };
-    if (!STEP_TYPES.has(s.type)) return { ok: false, error: `Step ${i} has unknown type "${s.type}".`, raw: json };
+    if (typeof s !== 'object' || s === null) return { ok: false, intent: 'malformed', error: `Step ${i} is not an object.`, raw: json };
+    if (!STEP_TYPES.has(s.type)) return { ok: false, intent: 'malformed', error: `Step ${i} has unknown type "${s.type}".`, raw: json };
     // Per-type field checks (minimal — we don't want to over-reject)
     switch (s.type) {
-      case 'pullModel':    if (typeof s.model !== 'string' || !s.model) return { ok: false, error: `Step ${i} pullModel.model missing`, raw: json }; break;
-      case 'setSetting':   if (typeof s.key !== 'string' || !s.key) return { ok: false, error: `Step ${i} setSetting.key missing`, raw: json }; break;
-      case 'addMcpServer': if (typeof s.name !== 'string' || !s.name || typeof s.command !== 'string') return { ok: false, error: `Step ${i} addMcpServer missing name/command`, raw: json }; break;
-      case 'shell':        if (typeof s.command !== 'string' || !s.command) return { ok: false, error: `Step ${i} shell.command missing`, raw: json }; break;
-      case 'openTab':      if (typeof s.tab !== 'string' || !s.tab) return { ok: false, error: `Step ${i} openTab.tab missing`, raw: json }; break;
-      case 'webFetch':     if (typeof s.url !== 'string' || !s.url) return { ok: false, error: `Step ${i} webFetch.url missing`, raw: json }; break;
-      case 'note':         if (typeof s.text !== 'string') return { ok: false, error: `Step ${i} note.text missing`, raw: json }; break;
+      case 'pullModel':    if (typeof s.model !== 'string' || !s.model) return { ok: false, intent: 'malformed', error: `Step ${i} pullModel.model missing`, raw: json }; break;
+      case 'setSetting':   if (typeof s.key !== 'string' || !s.key) return { ok: false, intent: 'malformed', error: `Step ${i} setSetting.key missing`, raw: json }; break;
+      case 'addMcpServer': if (typeof s.name !== 'string' || !s.name || typeof s.command !== 'string') return { ok: false, intent: 'malformed', error: `Step ${i} addMcpServer missing name/command`, raw: json }; break;
+      case 'shell':        if (typeof s.command !== 'string' || !s.command) return { ok: false, intent: 'malformed', error: `Step ${i} shell.command missing`, raw: json }; break;
+      case 'openTab':      if (typeof s.tab !== 'string' || !s.tab) return { ok: false, intent: 'malformed', error: `Step ${i} openTab.tab missing`, raw: json }; break;
+      case 'webFetch':     if (typeof s.url !== 'string' || !s.url) return { ok: false, intent: 'malformed', error: `Step ${i} webFetch.url missing`, raw: json }; break;
+      case 'note':         if (typeof s.text !== 'string') return { ok: false, intent: 'malformed', error: `Step ${i} note.text missing`, raw: json }; break;
     }
     steps.push(s as PlanStep);
   }
-  return { ok: true, plan: { summary: obj.summary, steps }, raw: json };
+  return { ok: true, intent: 'valid', plan: { summary: obj.summary, steps }, raw: json };
 }
 
 /**

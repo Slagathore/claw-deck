@@ -30,6 +30,8 @@ contextBridge.exposeInMainWorld('api', {
     chat: (req: any) => invoke('ollama:chat', req),
     vision: (req: any) => invoke('ollama:vision', req),
     pull: (opts: { baseUrl?: string; model: string; id: string }) => invoke('ollama:pull', opts),
+    stop: (opts: { baseUrl?: string; model: string }) => invoke('ollama:stop', opts),
+    delete: (opts: { baseUrl?: string; model: string }) => invoke('ollama:delete', opts),
     onChunk: (cb: (c: any) => void) => on('ollama:chunk', cb),
     onPullProgress: (cb: (c: any) => void) => on('ollama:pull', cb)
   },
@@ -51,7 +53,14 @@ contextBridge.exposeInMainWorld('api', {
   },
   app: {
     pickPath: (opts?: any) => invoke('app:pickPath', opts ?? {}),
-    version: () => invoke('app:version')
+    version: () => invoke('app:version'),
+    setCloseToTray: (value: boolean) => invoke('app:setCloseToTray', value),
+    quit: () => invoke('app:quit'),
+    show: () => invoke('app:show')
+  },
+  audit: {
+    scan: (path: string) => invoke('audit:scan', { path }),
+    pickAndScan: () => invoke('audit:pickAndScan')
   },
   prompts: {
     list: () => invoke('prompts:list'),
@@ -62,10 +71,24 @@ contextBridge.exposeInMainWorld('api', {
     list: () => invoke('mcp:list'),
     start: (name: string) => invoke('mcp:start', name),
     stop: (name: string) => invoke('mcp:stop', name),
-    startAll: () => invoke('mcp:startAll')
+    startAll: () => invoke('mcp:startAll'),
+    stopAll: () => invoke('mcp:stopAll')
   },
   terminal: {
     shells: () => invoke('terminal:shells'),
     launchElevated: (opts: { binary: string; args?: string[]; cwd?: string }) => invoke('terminal:launchElevated', opts)
+  },
+  selfUpgrade: {
+    status: () => invoke('selfUpgrade:status'),
+    facts: () => invoke('selfUpgrade:facts'),
+    baselineAudit: () => invoke('selfUpgrade:baselineAudit'),
+    reflect: (opts: any) => invoke('selfUpgrade:reflect', opts),
+    parseManualPatch: (text: string) => invoke('selfUpgrade:parseManualPatch', text),
+    run: (opts: any) => invoke('selfUpgrade:run', opts),
+    rollback: (snapshotId: string) => invoke('selfUpgrade:rollback', { snapshotId }),
+    snapshot: (label?: string) => invoke('selfUpgrade:snapshot', { label }),
+    setOrigin: (url: string) => invoke('selfUpgrade:setOrigin', { url }),
+    openSourceRoot: () => invoke('selfUpgrade:openSourceRoot'),
+    onEvent: (cb: (e: any) => void) => on('selfUpgrade:event', cb)
   }
 });

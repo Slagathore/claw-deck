@@ -20,7 +20,20 @@ const DEFAULTS = {
   yaraBinary: '',
   mcpServers: [] as { name: string; command: string; args?: string[]; env?: Record<string, string>; cwd?: string; enabled?: boolean }[],
   quietMode: false,
-  airgapped: false
+  airgapped: false,
+  selfUpgrade: {
+    backend: 'local' as 'local' | 'remote' | 'openclaw',
+    ollamaUrl: 'http://localhost:11434',
+    ollamaModel: 'llama3.2',
+    remoteUrl: 'https://api.openai.com/v1',
+    remoteKey: '',
+    remoteModel: 'gpt-4o-mini',
+    autoApply: false,
+    sandboxHighRisk: true,
+    launchProbe: true,
+    probeChecks: ['boot', 'db', 'tray', 'ollama', 'render', 'scan'] as string[],
+    goal: 'propose a small, safe improvement to code quality or test coverage'
+  }
 };
 
 export function registerSettingsHandlers() {

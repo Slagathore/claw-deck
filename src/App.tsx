@@ -42,6 +42,13 @@ export default function App() {
     if (loaded && shouldShowOnboarding()) setWizardOpen(true);
   }, [loaded]);
 
+  // Push close-to-tray pref to backend whenever it changes (default: on).
+  useEffect(() => {
+    if (!loaded) return;
+    const enabled = s.closeToTray !== false;
+    window.api.app.setCloseToTray(enabled).catch(() => { /* ignore */ });
+  }, [loaded, s.closeToTray]);
+
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {

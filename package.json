@@ -2,6 +2,11 @@
   "name": "claw-deck",
   "version": "0.1.0",
   "description": "Desktop GUI for OpenClaw + Claude Code over Ollama, with vision, screenshots, secure upgrades, and history.",
+  "author": {
+    "name": "Cole",
+    "email": "cole@clawdeck.local"
+  },
+  "license": "MIT",
   "main": "dist-electron/main.js",
   "bin": {
     "claw-deck": "bin/claw-deck.js"

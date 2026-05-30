@@ -8,7 +8,9 @@ interface UIState {
   paletteOpen: boolean;
   togglePalette: () => void;
   pendingPrompt: string | null;
+  pendingTarget: Tab;
   branchFromHistory: (prompt: string) => void;
+  branchToAssistant: (prompt: string) => void;
   consumePending: () => string | null;
 }
 
@@ -18,7 +20,9 @@ export const useUI = create<UIState>(set => ({
   paletteOpen: false,
   togglePalette: () => set(s => ({ paletteOpen: !s.paletteOpen })),
   pendingPrompt: null,
-  branchFromHistory: (prompt) => set({ pendingPrompt: prompt, tab: 'chat' }),
+  pendingTarget: 'chat',
+  branchFromHistory: (prompt) => set({ pendingPrompt: prompt, pendingTarget: 'chat', tab: 'chat' }),
+  branchToAssistant: (prompt) => set({ pendingPrompt: prompt, pendingTarget: 'assistant', tab: 'assistant' }),
   consumePending: () => {
     let p: string | null = null;
     set(s => { p = s.pendingPrompt; return { pendingPrompt: null }; });

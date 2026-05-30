@@ -58,6 +58,36 @@ export function registerOllamaHandlers() {
     }
   });
 
+  // Unload a model from VRAM by calling /api/generate with keep_alive=0.
+  ipcMain.handle('ollama:stop', async (_e, opts: { baseUrl?: string; model: string }) => {
+    const baseUrl = (opts.baseUrl || 'http://localhost:11434').replace(/\/$/, '');
+    try {
+      const r = await fetch(`${baseUrl}/api/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: opts.model, keep_alive: 0 })
+      });
+      return { ok: r.ok };
+    } catch (e: any) {
+      return { ok: false, error: e.message };
+    }
+  });
+
+  // Delete a pulled model from disk via /api/delete.
+  ipcMain.handle('ollama:delete', async (_e, opts: { baseUrl?: string; model: string }) => {
+    const baseUrl = (opts.baseUrl || 'http://localhost:11434').replace(/\/$/, '');
+    try {
+      const r = await fetch(`${baseUrl}/api/delete`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: opts.model })
+      });
+      return { ok: r.ok, status: r.status };
+    } catch (e: any) {
+      return { ok: false, error: e.message };
+    }
+  });
+
   ipcMain.handle('ollama:chat', async (_e, req: ChatReq) => {
     const url = `${req.baseUrl.replace(/\/$/, '')}/api/chat`;
     const r = await fetch(url, {
