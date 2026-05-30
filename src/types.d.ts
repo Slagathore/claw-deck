@@ -18,6 +18,7 @@ declare global {
       };
       ollama: {
         listModels: (baseUrl?: string) => Promise<{ models: string[]; error?: string }>;
+        ps: (baseUrl?: string) => Promise<{ running: { name: string; size?: number; sizeVram?: number; expiresAt?: number }[]; error?: string }>;
         chat: (req: any) => Promise<{ content: string; thinking?: string; raw?: any }>;
         vision: (req: any) => Promise<{ content: string; raw?: any }>;
         onChunk: (cb: (c: any) => void) => () => void;

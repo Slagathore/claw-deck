@@ -3,6 +3,7 @@ import { useSettings, useUI } from '../store/ui';
 import { splitThinking } from '../lib/thinking';
 import { newMetrics, recordDelta, finalize, view, formatView, MetricsSnapshot } from '../lib/metrics';
 import { routeRequest } from '../lib/router';
+import { summarizeRunning, RunningModel } from '../lib/vram';
 import ImageUploader from '../components/ImageUploader';
 import RegionSelect from '../components/RegionSelect';
 
@@ -22,6 +23,7 @@ export default function ChatTab() {
   const [liveContent, setLiveContent] = useState('');
   const [metrics, setMetrics] = useState<MetricsSnapshot | null>(null);
   const [region, setRegion] = useState<string | null>(null);
+  const [running, setRunning] = useState<RunningModel[]>([]);
   const metricsRef = useRef<MetricsSnapshot | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -32,6 +34,17 @@ export default function ChatTab() {
 
   useEffect(() => {
     window.api.ollama.listModels(s.ollamaUrl).then(r => setModels(r.models ?? []));
+  }, [s.ollamaUrl]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function poll() {
+      const r = await window.api.ollama.ps(s.ollamaUrl);
+      if (!cancelled) setRunning(r.running ?? []);
+    }
+    poll();
+    const t = setInterval(poll, 5000);
+    return () => { cancelled = true; clearInterval(t); };
   }, [s.ollamaUrl]);
 
   useEffect(() => {
@@ -176,6 +189,7 @@ export default function ChatTab() {
           <span className="badge ok">thinking enabled</span>
         )}
         <div style={{ flex: 1 }} />
+        <span className="label" title="models currently loaded in Ollama VRAM">{summarizeRunning(running)}</span>
         {metrics && (
           <span className="label" title="tokens (whitespace), tokens/sec, time-to-first-token, elapsed">
             {formatView(view(metrics))}

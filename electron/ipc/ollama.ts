@@ -41,6 +41,23 @@ export function registerOllamaHandlers() {
     }
   });
 
+  ipcMain.handle('ollama:ps', async (_e, baseUrl: string = 'http://localhost:11434') => {
+    try {
+      const r = await fetch(`${baseUrl.replace(/\/$/, '')}/api/ps`);
+      if (!r.ok) return { error: `HTTP ${r.status}`, running: [] };
+      const j: any = await r.json();
+      const running = (j.models ?? []).map((m: any) => ({
+        name: m.name,
+        size: m.size,
+        sizeVram: m.size_vram,
+        expiresAt: m.expires_at ? Date.parse(m.expires_at) : undefined
+      }));
+      return { running };
+    } catch (e: any) {
+      return { error: e.message, running: [] };
+    }
+  });
+
   ipcMain.handle('ollama:chat', async (_e, req: ChatReq) => {
     const url = `${req.baseUrl.replace(/\/$/, '')}/api/chat`;
     const r = await fetch(url, {

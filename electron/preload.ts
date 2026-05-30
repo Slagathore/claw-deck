@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('api', {
   },
   ollama: {
     listModels: (baseUrl?: string) => invoke('ollama:listModels', baseUrl),
+    ps: (baseUrl?: string) => invoke('ollama:ps', baseUrl),
     chat: (req: any) => invoke('ollama:chat', req),
     vision: (req: any) => invoke('ollama:vision', req),
     onChunk: (cb: (c: any) => void) => on('ollama:chunk', cb)
