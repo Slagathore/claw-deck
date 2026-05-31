@@ -70,6 +70,16 @@ export default function SettingsTab() {
           <input value={draft.claudeCodePath ?? ''} onChange={e => set('claudeCodePath', e.target.value)} placeholder="claude" style={{ flex: 1 }} />
           <button onClick={async () => { const p = await window.api.app.pickPath(); if (p) set('claudeCodePath', p); }}>Pick</button>
         </div>
+        <label className="label">ClawHub CLI (for the Skills tab; <code>npm i -g clawhub</code>)</label>
+        <div className="row">
+          <input value={draft.clawhubPath ?? ''} onChange={e => set('clawhubPath', e.target.value)} placeholder="clawhub" style={{ flex: 1 }} />
+          <button onClick={async () => { const p = await window.api.app.pickPath(); if (p) set('clawhubPath', p); }}>Pick</button>
+        </div>
+        <label className="label">Skills workspace (skills live under <code>&lt;dir&gt;/skills/</code>)</label>
+        <div className="row">
+          <input value={draft.skillsDir ?? ''} onChange={e => set('skillsDir', e.target.value)} placeholder="C:\\Users\\you\\openclaw-workspace" style={{ flex: 1 }} />
+          <button onClick={async () => { const p = await window.api.app.pickPath({ properties: ['openDirectory'] }); if (p) set('skillsDir', p); }}>Pick</button>
+        </div>
       </div>
 
       <div className="card col">

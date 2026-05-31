@@ -6,6 +6,7 @@ const ACTIONS = [
   { id: 'agent', label: 'Chat: turn on Agent mode (plan & execute)' },
   { id: 'tab:library', label: 'Go to: Library (models / MCP / tools)' },
   { id: 'tab:console', label: 'Go to: Console (CLIs + shells)' },
+  { id: 'tab:skills', label: 'Go to: Skills (OpenClaw SKILL.md + ClawHub)' },
   { id: 'tab:history', label: 'Go to: History' },
   { id: 'tab:prompts', label: 'Go to: Prompts' },
   { id: 'tab:settings', label: 'Go to: Settings' },

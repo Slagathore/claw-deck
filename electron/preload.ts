@@ -68,6 +68,14 @@ contextBridge.exposeInMainWorld('api', {
     open: (id: string) => invoke('extensions:open', { id }),
     dir: () => invoke('extensions:dir')
   },
+  skills: {
+    list: (workspace: string) => invoke('skills:list', { workspace }),
+    read: (skillMd: string) => invoke('skills:read', { skillMd }),
+    write: (skillMd: string, content: string) => invoke('skills:write', { skillMd, content }),
+    create: (workspace: string, slug: string, content: string) => invoke('skills:create', { workspace, slug, content }),
+    delete: (dir: string) => invoke('skills:delete', { dir }),
+    open: (target: string) => invoke('skills:open', { target })
+  },
   prompts: {
     list: () => invoke('prompts:list'),
     upsert: (p: any) => invoke('prompts:upsert', p),

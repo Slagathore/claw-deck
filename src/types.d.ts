@@ -61,6 +61,14 @@ declare global {
         open: (id: string) => Promise<{ ok: boolean; path?: string }>;
         dir: () => Promise<string>;
       };
+      skills: {
+        list: (workspace: string) => Promise<{ ok: boolean; skills?: { slug: string; name: string; description: string; dir: string; skillMd: string; hasScripts: boolean }[]; reason?: string }>;
+        read: (skillMd: string) => Promise<{ ok: boolean; content?: string; reason?: string }>;
+        write: (skillMd: string, content: string) => Promise<{ ok: boolean; reason?: string }>;
+        create: (workspace: string, slug: string, content: string) => Promise<{ ok: boolean; dir?: string; skillMd?: string; reason?: string }>;
+        delete: (dir: string) => Promise<{ ok: boolean; reason?: string }>;
+        open: (target: string) => Promise<{ ok: boolean }>;
+      };
       prompts: {
         list: () => Promise<{ id: number; name: string; template: string; tags: string; defaults: string; updated_at: number }[]>;
         upsert: (p: { id?: number; name: string; template: string; tags?: string[]; defaults?: Record<string, string> }) => Promise<number>;

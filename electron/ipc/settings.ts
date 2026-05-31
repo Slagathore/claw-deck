@@ -10,6 +10,8 @@ const DEFAULTS = {
   reasoningModel: 'deepseek-r1',
   openclawPath: '',
   claudeCodePath: 'claude',
+  clawhubPath: 'clawhub',
+  skillsDir: '',
   theme: 'dark',
   showThinking: true,
   policy: { allowlist: ['github.com', 'releases.openclaw.org', 'objects.githubusercontent.com'], requireSignature: false, autoScan: true, signingKeys: [] as { name: string; format: 'pem' | 'hex'; key: string }[] },
