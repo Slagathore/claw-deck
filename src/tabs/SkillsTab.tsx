@@ -16,6 +16,22 @@ interface LocalSkill {
   dir: string; skillMd: string; hasScripts: boolean;
 }
 
+// Shape of an item from `clawhub explore --json`.
+interface RegistryItem {
+  slug: string;
+  displayName?: string;
+  summary?: string;
+  tags?: { latest?: string };
+  stats?: { downloads?: number; installsAllTime?: number; stars?: number; versions?: number };
+  latestVersion?: { version?: string; license?: string | null; changelog?: string };
+  updatedAt?: number;
+}
+
+interface InspectInfo { files?: string[]; license?: string | null; error?: string; }
+
+const SORTS = ['trending', 'newest', 'downloads', 'installs', 'rating'] as const;
+type Sort = typeof SORTS[number];
+
 export default function SkillsTab() {
   const { data: s, save } = useSettings();
   const workspace: string = s.skillsDir || '';
@@ -31,12 +47,20 @@ export default function SkillsTab() {
   const [editContent, setEditContent] = useState('');
   const [dirty, setDirty] = useState(false);
 
-  const [q, setQ] = useState('');
-  const [installSlug, setInstallSlug] = useState('');
   const [cliBusy, setCliBusy] = useState(false);
   const [cliOutput, setCliOutput] = useState('');
   const cliOff = useRef<null | (() => void)>(null);
   const cliBottom = useRef<HTMLDivElement>(null);
+
+  // ClawHub registry browse (structured, via `explore --json`).
+  const [regItems, setRegItems] = useState<RegistryItem[]>([]);
+  const [regFilter, setRegFilter] = useState('');
+  const [sort, setSort] = useState<Sort>('trending');
+  const [browsing, setBrowsing] = useState(false);
+  const [browseErr, setBrowseErr] = useState('');
+  const [inspecting, setInspecting] = useState<Record<string, InspectInfo>>({});
+  const [q, setQ] = useState('');             // semantic (vector) search query
+  const [installSlug, setInstallSlug] = useState('');
 
   async function reloadLocal() {
     if (!workspace) { setSkills([]); return; }
@@ -84,6 +108,64 @@ export default function SkillsTab() {
       setCliBusy(false);
     }
   }
+
+  // Run clawhub and resolve with the full captured stdout (for --json commands).
+  function runClawhubCapture(args: string[]): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+    const binary = s.clawhubPath || 'clawhub';
+    return new Promise(resolve => {
+      window.api.runner.start({ backend: 'shell', binary, args, cwd: workspace || undefined }).then(({ id }) => {
+        let out = ''; let err = '';
+        const off = window.api.runner.onEvent((ev: any) => {
+          if (ev.id !== id) return;
+          if (ev.kind === 'stdout') out += ev.data;
+          else if (ev.kind === 'stderr') err += ev.data;
+          else if (ev.kind === 'exit') { off(); resolve({ ok: ev.data === 0, stdout: out, stderr: err }); }
+          else if (ev.kind === 'error') { off(); resolve({ ok: false, stdout: out, stderr: err + ev.data }); }
+        });
+      }).catch(e => resolve({ ok: false, stdout: '', stderr: e.message }));
+    });
+  }
+
+  // Parse the first JSON value out of CLI stdout (clawhub prefixes a progress line).
+  function parseJson(stdout: string): any {
+    const i = stdout.indexOf('{');
+    if (i < 0) throw new Error('no JSON in output');
+    return JSON.parse(stdout.slice(i));
+  }
+
+  async function browse() {
+    setBrowsing(true); setBrowseErr('');
+    try {
+      const r = await runClawhubCapture(['explore', '--json', '--sort', sort, '--limit', '60']);
+      if (!r.ok) { setBrowseErr(r.stderr.trim() || 'clawhub explore failed (is clawhub installed?)'); return; }
+      const json = parseJson(r.stdout);
+      setRegItems(Array.isArray(json.items) ? json.items : []);
+    } catch (e: any) {
+      setBrowseErr(`could not read registry: ${e.message}`);
+    } finally {
+      setBrowsing(false);
+    }
+  }
+
+  async function inspectSkill(slug: string) {
+    setInspecting(prev => ({ ...prev, [slug]: {} }));
+    try {
+      const r = await runClawhubCapture(['inspect', slug, '--json', '--files']);
+      if (!r.ok) { setInspecting(prev => ({ ...prev, [slug]: { error: r.stderr.trim() || 'inspect failed' } })); return; }
+      const json = parseJson(r.stdout);
+      const files: string[] = (json.files ?? json.version?.files ?? []).map((f: any) => typeof f === 'string' ? f : f.path).filter(Boolean);
+      const license = json.latestVersion?.license ?? json.version?.license ?? json.license ?? null;
+      setInspecting(prev => ({ ...prev, [slug]: { files, license } }));
+    } catch (e: any) {
+      setInspecting(prev => ({ ...prev, [slug]: { error: e.message } }));
+    }
+  }
+
+  const visibleReg = regItems.filter(it => {
+    if (!regFilter.trim()) return true;
+    const q2 = regFilter.toLowerCase();
+    return it.slug.toLowerCase().includes(q2) || (it.displayName ?? '').toLowerCase().includes(q2) || (it.summary ?? '').toLowerCase().includes(q2);
+  });
 
   async function pickWorkspace() {
     const p = await window.api.app.pickPath({ properties: ['openDirectory'] });
@@ -186,21 +268,67 @@ export default function SkillsTab() {
 
       {/* ClawHub registry */}
       <div className="card col">
-        <h3 style={{ margin: 0 }}>ClawHub registry</h3>
-        <div className="row" style={{ flexWrap: 'wrap' }}>
-          <input placeholder='Search skills, e.g. "postgres backups"' value={q} onChange={e => setQ(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter' && q.trim()) runClawhub(['search', q.trim()]); }} style={{ flex: 1, minWidth: 200 }} />
-          <button onClick={() => q.trim() && runClawhub(['search', q.trim()])} disabled={cliBusy}>🔍 Search</button>
-          <button onClick={() => runClawhub(['list'])} disabled={cliBusy} title="What clawhub has installed">Installed</button>
+        <div className="row" style={{ flexWrap: 'wrap', alignItems: 'center' }}>
+          <h3 style={{ margin: 0 }}>ClawHub registry</h3>
+          <span className="label">sort</span>
+          <select value={sort} onChange={e => setSort(e.target.value as Sort)}>
+            {SORTS.map(o => <option key={o} value={o}>{o}</option>)}
+          </select>
+          <button className="primary" onClick={browse} disabled={browsing}>
+            {browsing ? 'Loading…' : (regItems.length ? '↻ Refresh' : '↧ Browse registry')}
+          </button>
+          <input placeholder="filter loaded results…" value={regFilter} onChange={e => setRegFilter(e.target.value)} style={{ flex: 1, minWidth: 160 }} />
+          <button onClick={() => runClawhub(['list'])} disabled={cliBusy} title="What's installed locally (clawhub list)">Installed</button>
           <button onClick={() => runClawhub(['update', '--all'])} disabled={cliBusy} title="Update all installed skills">Update all</button>
         </div>
-        <div className="row" style={{ flexWrap: 'wrap' }}>
+
+        {browseErr && <div className="banner">{browseErr}</div>}
+
+        {regItems.length > 0 && (
+          <div className="col" style={{ maxHeight: 340, overflow: 'auto', gap: 0 }}>
+            <div className="label">{visibleReg.length} of {regItems.length} skills (sorted by {sort})</div>
+            {visibleReg.map(it => {
+              const ins = inspecting[it.slug];
+              return (
+                <div key={it.slug} className="row" style={{ borderTop: '1px solid var(--border)', paddingTop: 8, alignItems: 'flex-start' }}>
+                  <div className="col" style={{ flex: 1, gap: 2 }}>
+                    <div className="row">
+                      <strong>{it.displayName || it.slug}</strong>
+                      <code className="label">{it.slug}</code>
+                      {it.tags?.latest && <span className="badge">v{it.tags.latest}</span>}
+                      {it.latestVersion?.license && <span className="label">{it.latestVersion.license}</span>}
+                    </div>
+                    {it.summary && <div className="label" style={{ color: 'var(--text)' }}>{it.summary}</div>}
+                    <div className="label">
+                      {typeof it.stats?.installsAllTime === 'number' && `⬇ ${it.stats.installsAllTime.toLocaleString()} installs · `}
+                      {typeof it.stats?.downloads === 'number' && `${it.stats.downloads.toLocaleString()} downloads · `}
+                      {typeof it.stats?.stars === 'number' && `★ ${it.stats.stars}`}
+                    </div>
+                    {ins && (ins.error
+                      ? <div className="label" style={{ color: 'var(--bad)' }}>inspect: {ins.error}</div>
+                      : ins.files
+                        ? <div className="label">files: <code>{ins.files.slice(0, 12).join('  ')}</code>{ins.files.length > 12 ? ` …(+${ins.files.length - 12})` : ''}</div>
+                        : <div className="label">inspecting…</div>)}
+                  </div>
+                  <div className="col" style={{ gap: 6, width: 140 }}>
+                    <button className="primary" onClick={() => runClawhub(['install', it.slug])} disabled={cliBusy} title={`clawhub install ${it.slug}`}>⬇ Install</button>
+                    <button onClick={() => inspectSkill(it.slug)} disabled={!!ins && !ins.error && !ins.files}>🔎 Inspect</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <div className="row" style={{ flexWrap: 'wrap', marginTop: 6 }}>
+          <input placeholder='semantic search (clawhub vector search), e.g. "postgres backups"' value={q} onChange={e => setQ(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && q.trim()) runClawhub(['search', q.trim()]); }} style={{ flex: 1, minWidth: 200 }} />
+          <button onClick={() => q.trim() && runClawhub(['search', q.trim()])} disabled={cliBusy} title="Vector search (text results appear below)">🔍 Search</button>
           <input placeholder="install by slug…" value={installSlug} onChange={e => setInstallSlug(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter' && installSlug.trim()) runClawhub(['install', installSlug.trim()]); }} style={{ flex: 1, minWidth: 160 }} />
-          <button className="primary" onClick={() => installSlug.trim() && runClawhub(['install', installSlug.trim()])} disabled={cliBusy || !installSlug.trim()}>
-            ⬇ Install
-          </button>
+            onKeyDown={e => { if (e.key === 'Enter' && installSlug.trim()) runClawhub(['install', installSlug.trim()]); }} style={{ width: 180 }} />
+          <button onClick={() => installSlug.trim() && runClawhub(['install', installSlug.trim()])} disabled={cliBusy || !installSlug.trim()}>⬇</button>
         </div>
+
         {cliOutput && (
           <pre style={{
             background: 'var(--panel-2)', borderRadius: 6, padding: 10, margin: 0, maxHeight: 240, overflow: 'auto',
