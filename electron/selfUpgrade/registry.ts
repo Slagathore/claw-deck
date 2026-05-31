@@ -2,7 +2,7 @@ import { ipcMain, app, dialog } from 'electron';
 import * as crypto from 'crypto';
 import { ensureSourceTree, sourceRoot } from './paths';
 import { repoStatus, setOrigin } from './github';
-import { createSnapshot, restoreSnapshot, listSnapshots, Snapshot } from './snapshot';
+import { createSnapshot, restoreSnapshot, listSnapshots, findSnapshotById, Snapshot } from './snapshot';
 import { PatchSet, validatePatchSet, extractPatchSetFromText } from './patcher';
 import { assessRisk } from './risk';
 import { runPipeline } from './pipeline';
@@ -126,8 +126,10 @@ export function registerSelfUpgradeHandlers() {
   });
 
   ipcMain.handle('selfUpgrade:rollback', async (_e, opts: { snapshotId: string }) => {
-    const snap = lastSnapshots.get(opts.snapshotId);
-    if (!snap) return { ok: false, reason: 'snapshot id not found in this session' };
+    // Prefer the in-memory snapshot from this session; fall back to the durable
+    // on-disk index so rollback still works after an app restart.
+    const snap = lastSnapshots.get(opts.snapshotId) ?? await findSnapshotById(opts.snapshotId);
+    if (!snap) return { ok: false, reason: 'snapshot not found (no in-session record and no entry in the on-disk index)' };
     try {
       await restoreSnapshot(snap);
       return { ok: true };

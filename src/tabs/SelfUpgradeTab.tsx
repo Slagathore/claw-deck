@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import UpgradesTab from './UpgradesTab';
-import { useSettings } from '../store/ui';
+import { useSettings, useUI } from '../store/ui';
+import { useConsole } from '../store/console';
 import { pickAssetFor, isNewer, Platform, Arch, ReleaseCandidate } from '../lib/autoUpdate';
 
 interface OtaStatus {
@@ -95,8 +96,10 @@ export default function SelfUpgradeTab() {
     if (!info) return;
     setOta({ state: 'checking' });
     try {
-      const candidates: ReleaseCandidate[] = await window.api.upgrades.check('self');
-      const newer = (candidates ?? []).find(c => isNewer(c.version, info.version));
+      // upgrades.check resolves to { kind, candidates, note } — not a bare array.
+      const res: any = await window.api.upgrades.check('self');
+      const candidates: ReleaseCandidate[] = Array.isArray(res) ? res : (res?.candidates ?? []);
+      const newer = candidates.find(c => isNewer(c.version, info.version));
       if (!newer) { setOta({ state: 'noUpdate', message: `You're on the latest version (${info.version}).` }); return; }
       const asset = pickAssetFor(newer, info.platform, info.arch);
       setOta({
@@ -186,6 +189,26 @@ export default function SelfUpgradeTab() {
     else { alert('Origin set.'); await refreshStatus(); }
   }
 
+  // In a packaged build the bundled source tree has no node_modules, so the
+  // typecheck/test gates can't run until deps are installed. This kicks off
+  // `npm install` in the source root and surfaces it in the Console.
+  async function prepareDeps() {
+    if (!status?.sourceRoot) return;
+    const npm = navigator.platform.startsWith('Win') ? 'npm.cmd' : 'npm';
+    try {
+      const { id } = await window.api.runner.start({ backend: 'shell', binary: npm, args: ['install', '--no-audit', '--no-fund'], cwd: status.sourceRoot });
+      useConsole.getState().add({
+        id, kind: 'tool', label: 'self-upgrade: npm install',
+        detail: `${npm} install (cwd: ${status.sourceRoot})`, cwd: status.sourceRoot,
+        startedAt: Date.now(), supportsInput: false,
+        output: `[preparing self-upgrade deps] npm install in ${status.sourceRoot}\n`
+      });
+      useUI.getState().setTab('console');
+    } catch (e: any) {
+      alert(`Failed to start npm install: ${e.message}`);
+    }
+  }
+
   return (
     <div className="col">
       <div className="card col">
@@ -204,8 +227,15 @@ export default function SelfUpgradeTab() {
           <button disabled={!!busy} onClick={makeSnapshot}>📸 Manual snapshot</button>
           <button disabled={!!busy} onClick={setOrigin}>🔗 Set GitHub origin</button>
           <button disabled={!!busy} onClick={() => window.api.selfUpgrade.openSourceRoot()}>📂 Open source folder</button>
+          <button disabled={!!busy} onClick={prepareDeps} title="Run npm install in the source tree so the typecheck/test gates can run (needed once in packaged installs)">📦 Prepare deps (npm install)</button>
           <button disabled={!!busy} onClick={refreshStatus}>🔄 Refresh</button>
           {busy && <span className="label">{busy}</span>}
+        </div>
+        <div className="label">
+          The gate runs <code>npm run lint</code> + <code>npm test</code> in the source tree. In a packaged
+          install that tree is bundled without <code>node_modules</code>, so click <strong>Prepare deps</strong>{' '}
+          once (needs Node + npm on PATH). The security-scan delta gate runs regardless. If the gate can't run,
+          the patch is rolled back automatically — it's never applied unverified.
         </div>
 
         <details style={{ marginTop: 8 }}>
@@ -315,7 +345,7 @@ export default function SelfUpgradeTab() {
         </div>
         {ota.message && (<div className={`label ${ota.state === 'error' ? 'bad' : ''}`}>{ota.message}</div>)}
       </div>
-      <UpgradesTab kind="self" title="Claw Deck Self-Upgrade (manual)" />
+      <UpgradesTab kind="self" title="Manual install & history" showCheck={false} />
     </div>
   );
 }

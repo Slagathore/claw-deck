@@ -221,7 +221,7 @@ Allowed step types (use only these):
 - { "type": "setSetting",   "key": "<settings-key>", "value": <any-json> }
 - { "type": "addMcpServer", "name": "<id>", "command": "<bin>", "args": ["..."], "env": {...} }
 - { "type": "shell",        "command": "<bin>", "args": ["..."], "cwd": "<path?>", "description": "<why>" }
-- { "type": "openTab",      "tab": "chat|cli|terminal|history|prompts|settings|upgrades|self|security|library|assistant" }
+- { "type": "openTab",      "tab": "chat|console|library|history|prompts|settings|upgrades|self|security" }
 - { "type": "webFetch",     "url": "<https-url>", "description": "<why>" }
 - { "type": "note",         "text": "<info for the user>" }
 
@@ -231,4 +231,4 @@ Rules:
 - Never run \`rm\`, \`del\`, \`Remove-Item -Recurse\`, \`format\`, or anything destructive without an obvious justification in description.
 - When you only need to explain something, omit the JSON block entirely.
 - Common settings keys: ollamaUrl, chatModel, reasoningModel, visionModel, openclawPath, claudeCodePath.
-- Tab names (use exactly these): chat, cli, terminal, history, prompts, settings, upgrades, self, security, library, assistant.`;
+- Tab names (use exactly these): chat, console, library, history, prompts, settings, upgrades, self, security. (The Console tab runs CLIs and shells; Agent mode lives inside Chat.)`;

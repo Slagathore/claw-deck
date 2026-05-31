@@ -18,9 +18,11 @@
     "build:electron": "tsc -p electron/tsconfig.json",
     "build": "npm run build:renderer && npm run build:electron",
     "start": "npm run build && electron .",
-    "dist": "npm run build && electron-builder --win nsis portable --publish never",
-    "dist:portable": "npm run build && electron-builder --win portable --publish never",
-    "dist:nsis": "npm run build && electron-builder --win nsis --publish never",
+    "stage:source": "node scripts/stage-source.mjs",
+    "dist": "npm run build && npm run stage:source && electron-builder --win nsis portable --publish never",
+    "dist:portable": "npm run build && npm run stage:source && electron-builder --win portable --publish never",
+    "dist:nsis": "npm run build && npm run stage:source && electron-builder --win nsis --publish never",
+    "cert:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/make-dev-cert.ps1",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc -p tsconfig.json --noEmit && tsc -p electron/tsconfig.json --noEmit",
@@ -50,13 +52,18 @@
     "appId": "com.cole.clawdeck",
     "productName": "Claw Deck",
     "files": ["dist/**/*", "dist-electron/**/*", "bin/**/*", "package.json"],
+    "extraResources": [
+      { "from": "staging-source", "to": "source" }
+    ],
     "directories": { "buildResources": "public", "output": "dist-installer" },
     "win": {
       "target": [
         { "target": "nsis", "arch": ["x64"] },
         { "target": "portable", "arch": ["x64"] }
       ],
-      "artifactName": "${productName}-${version}-${arch}.${ext}"
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "certificateSubjectName": "Claw Deck Dev",
+      "signingHashAlgorithms": ["sha256"]
     },
     "nsis": {
       "oneClick": false,

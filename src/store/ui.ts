@@ -1,17 +1,21 @@
 import { create } from 'zustand';
 
-type Tab = 'chat' | 'assistant' | 'library' | 'cli' | 'terminal' | 'history' | 'prompts' | 'settings' | 'upgrades' | 'self' | 'security';
+type Tab = 'chat' | 'library' | 'console' | 'history' | 'prompts' | 'settings' | 'upgrades' | 'self' | 'security';
+
+/** A prompt handed to the Chat tab, optionally requesting Agent (plan & execute) mode. */
+export interface PendingPrompt { prompt: string; agent: boolean; }
 
 interface UIState {
   tab: Tab;
   setTab: (t: Tab) => void;
   paletteOpen: boolean;
   togglePalette: () => void;
-  pendingPrompt: string | null;
-  pendingTarget: Tab;
+  pending: PendingPrompt | null;
+  /** Drop a prior prompt back into Chat (plain chat mode). */
   branchFromHistory: (prompt: string) => void;
+  /** Hand a prompt to Chat in Agent (plan & execute) mode. */
   branchToAssistant: (prompt: string) => void;
-  consumePending: () => string | null;
+  consumePending: () => PendingPrompt | null;
 }
 
 export const useUI = create<UIState>(set => ({
@@ -19,13 +23,12 @@ export const useUI = create<UIState>(set => ({
   setTab: (t) => set({ tab: t }),
   paletteOpen: false,
   togglePalette: () => set(s => ({ paletteOpen: !s.paletteOpen })),
-  pendingPrompt: null,
-  pendingTarget: 'chat',
-  branchFromHistory: (prompt) => set({ pendingPrompt: prompt, pendingTarget: 'chat', tab: 'chat' }),
-  branchToAssistant: (prompt) => set({ pendingPrompt: prompt, pendingTarget: 'assistant', tab: 'assistant' }),
+  pending: null,
+  branchFromHistory: (prompt) => set({ pending: { prompt, agent: false }, tab: 'chat' }),
+  branchToAssistant: (prompt) => set({ pending: { prompt, agent: true }, tab: 'chat' }),
   consumePending: () => {
-    let p: string | null = null;
-    set(s => { p = s.pendingPrompt; return { pendingPrompt: null }; });
+    let p: PendingPrompt | null = null;
+    set(s => { p = s.pending; return { pending: null }; });
     return p;
   }
 }));

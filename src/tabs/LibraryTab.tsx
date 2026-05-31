@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useSettings, useUI } from '../store/ui';
+import { useConsole } from '../store/console';
 import {
   MODEL_CATALOG, MCP_CATALOG, TOOL_CATALOG, OPENCLAW_LIB_CATALOG_FULL,
   searchModels, searchMcp, searchTools, searchOpenClawLibs, riskSummary,
@@ -176,7 +177,12 @@ export default function LibraryTab() {
         <div className="card col">
           <div className="label">
             Community packs that extend OpenClaw with skills, prompts, tools, or integrations.
-            Click <strong>Audit</strong> on any row to review what it can access before installing.
+            Click <strong>Security audit</strong> on any row to review what it can access.
+            <br />
+            <em>Note:</em> these rows are a curated catalog. <strong>Track</strong> records your
+            intent locally (so you can keep a shortlist and re-audit) — it does <strong>not</strong>{' '}
+            download or install code. Install the package itself through OpenClaw / the CLI, then use{' '}
+            <strong>Pick folder &amp; deep-scan</strong> in the audit to vet the installed source.
           </div>
           {searchOpenClawLibs(q).map(lib => (
             <OpenClawRow
@@ -362,7 +368,14 @@ function ToolRow({ preset }: { preset: ToolPreset }) {
 
   async function installWith(cmd: string, args: string[]) {
     const r = await window.api.runner.start({ backend: 'shell', binary: cmd, args });
-    // The Run a CLI tab will show stdout if user navigates there; we just kick it off.
+    // Register the session in the Console store so its output is visible, and
+    // jump there so the user sees the install progress instead of nothing.
+    useConsole.getState().add({
+      id: r.id, kind: 'tool', label: `${preset.name} install`,
+      detail: `${cmd} ${args.join(' ')}`, startedAt: Date.now(), supportsInput: true,
+      output: `[install ${preset.name}] ${cmd} ${args.join(' ')}\n`
+    });
+    useUI.getState().setTab('console');
     return r.id;
   }
 
@@ -421,7 +434,7 @@ function OpenClawRow({ entry, installed, onAudit, onInstall, onUninstall }: {
             {entry.audit.risk} risk
           </span>
           <span className="label" title="Permissions surface">{riskSummary(entry.audit)}</span>
-          {installed && <span className="badge ok">installed</span>}
+          {installed && <span className="badge ok" title="On your local shortlist">tracked</span>}
         </div>
         <div className="label" style={{ color: 'var(--text)' }}>{entry.description}</div>
         <div className="label">
@@ -431,8 +444,8 @@ function OpenClawRow({ entry, installed, onAudit, onInstall, onUninstall }: {
       <div className="col" style={{ width: 220, gap: 6 }}>
         <button onClick={onAudit} title="Show detailed security audit">🛡 Security audit</button>
         {installed
-          ? <button onClick={onUninstall} title="Remove from local install list">Uninstall</button>
-          : <button className="primary" onClick={onInstall} title="Mark as installed (records id locally)">Install</button>}
+          ? <button onClick={onUninstall} title="Remove from your local shortlist">Untrack</button>
+          : <button className="primary" onClick={onInstall} title="Add to your local shortlist (records the id locally; does not download or install code)">＋ Track</button>}
         {entry.homepage && <a href={entry.homepage} target="_blank" rel="noreferrer" className="label">Homepage ↗</a>}
       </div>
     </div>

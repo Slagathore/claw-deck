@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { parseArgs } from '../src/tabs/CliConsoleTab';
+import { parseArgs } from '../src/lib/cliargs';
 
-describe('CliConsoleTab.parseArgs', () => {
+describe('cliargs.parseArgs', () => {
   it('splits on whitespace', () => {
     expect(parseArgs('--task plan --model llama3')).toEqual(['--task', 'plan', '--model', 'llama3']);
   });

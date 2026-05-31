@@ -15,8 +15,8 @@ with malware / bad-actor checks before any update is installed.
 
 | Area | What you get |
 |---|---|
-| Chat / Run | Ollama native chat (streaming), OpenAI-compat vision (Gemini-flash workaround), `Auto` backend that picks chat/vision/reasoning by rules + `/vision` `/reason` `/chat` slash commands |
-| CLI Console | Multi-session runners for OpenClaw / Claude Code: per-session stdout/stderr stream, start/stop, cwd picker, shell-style arg parser |
+| Chat | Ollama native chat (streaming), OpenAI-compat vision (Gemini-flash workaround), `Auto` backend that picks chat/vision/reasoning by rules + `/vision` `/reason` `/chat` slash commands. **Agent mode** toggle turns Chat into a plan-and-execute agent (writes a JSON plan → you approve → it runs each step and feeds results back to itself) |
+| Console | One tab for OpenClaw / Claude Code **and** shells (PowerShell / cmd / Git Bash / WSL / custom). Per-session stdout/stderr stream, stdin input bar, start/stop, cwd picker, shell-style arg parser, UAC-elevated launch, MCP status chips. Library tool-installs stream here too |
 | Live metrics | Tok/s · TTFT · elapsed shown live in the chat header, persisted into history |
 | Thinking pane | Parses `<think>…</think>` blocks (DeepSeek-R1 / QwQ) + native Anthropic-style `thinking` |
 | Images | Multi-image attach + 1-click **desktop screenshot** + **region-select** crop |
@@ -99,16 +99,53 @@ npm run dist:portable  # portable only
 npm run dist:nsis      # NSIS installer only
 ```
 
-Outputs land in `dist-installer/`. Configure code-signing via
-[electron-builder env vars](https://www.electron.build/code-signing):
+Outputs land in `dist-installer/`.
+
+## Code Signing
+
+Signing is **wired into the build**: `package.json` → `build.win.certificateSubjectName`
+is `"Claw Deck Dev"`, so electron-builder signs every produced `.exe` (app,
+elevate, uninstaller, NSIS installer, portable) with a cert found in the
+`CurrentUser\My` store whose subject contains that name.
+
+### Local dev (self-signed test identity)
 
 ```powershell
-$env:CSC_LINK          = "C:\path\to\cert.pfx"   # or base64 contents
-$env:CSC_KEY_PASSWORD  = "<password>"
-npm run dist
+npm run cert:dev   # creates the "Claw Deck Dev" cert, exports certs/*.pfx|cer, trusts it locally
+npm run dist       # builds + signs; verify with Get-AuthenticodeSignature
 ```
 
-Without those vars, electron-builder produces unsigned binaries.
+`npm run cert:dev` ([scripts/make-dev-cert.ps1](scripts/make-dev-cert.ps1)) generates a
+self-signed code-signing cert, writes a portable `certs/clawdeck-dev.pfx`
+(password `clawdeck-dev`, gitignored) and trusts it in this machine's
+`CurrentUser\Root` + `TrustedPublisher` stores so signatures verify as **Valid**
+locally. This is a **test identity only** — other machines don't trust it, so
+Windows SmartScreen still warns end users. Run it once per machine/checkout
+(the cert lives in the Windows store, not in the repo).
+
+### Shipping for real
+
+Self-signed signatures do **not** remove the SmartScreen warning. For a trusted
+build use one of:
+
+- **OV/EV cert on a hardware token / HSM** (DigiCert, Sectigo, …). Since June 2023
+  the private key must live on FIPS-140 hardware, so point
+  `build.win.certificateSubjectName` at that cert's subject (or use a custom
+  `win.sign` hook driving `signtool`), plug in the token, and `npm run dist`.
+- **Azure Trusted Signing** — cloud signing, no token; add the Trusted Signing
+  dlib/endpoint config.
+- **Portable `.pfx`** (CI / another machine) via
+  [electron-builder env vars](https://www.electron.build/code-signing) — overrides
+  the store lookup:
+
+  ```powershell
+  $env:CSC_LINK          = "certs/clawdeck-dev.pfx"  # path or base64 contents
+  $env:CSC_KEY_PASSWORD  = "clawdeck-dev"
+  npm run dist
+  ```
+
+To build **unsigned**, remove `certificateSubjectName` from `build.win` (or build
+on a machine without the cert).
 
 ## Auto-Update Channel
 

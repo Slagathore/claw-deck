@@ -3,10 +3,9 @@ import { useUI } from '../store/ui';
 
 const ACTIONS = [
   { id: 'tab:chat', label: 'Go to: Chat' },
-  { id: 'tab:assistant', label: 'Go to: Assistant (plan & execute)' },
+  { id: 'agent', label: 'Chat: turn on Agent mode (plan & execute)' },
   { id: 'tab:library', label: 'Go to: Library (models / MCP / tools)' },
-  { id: 'tab:cli', label: 'Go to: Run a CLI' },
-  { id: 'tab:terminal', label: 'Go to: Terminal' },
+  { id: 'tab:console', label: 'Go to: Console (CLIs + shells)' },
   { id: 'tab:history', label: 'Go to: History' },
   { id: 'tab:prompts', label: 'Go to: Prompts' },
   { id: 'tab:settings', label: 'Go to: Settings' },
@@ -20,7 +19,7 @@ const ACTIONS = [
 export default function CommandPalette({ onClose }: { onClose: () => void }) {
   const [q, setQ] = useState('');
   const [sel, setSel] = useState(0);
-  const { setTab } = useUI();
+  const { setTab, branchToAssistant } = useUI();
   const filtered = ACTIONS.filter(a => a.label.toLowerCase().includes(q.toLowerCase()));
 
   useEffect(() => {
@@ -37,6 +36,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
   async function run(id?: string) {
     if (!id) return;
     if (id.startsWith('tab:')) setTab(id.slice(4) as any);
+    if (id === 'agent') branchToAssistant('');   // → Chat, Agent mode on
     if (id === 'screenshot') await window.api.screenshot.captureScreen();
     if (id === 'onboarding') {
       try { localStorage.removeItem('clawdeck:onboarded'); } catch { /* ignore */ }

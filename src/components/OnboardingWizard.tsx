@@ -107,7 +107,7 @@ export default function OnboardingWizard({ onClose }: Props) {
               <h3 style={{ margin: 0 }}>2. Pick a chat model</h3>
               {models.length === 0 ? (
                 <div className="banner warn">
-                  No models pulled yet. Open the Terminal tab and run a command like:
+                  No models pulled yet. Open the Console tab and run a command like:
                   <br/><code>ollama pull llama3.2</code>
                   <br/>Then come back and click Refresh.
                   <div className="row" style={{ marginTop: 8 }}>

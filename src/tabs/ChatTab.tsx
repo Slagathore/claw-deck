@@ -4,6 +4,10 @@ import { splitThinking } from '../lib/thinking';
 import { newMetrics, recordDelta, finalize, view, formatView, MetricsSnapshot } from '../lib/metrics';
 import { routeRequest } from '../lib/router';
 import { summarizeRunning, RunningModel } from '../lib/vram';
+import {
+  Plan, PlanStep, ParsedPlan, StepStatus,
+  parsePlan, describeStep, isDestructive, PLANNER_SYSTEM_PROMPT
+} from '../lib/planner';
 import ImageUploader from '../components/ImageUploader';
 import RegionSelect from '../components/RegionSelect';
 import WelcomeCard from '../components/WelcomeCard';
@@ -18,12 +22,36 @@ const PLACEHOLDERS = [
   'Tip: paste an image to auto-route to vision'
 ];
 
-type Msg = { role: 'user' | 'assistant'; content: string; images?: string[]; thinking?: string };
+const AGENT_EXAMPLES = [
+  'Install qwen2.5-coder:7b and use it as the chat model.',
+  'Set up the filesystem MCP server for C:\\Users\\dev\\code_stuff.',
+  'Check whether git, gh, and node are installed.',
+  'Pull a small vision model and switch the vision slot to it.',
+  'Explain how the upgrade gate decides whether to install a binary.'
+];
 
+type Msg = {
+  role: 'user' | 'assistant';
+  content: string;
+  images?: string[];
+  thinking?: string;
+  parsed?: ParsedPlan;          // present for assistant turns produced in Agent mode
+};
+
+interface StepRun { status: StepStatus; output: string; }
+
+/**
+ * Unified Chat — plain chat plus an in-tab "Agent mode" (the former Assistant
+ * tab). Agent mode prompts the model for a JSON plan, renders it as an
+ * approve-and-run checklist, executes each step via IPC, and feeds the results
+ * back to the model for the next move.
+ */
 export default function ChatTab() {
-  const { data: s } = useSettings();
-  const consumePending = useUI(state => state.consumePending);
-  const branchToAssistant = useUI(state => state.branchToAssistant);
+  const { data: s, save } = useSettings();
+  const setTab = useUI(u => u.setTab);
+  const consumePending = useUI(u => u.consumePending);
+
+  const [agent, setAgent] = useState(false);
   const [backend, setBackend] = useState<'auto' | 'chat' | 'vision' | 'openclaw' | 'claude'>('auto');
   const [model, setModel] = useState<string>(s.chatModel || 'llama3.2');
   const [models, setModels] = useState<string[]>([]);
@@ -38,15 +66,20 @@ export default function ChatTab() {
   const [running, setRunning] = useState<RunningModel[]>([]);
   const [ollamaError, setOllamaError] = useState<string | null>(null);
   const [placeholderIdx, setPlaceholderIdx] = useState(0);
+  // Agent-mode state.
+  const [autoApprove, setAutoApprove] = useState(false);
+  const [runs, setRuns] = useState<Record<string, StepRun>>({}); // key: `turnIdx:stepIdx`
+  const [runningPlan, setRunningPlan] = useState<number | null>(null);
   const metricsRef = useRef<MetricsSnapshot | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  // Consume a prompt branched in from History / Prompts / palette (with agent intent).
   useEffect(() => {
-    const target = useUI.getState().pendingTarget;
-    if (target !== 'chat') return;
     const p = consumePending();
-    if (p) setInput(p);
+    if (!p) return;
+    if (p.agent) setAgent(true);
+    if (p.prompt) setInput(p.prompt);
   }, [consumePending]);
 
   useEffect(() => {
@@ -90,14 +123,14 @@ export default function ChatTab() {
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [msgs, liveContent]);
 
-  async function send() {
-    if (!input.trim() && images.length === 0) return;
+  // ---- plain chat send -----------------------------------------------------
+
+  async function sendChat() {
     setBusy(true); setLiveContent(''); setLiveThinking('');
     const m0 = newMetrics();
     metricsRef.current = m0;
     setMetrics(m0);
 
-    // Route if backend === 'auto'
     let resolvedBackend: 'chat' | 'vision' | 'openclaw' | 'claude';
     let resolvedModel: string;
     let cleanedPrompt = input;
@@ -109,7 +142,7 @@ export default function ChatTab() {
       });
       cleanedPrompt = routed.cleanedPrompt;
       routeReason = routed.reason;
-      resolvedBackend = routed.backend === 'reasoning' ? 'chat' : routed.backend; // reasoning rides the chat path with a different model
+      resolvedBackend = routed.backend === 'reasoning' ? 'chat' : routed.backend;
       resolvedModel = routed.model;
     } else {
       resolvedBackend = backend;
@@ -125,7 +158,6 @@ export default function ChatTab() {
       let response = '';
       let thinking = '';
       if (resolvedBackend === 'vision' || (resolvedBackend !== 'openclaw' && resolvedBackend !== 'claude' && images.length > 0)) {
-        // OpenAI-compat vision path (works for Gemini-flash through Ollama OpenAI endpoint)
         const messages = next.map(m => {
           if (m.images && m.images.length > 0) {
             return {
@@ -156,7 +188,7 @@ export default function ChatTab() {
         response = r.content;
         thinking = r.thinking || '';
       } else {
-        response = `(${resolvedBackend} CLI mode: open the CLI Console tab to start a session.)`;
+        response = `(${resolvedBackend} CLI mode: open the Console tab to start a session.)`;
       }
       const parsed = splitThinking(response);
       const asst: Msg = { role: 'assistant', content: parsed.visible || response, thinking: thinking || parsed.thinking };
@@ -187,6 +219,153 @@ export default function ChatTab() {
     }
   }
 
+  // ---- agent (plan & execute) ----------------------------------------------
+
+  function send() {
+    if (!input.trim() && images.length === 0) return;
+    if (busy) return;
+    if (agent) {
+      const userMsg: Msg = { role: 'user', content: input };
+      const next = [...msgs, userMsg];
+      setMsgs(next);
+      setInput('');
+      runPlanner(next);
+    } else {
+      sendChat();
+    }
+  }
+
+  const agentModel = s.reasoningModel || model || s.chatModel;
+
+  async function runPlanner(history: Msg[], strictRetry: boolean = false) {
+    if (!agentModel) {
+      setMsgs(t => [...t, { role: 'assistant', content: 'Error: no chat model is set. Open Settings or run the first-launch tour to pick one.' }]);
+      return;
+    }
+    setBusy(true);
+    setLiveContent('');
+    const sys = strictRetry
+      ? PLANNER_SYSTEM_PROMPT + '\n\nIMPORTANT: The user wants you to DO something. You MUST output a single fenced ```json block with summary + steps. Do NOT output prose-only. If unsure, emit a single-step plan of type "note" explaining what you would need.'
+      : PLANNER_SYSTEM_PROMPT;
+    const messages = [
+      { role: 'system', content: sys },
+      ...history.map(t => ({ role: t.role, content: t.content }))
+    ];
+    try {
+      const r = await window.api.ollama.chat({ baseUrl: s.ollamaUrl, model: agentModel, messages, stream: true });
+      const parsed = parsePlan(r.content);
+      const asst: Msg = { role: 'assistant', content: r.content, parsed };
+      setMsgs(t => [...t, asst]);
+      if (parsed.ok && parsed.plan && autoApprove) {
+        setTimeout(() => runPlan(history.length, parsed.plan!), 50);
+      }
+    } catch (e: any) {
+      setMsgs(t => [...t, { role: 'assistant', content: `Error talking to Ollama: ${e.message}` }]);
+    } finally {
+      setBusy(false);
+      setLiveContent('');
+    }
+  }
+
+  async function retryAsPlan(turnIdx: number) {
+    const sliced = msgs.slice(0, turnIdx);
+    setMsgs(sliced);
+    await runPlanner(sliced, true);
+  }
+
+  async function runPlan(turnIdx: number, plan: Plan) {
+    setRunningPlan(turnIdx);
+    const results: { step: PlanStep; status: StepStatus; output: string }[] = [];
+    for (let i = 0; i < plan.steps.length; i++) {
+      const key = `${turnIdx}:${i}`;
+      setRuns(r => ({ ...r, [key]: { status: 'running', output: '' } }));
+      const res = await executeStep(plan.steps[i], (chunk) => {
+        setRuns(r => ({ ...r, [key]: { status: 'running', output: (r[key]?.output ?? '') + chunk } }));
+      });
+      setRuns(r => ({ ...r, [key]: { status: res.ok ? 'ok' : 'error', output: (r[key]?.output ?? '') + (res.tail ?? '') } }));
+      results.push({ step: plan.steps[i], status: res.ok ? 'ok' : 'error', output: res.tail ?? '' });
+      if (!res.ok) break;
+    }
+    setRunningPlan(null);
+    const recap = results.map((r, i) =>
+      `Step ${i + 1} (${r.step.type}): ${r.status.toUpperCase()}` +
+      (r.output ? `\n  output: ${r.output.slice(-300)}` : '')
+    ).join('\n');
+    const followUp: Msg = { role: 'user', content: `[plan-results]\n${recap}\n\nWhat should I do next?` };
+    const next = [...msgs.slice(0, turnIdx + 1), followUp];
+    setMsgs(next);
+    await runPlanner(next);
+  }
+
+  async function executeStep(step: PlanStep, onChunk: (s: string) => void): Promise<{ ok: boolean; tail?: string }> {
+    try {
+      switch (step.type) {
+        case 'note':
+          onChunk(step.text);
+          return { ok: true };
+        case 'openTab': {
+          // Tolerate plans that still use pre-merge tab names.
+          const map: Record<string, string> = { cli: 'console', terminal: 'console', assistant: 'chat' };
+          const t = map[step.tab] ?? step.tab;
+          setTab(t as any);
+          onChunk(`Switched to ${t} tab.`);
+          return { ok: true };
+        }
+        case 'setSetting':
+          await save({ [step.key]: step.value });
+          onChunk(`Saved ${step.key} = ${JSON.stringify(step.value)}`);
+          return { ok: true };
+        case 'pullModel': {
+          const id = `agent:${Date.now()}:${step.model}`;
+          let lastPct = -1;
+          const off = window.api.ollama.onPullProgress(ev => {
+            if (ev.id !== id) return;
+            if (ev.total && ev.completed) {
+              const pct = Math.round((ev.completed / ev.total) * 100);
+              if (pct !== lastPct) { lastPct = pct; onChunk(`\r${ev.status ?? 'pulling'} ${pct}%`); }
+            } else if (ev.status) {
+              onChunk(`\n${ev.status}`);
+            }
+            if (ev.error) onChunk(`\nERROR: ${ev.error}`);
+          });
+          const r = await window.api.ollama.pull({ baseUrl: s.ollamaUrl, model: step.model, id });
+          off();
+          return { ok: !!r.ok, tail: r.error };
+        }
+        case 'addMcpServer': {
+          const existing = s.mcpServers ?? [];
+          const next = [...existing.filter((x: any) => x.name !== step.name), { name: step.name, command: step.command, args: step.args ?? [], env: step.env ?? {}, enabled: true }];
+          await save({ mcpServers: next });
+          onChunk(`MCP server "${step.name}" saved.`);
+          return { ok: true };
+        }
+        case 'webFetch': {
+          try {
+            const res = await fetch(step.url);
+            const text = await res.text();
+            onChunk(text.slice(0, 1500));
+            return { ok: res.ok };
+          } catch (e: any) { return { ok: false, tail: e.message }; }
+        }
+        case 'shell': {
+          return await new Promise((resolve) => {
+            window.api.runner.start({ backend: 'shell', binary: step.command, args: step.args ?? [], cwd: step.cwd })
+              .then(({ id }) => {
+                const off = window.api.runner.onEvent(ev => {
+                  if (ev.id !== id) return;
+                  if (ev.kind === 'stdout' || ev.kind === 'stderr') onChunk(ev.data);
+                  if (ev.kind === 'exit') { off(); resolve({ ok: ev.data === 0, tail: `\n[exit ${ev.data}]` }); }
+                  if (ev.kind === 'error') { off(); resolve({ ok: false, tail: `\n[error: ${ev.data}]` }); }
+                });
+              });
+          });
+        }
+      }
+    } catch (e: any) {
+      return { ok: false, tail: e.message };
+    }
+  }
+
   async function captureScreen() {
     const r = await window.api.screenshot.captureScreen();
     if (r.dataUrl) setImages(imgs => [...imgs, r.dataUrl!]);
@@ -201,23 +380,40 @@ export default function ChatTab() {
     <div className="col" style={{ height: '100%' }}>
       <WelcomeCard models={models} running={running} />
       <div className="row">
-        <select value={backend} onChange={e => setBackend(e.target.value as any)}>
-          <option value="auto">Auto (route by content)</option>
-          <option value="chat">Ollama Chat</option>
-          <option value="vision">Vision (OpenAI-compat)</option>
-          <option value="openclaw">OpenClaw CLI</option>
-          <option value="claude">Claude Code CLI</option>
-        </select>
+        <label
+          className={`badge ${agent ? 'ok' : ''}`}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer', padding: '4px 10px' }}
+          title="Agent mode: Claw writes a plan, you approve, it runs each step and feeds results back to itself."
+        >
+          <input type="checkbox" checked={agent} onChange={e => setAgent(e.target.checked)} />
+          🤖 Agent mode
+        </label>
+        {!agent && (
+          <select value={backend} onChange={e => setBackend(e.target.value as any)}>
+            <option value="auto">Auto (route by content)</option>
+            <option value="chat">Ollama Chat</option>
+            <option value="vision">Vision (OpenAI-compat)</option>
+            <option value="openclaw">OpenClaw CLI</option>
+            <option value="claude">Claude Code CLI</option>
+          </select>
+        )}
         <select value={model} onChange={e => setModel(e.target.value)} style={{ minWidth: 220 }}>
           <option value={model}>{model}</option>
           {models.filter(m => m !== model).map(m => <option key={m} value={m}>{m}</option>)}
         </select>
-        {s.showThinking && (liveThinking || msgs.some(m => m.thinking)) && (
+        {agent && <span className="label">plans with <code>{agentModel || '(no model)'}</code></span>}
+        {agent && (
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <input type="checkbox" checked={autoApprove} onChange={e => setAutoApprove(e.target.checked)} />
+            <span className="label">Auto-approve plans</span>
+          </label>
+        )}
+        {!agent && s.showThinking && (liveThinking || msgs.some(m => m.thinking)) && (
           <span className="badge ok">thinking enabled</span>
         )}
         <div style={{ flex: 1 }} />
         <span className="label" title="models currently loaded in Ollama VRAM">{summarizeRunning(running)}</span>
-        {metrics && (
+        {!agent && metrics && (
           <span className="label" title="tokens (whitespace), tokens/sec, time-to-first-token, elapsed">
             {formatView(view(metrics))}
           </span>
@@ -233,14 +429,24 @@ export default function ChatTab() {
       )}
 
       <div className="card" style={{ flex: 1, overflow: 'auto' }}>
-        {msgs.length === 0 && (
+        {msgs.length === 0 && !agent && (
           <QuickstartCards onPick={p => { setInput(p); textareaRef.current?.focus(); }} />
+        )}
+        {msgs.length === 0 && agent && (
+          <div className="col" style={{ gap: 6 }}>
+            <div className="label">Agent mode — ask me to <em>do</em> something. I'll plan, you approve, I run it:</div>
+            {AGENT_EXAMPLES.map(p => (
+              <button key={p} style={{ textAlign: 'left' }} onClick={() => setInput(p)}>{p}</button>
+            ))}
+          </div>
         )}
         {msgs.map((m, i) => (
           <div key={i}>
             <div className={`msg ${m.role}`}>
               <div className="label" style={{ marginBottom: 4 }}>{m.role}</div>
-              {m.content}
+              {m.role === 'assistant' && m.parsed?.ok
+                ? m.content.replace(/```json[\s\S]*?```/i, '').trim() || '(plan below)'
+                : m.content}
               {m.images && m.images.length > 0 && (
                 <div className="row" style={{ marginTop: 6, flexWrap: 'wrap' }}>
                   {m.images.map((u, j) => <img key={j} src={u} className="thumb" />)}
@@ -250,46 +456,63 @@ export default function ChatTab() {
             {s.showThinking && m.thinking && (
               <div className="thinking"><b>thinking:</b> {m.thinking}</div>
             )}
+            {m.parsed?.ok && m.parsed.plan && (
+              <PlanCard
+                turnIdx={i}
+                plan={m.parsed.plan}
+                runs={runs}
+                isRunning={runningPlan === i}
+                onRun={() => runPlan(i, m.parsed!.plan!)}
+              />
+            )}
+            {m.parsed && !m.parsed.ok && m.role === 'assistant' && m.parsed.intent === 'malformed' && (
+              <div className="banner warn" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ flex: 1 }}>Couldn't parse a plan: {m.parsed.error}</span>
+                <button onClick={() => retryAsPlan(i)} disabled={busy}>↻ Retry as plan</button>
+              </div>
+            )}
+            {m.parsed && !m.parsed.ok && m.role === 'assistant' && m.parsed.intent === 'explanation' && (
+              <div className="row" style={{ marginTop: 4, justifyContent: 'flex-end' }}>
+                <button onClick={() => retryAsPlan(i)} disabled={busy} title="Ask the model to redo this as an executable plan">⚡ Turn this into a plan</button>
+              </div>
+            )}
           </div>
         ))}
         {busy && (
           <div className="msg assistant">
-            {liveContent || <span className="label">…</span>}
-            {s.showThinking && liveThinking && <div className="thinking"><b>thinking:</b> {liveThinking}</div>}
+            {liveContent || <span className="label">{agent ? '…thinking' : '…'}</span>}
+            {!agent && s.showThinking && liveThinking && <div className="thinking"><b>thinking:</b> {liveThinking}</div>}
           </div>
         )}
         <div ref={bottomRef} />
       </div>
 
-      <ImageUploader value={images} onChange={setImages} />
+      {!agent && <ImageUploader value={images} onChange={setImages} />}
       <div className="row" style={{ alignItems: 'stretch' }}>
         <div style={{ flex: 1, position: 'relative' }}>
-          <SlashMenu
-            query={input}
-            onPick={cmd => {
-              const rest = input.replace(/^\s*\S*/, '');
-              setInput(cmd + (rest.startsWith(' ') ? rest : ' ' + rest.trimStart()));
-              textareaRef.current?.focus();
-            }}
-          />
+          {!agent && (
+            <SlashMenu
+              query={input}
+              onPick={cmd => {
+                const rest = input.replace(/^\s*\S*/, '');
+                setInput(cmd + (rest.startsWith(' ') ? rest : ' ' + rest.trimStart()));
+                textareaRef.current?.focus();
+              }}
+            />
+          )}
           <textarea
             ref={textareaRef}
-            placeholder={PLACEHOLDERS[placeholderIdx]}
+            placeholder={agent ? 'Ask me to do something… (Shift+Enter for newline)' : PLACEHOLDERS[placeholderIdx]}
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
           />
         </div>
         <div className="col" style={{ width: 180 }}>
-          <button onClick={captureScreen} disabled={busy} title="Capture full screen and attach">📷 Screenshot</button>
-          <button onClick={captureRegion} disabled={busy} title="Capture, then drag to select a region">✂️ Region…</button>
-          <button
-            onClick={() => { if (input.trim()) branchToAssistant(input); }}
-            disabled={busy || !input.trim()}
-            title="Send this as a task to the Assistant (plan-and-execute agent)"
-          >🤖 To Assistant</button>
+          {!agent && <button onClick={captureScreen} disabled={busy} title="Capture full screen and attach">📷 Screenshot</button>}
+          {!agent && <button onClick={captureRegion} disabled={busy} title="Capture, then drag to select a region">✂️ Region…</button>}
           <button className="primary send-btn" onClick={send} disabled={busy} title="Send (Enter)">
-            {busy ? 'Sending…' : '▶ Send'}
+            {busy ? (agent ? 'Planning…' : 'Sending…') : (agent ? '▶ Ask Claw' : '▶ Send')}
           </button>
         </div>
       </div>
@@ -300,6 +523,47 @@ export default function ChatTab() {
           onCrop={url => { setImages(imgs => [...imgs, url]); setRegion(null); }}
         />
       )}
+    </div>
+  );
+}
+
+function PlanCard({ turnIdx, plan, runs, isRunning, onRun }: {
+  turnIdx: number; plan: Plan; runs: Record<string, StepRun>; isRunning: boolean; onRun: () => void;
+}) {
+  const anyDone = plan.steps.some((_, i) => runs[`${turnIdx}:${i}`]);
+  const allOk = plan.steps.every((_, i) => runs[`${turnIdx}:${i}`]?.status === 'ok');
+  return (
+    <div className="card col" style={{ borderLeft: '3px solid var(--accent)', marginTop: 4 }}>
+      <div className="row">
+        <strong>Plan</strong>
+        <span className="label">{plan.summary}</span>
+        <div style={{ flex: 1 }} />
+        {!anyDone && (
+          <button className="primary" onClick={onRun} disabled={isRunning} title="Execute every step in order">
+            {isRunning ? 'Running…' : '▶ Approve & Run'}
+          </button>
+        )}
+        {anyDone && allOk && <span className="badge ok">all steps ok</span>}
+      </div>
+      <ol style={{ margin: 0, paddingLeft: 18 }}>
+        {plan.steps.map((s, i) => {
+          const key = `${turnIdx}:${i}`;
+          const r = runs[key];
+          const icon = r?.status === 'ok' ? '✓' : r?.status === 'error' ? '✗' : r?.status === 'running' ? '…' : isDestructive(s) ? '⚠' : '·';
+          const color = r?.status === 'ok' ? 'var(--good)' : r?.status === 'error' ? 'var(--bad)' : r?.status === 'running' ? 'var(--warn)' : 'var(--muted)';
+          return (
+            <li key={i} style={{ marginBottom: 6 }}>
+              <span style={{ color, marginRight: 6 }}>{icon}</span>
+              {describeStep(s)}
+              {r?.output && (
+                <pre style={{ margin: '4px 0 0 18px', padding: 6, background: 'var(--bg)', borderRadius: 4, fontSize: 11, maxHeight: 160, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
+                  {r.output.slice(-2000)}
+                </pre>
+              )}
+            </li>
+          );
+        })}
+      </ol>
     </div>
   );
 }

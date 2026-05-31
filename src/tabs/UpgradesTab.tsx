@@ -11,7 +11,7 @@ interface Candidate {
   assets: { name: string; url: string; size?: number }[];
 }
 
-export default function UpgradesTab({ kind, title }: { kind: 'openclaw' | 'self'; title: string }) {
+export default function UpgradesTab({ kind, title, showCheck = true }: { kind: 'openclaw' | 'self'; title: string; showCheck?: boolean }) {
   const [list, setList] = useState<any[]>([]);
   const [url, setUrl] = useState('');
   const [version, setVersion] = useState('');
@@ -65,6 +65,7 @@ export default function UpgradesTab({ kind, title }: { kind: 'openclaw' | 'self'
     <div className="col">
       <h2 style={{ margin: 0 }}>{title}</h2>
 
+      {showCheck && (
       <div className="card col">
         <div className="row">
           <h3 style={{ margin: 0, flex: 1 }}>Available Releases</h3>
@@ -97,6 +98,7 @@ export default function UpgradesTab({ kind, title }: { kind: 'openclaw' | 'self'
           </div>
         ))}
       </div>
+      )}
 
       <div className="card col">
         <h3 style={{ margin: 0 }}>Install / Update</h3>

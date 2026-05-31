@@ -1,10 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { useSettings, useUI } from './store/ui';
+import { useConsole } from './store/console';
 import ChatTab from './tabs/ChatTab';
-import AssistantTab from './tabs/AssistantTab';
 import LibraryTab from './tabs/LibraryTab';
-import CliConsoleTab from './tabs/CliConsoleTab';
-import TerminalTab from './tabs/TerminalTab';
+import ConsoleTab from './tabs/ConsoleTab';
 import HistoryTab from './tabs/HistoryTab';
 import PromptVaultTab from './tabs/PromptVaultTab';
 import SettingsTab from './tabs/SettingsTab';
@@ -18,11 +17,9 @@ import OnboardingWizard, { shouldShowOnboarding } from './components/OnboardingW
 type TabDef = readonly [key: string, icon: string, label: string, hint: string];
 
 const TABS: readonly TabDef[] = [
-  ['chat',      '💬', 'Chat',           'Talk to your local LLM. Auto-routes to chat / vision / reasoning. Streaming + tokens/sec.'],
-  ['assistant', '🤖', 'Assistant',      'Ask Claw to plan and execute a multi-step task (install a model, set up MCP, etc.).'],
+  ['chat',      '💬', 'Chat',           'Talk to your local LLM. Auto-routes to chat / vision / reasoning. Flip on Agent mode to plan & execute multi-step tasks.'],
   ['library',   '📚', 'Library',        'One-click installs: popular Ollama models, MCP servers, system tools.'],
-  ['cli',       '🐚', 'Run a CLI',      'Spawn OpenClaw or Claude Code as a subprocess with live stdout streaming.'],
-  ['terminal',  '⌨️', 'Terminal',       'General-purpose shell — PowerShell / cmd / Git Bash / WSL / custom. Supports UAC elevation.'],
+  ['console',   '🐚', 'Console',        'Run OpenClaw / Claude Code or any shell (PowerShell / cmd / Git Bash / WSL / custom) with live streaming + UAC elevation.'],
   ['history',   '📜', 'History',        'Searchable log of every chat turn. Click ↳ to branch a prior prompt back into Chat.'],
   ['prompts',   '📋', 'Prompts',        'Reusable prompt templates with {{variable}} substitution.'],
   ['settings',  '⚙️', 'Settings',       'Configure Ollama URL, models, CLI paths, signing keys, MCP servers.'],
@@ -59,6 +56,14 @@ export default function App() {
     return () => window.removeEventListener('keydown', h);
   }, [togglePalette]);
 
+  // One global runner-event subscription routes stdout/stderr/exit/error into
+  // the Console store. Any tab can launch a session (Console, Library installs)
+  // and it shows up in the Console with live output.
+  useEffect(() => {
+    const off = window.api.runner.onEvent((ev: any) => useConsole.getState().handleEvent(ev));
+    return off;
+  }, []);
+
   if (!loaded) return <div style={{ padding: 30 }}>Loading…</div>;
 
   // Show a red dot on Settings if Ollama URL or default chat model is empty.
@@ -93,10 +98,8 @@ export default function App() {
       </aside>
       <main className="main">
         {tab === 'chat' && <ChatTab />}
-        {tab === 'assistant' && <AssistantTab />}
         {tab === 'library' && <LibraryTab />}
-        {tab === 'cli' && <CliConsoleTab />}
-        {tab === 'terminal' && <TerminalTab />}
+        {tab === 'console' && <ConsoleTab />}
         {tab === 'history' && <HistoryTab />}
         {tab === 'prompts' && <PromptVaultTab />}
         {tab === 'settings' && <SettingsTab />}
