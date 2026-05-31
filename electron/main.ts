@@ -12,6 +12,7 @@ import { registerPromptHandlers } from './ipc/prompts';
 import { registerMcpHandlers, stopAllMcp } from './ipc/mcp';
 import { registerTerminalHandlers } from './ipc/terminal';
 import { registerAuditHandlers } from './ipc/audit';
+import { registerExtensionHandlers } from './ipc/extensions';
 import { registerSelfUpgradeHandlers } from './selfUpgrade/registry';
 import { executeProbeMode } from './selfUpgrade/probe';
 
@@ -175,6 +176,7 @@ app.whenReady().then(async () => {
   registerMcpHandlers();
   registerTerminalHandlers();
   registerAuditHandlers();
+  registerExtensionHandlers();
   registerSelfUpgradeHandlers();
 
   ipcMain.handle('app:pickPath', async (_e, opts: { properties?: string[] }) => {

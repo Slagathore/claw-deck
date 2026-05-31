@@ -29,19 +29,6 @@ export function registerScreenshotHandlers(desktopCapturer: DesktopCapturer, scr
     const png = src.thumbnail.toPNG();
     return { dataUrl: `data:image/png;base64,${png.toString('base64')}`, name: src.name };
   });
-
-  ipcMain.handle('screenshot:region', async () => {
-    // Region capture is implemented in the renderer using the full-screen capture
-    // plus an overlay window. Here we just return the full screen for cropping.
-    const display = screen.getPrimaryDisplay();
-    const { width, height } = display.size;
-    const scale = display.scaleFactor || 1;
-    const sources = await desktopCapturer.getSources({
-      types: ['screen'],
-      thumbnailSize: { width: Math.floor(width * scale), height: Math.floor(height * scale) }
-    });
-    const src = sources[0];
-    if (!src) return { error: 'no source' };
-    return { dataUrl: `data:image/png;base64,${src.thumbnail.toPNG().toString('base64')}`, name: src.name };
-  });
+  // Region capture is done in the renderer: full-screen capture (above) + the
+  // RegionSelect overlay crops client-side. No separate main-process handler needed.
 }

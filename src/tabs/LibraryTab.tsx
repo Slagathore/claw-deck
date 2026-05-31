@@ -7,6 +7,7 @@ import {
   ModelEntry, McpPreset, ToolPreset, OpenClawLibEntry, SecurityAudit
 } from '../lib/catalog';
 import { formatBytes } from '../lib/vram';
+import DeepScanReport from '../components/DeepScanReport';
 
 type Section = 'models' | 'mcp' | 'tools' | 'openclaw';
 
@@ -29,11 +30,39 @@ export default function LibraryTab() {
   const [installedOpenclaw, setInstalledOpenclaw] = useState<string[]>(() => {
     try { return JSON.parse(localStorage.getItem('clawdeck:installedExtensions') ?? '[]'); } catch { return []; }
   });
-  const [auditFor, setAuditFor] = useState<OpenClawLibEntry | null>(null);
+  const [auditFor, setAuditFor] = useState<{ entry: OpenClawLibEntry; report?: any; path?: string } | null>(null);
+  // Real installs: id -> on-disk path (fetched + scanned via the extensions IPC).
+  const [extPaths, setExtPaths] = useState<Record<string, string>>(() => {
+    try { return JSON.parse(localStorage.getItem('clawdeck:extPaths') ?? '{}'); } catch { return {}; }
+  });
+  const [installingExt, setInstallingExt] = useState<string | null>(null);
 
   function persistInstalledOpenclaw(ids: string[]) {
     setInstalledOpenclaw(ids);
     try { localStorage.setItem('clawdeck:installedExtensions', JSON.stringify(ids)); } catch { /* ignore */ }
+  }
+  function persistExtPaths(map: Record<string, string>) {
+    setExtPaths(map);
+    try { localStorage.setItem('clawdeck:extPaths', JSON.stringify(map)); } catch { /* ignore */ }
+  }
+
+  async function installExtension(lib: OpenClawLibEntry) {
+    setInstallingExt(lib.id);
+    try {
+      const r = await window.api.extensions.install({ id: lib.id, kind: lib.source.kind, ref: lib.source.ref });
+      if (!r.ok) { alert(`Install failed: ${r.reason || 'unknown'}`); return; }
+      persistExtPaths({ ...extPaths, [lib.id]: r.path || '' });
+      setAuditFor({ entry: lib, report: r.report, path: r.path });  // show the fresh scan
+    } finally {
+      setInstallingExt(null);
+    }
+  }
+
+  async function uninstallExtension(lib: OpenClawLibEntry) {
+    if (!confirm(`Delete the installed files for ${lib.name}? (Keeps it on your shortlist.)`)) return;
+    await window.api.extensions.uninstall(lib.id);
+    const next = { ...extPaths }; delete next[lib.id];
+    persistExtPaths(next);
   }
 
   // Refresh installed model list periodically.
@@ -177,31 +206,39 @@ export default function LibraryTab() {
         <div className="card col">
           <div className="label">
             Community packs that extend OpenClaw with skills, prompts, tools, or integrations.
-            Click <strong>Security audit</strong> on any row to review what it can access.
-            <br />
-            <em>Note:</em> these rows are a curated catalog. <strong>Track</strong> records your
-            intent locally (so you can keep a shortlist and re-audit) — it does <strong>not</strong>{' '}
-            download or install code. Install the package itself through OpenClaw / the CLI, then use{' '}
-            <strong>Pick folder &amp; deep-scan</strong> in the audit to vet the installed source.
+            <strong>Install &amp; scan</strong> fetches the real source (git clone / npm pack) into your
+            app data and runs the static security scanner over it before you trust it — curated/unpublished
+            refs will fail honestly. <strong>Track</strong> keeps a lightweight shortlist without fetching.
+            Click <strong>Security audit</strong> any time for the curated review + a deep scan.
           </div>
           {searchOpenClawLibs(q).map(lib => (
             <OpenClawRow
               key={lib.id}
               entry={lib}
               installed={installedOpenclaw.includes(lib.id)}
-              onAudit={() => setAuditFor(lib)}
-              onInstall={() => {
+              realInstalled={!!extPaths[lib.id]}
+              installing={installingExt === lib.id}
+              onAudit={() => setAuditFor({ entry: lib })}
+              onRealInstall={() => installExtension(lib)}
+              onRealUninstall={() => uninstallExtension(lib)}
+              onOpenFolder={() => window.api.extensions.open(lib.id)}
+              onTrack={() => {
                 const next = installedOpenclaw.includes(lib.id) ? installedOpenclaw : [...installedOpenclaw, lib.id];
                 persistInstalledOpenclaw(next);
               }}
-              onUninstall={() => persistInstalledOpenclaw(installedOpenclaw.filter(x => x !== lib.id))}
+              onUntrack={() => persistInstalledOpenclaw(installedOpenclaw.filter(x => x !== lib.id))}
             />
           ))}
         </div>
       )}
 
       {auditFor && (
-        <AuditModal entry={auditFor} onClose={() => setAuditFor(null)} />
+        <AuditModal
+          entry={auditFor.entry}
+          initialReport={auditFor.report}
+          installedPath={auditFor.path}
+          onClose={() => setAuditFor(null)}
+        />
       )}
     </div>
   );
@@ -417,12 +454,17 @@ function riskBadgeClass(risk: SecurityAudit['risk']): string {
   return 'badge';
 }
 
-function OpenClawRow({ entry, installed, onAudit, onInstall, onUninstall }: {
+function OpenClawRow({ entry, installed, realInstalled, installing, onAudit, onRealInstall, onRealUninstall, onOpenFolder, onTrack, onUntrack }: {
   entry: OpenClawLibEntry;
   installed: boolean;
+  realInstalled: boolean;
+  installing: boolean;
   onAudit: () => void;
-  onInstall: () => void;
-  onUninstall: () => void;
+  onRealInstall: () => void;
+  onRealUninstall: () => void;
+  onOpenFolder: () => void;
+  onTrack: () => void;
+  onUntrack: () => void;
 }) {
   return (
     <div className="row" style={{ borderTop: '1px solid var(--border)', paddingTop: 10, alignItems: 'flex-start' }}>
@@ -434,18 +476,30 @@ function OpenClawRow({ entry, installed, onAudit, onInstall, onUninstall }: {
             {entry.audit.risk} risk
           </span>
           <span className="label" title="Permissions surface">{riskSummary(entry.audit)}</span>
-          {installed && <span className="badge ok" title="On your local shortlist">tracked</span>}
+          {realInstalled && <span className="badge ok" title="Fetched + scanned on disk">installed</span>}
+          {installed && !realInstalled && <span className="badge ok" title="On your local shortlist">tracked</span>}
         </div>
         <div className="label" style={{ color: 'var(--text)' }}>{entry.description}</div>
         <div className="label">
           v{entry.version} · {entry.source.kind}:<code>{entry.source.ref}</code> · {entry.audit.license}
         </div>
       </div>
-      <div className="col" style={{ width: 220, gap: 6 }}>
+      <div className="col" style={{ width: 230, gap: 6 }}>
         <button onClick={onAudit} title="Show detailed security audit">🛡 Security audit</button>
+        {realInstalled ? (
+          <div className="row" style={{ gap: 6 }}>
+            <button onClick={onOpenFolder} title="Open the installed files" style={{ flex: 1 }}>📂 Open</button>
+            <button onClick={onRealUninstall} title="Delete the installed files" style={{ color: 'var(--bad)' }}>Uninstall</button>
+          </div>
+        ) : (
+          <button className="primary" onClick={onRealInstall} disabled={installing}
+            title="Fetch the real source (git clone / npm pack) and deep-scan it">
+            {installing ? 'Installing…' : '⬇ Install & scan'}
+          </button>
+        )}
         {installed
-          ? <button onClick={onUninstall} title="Remove from your local shortlist">Untrack</button>
-          : <button className="primary" onClick={onInstall} title="Add to your local shortlist (records the id locally; does not download or install code)">＋ Track</button>}
+          ? <button onClick={onUntrack} title="Remove from your local shortlist">Untrack</button>
+          : <button onClick={onTrack} title="Add to your local shortlist (no fetch)">＋ Track</button>}
         {entry.homepage && <a href={entry.homepage} target="_blank" rel="noreferrer" className="label">Homepage ↗</a>}
       </div>
     </div>
@@ -461,10 +515,12 @@ function AuditRow({ k, v }: { k: string; v: React.ReactNode }) {
   );
 }
 
-function AuditModal({ entry, onClose }: { entry: OpenClawLibEntry; onClose: () => void }) {
+function AuditModal({ entry, onClose, initialReport, installedPath }: {
+  entry: OpenClawLibEntry; onClose: () => void; initialReport?: any; installedPath?: string;
+}) {
   const a = entry.audit;
   const [scanning, setScanning] = useState(false);
-  const [report, setReport] = useState<any | null>(null);
+  const [report, setReport] = useState<any | null>(initialReport ?? null);
   const [showAllFindings, setShowAllFindings] = useState(false);
 
   async function runDeepScan(picker: boolean) {
@@ -501,6 +557,12 @@ function AuditModal({ entry, onClose }: { entry: OpenClawLibEntry; onClose: () =
           </span>
           <button onClick={onClose} title="Close (Esc)">×</button>
         </div>
+
+        {installedPath && (
+          <div className="banner info" style={{ marginTop: 8 }}>
+            ✓ Fetched + scanned on disk at <code style={{ fontSize: 11 }}>{installedPath}</code>. The scan below is of the real code.
+          </div>
+        )}
 
         <div className="col" style={{ gap: 6, marginTop: 12 }}>
           <AuditRow k="Source" v={<code>{entry.source.kind}:{entry.source.ref}</code>} />
@@ -580,90 +642,3 @@ function AuditModal({ entry, onClose }: { entry: OpenClawLibEntry; onClose: () =
   );
 }
 
-function severityBadge(sev: string): string {
-  if (sev === 'critical') return 'badge bad';
-  if (sev === 'high') return 'badge bad';
-  if (sev === 'medium') return 'badge warn';
-  if (sev === 'low') return 'badge';
-  return 'badge';
-}
-
-function DeepScanReport({ report, showAll, onToggleShowAll }: {
-  report: any;
-  showAll: boolean;
-  onToggleShowAll: () => void;
-}) {
-  if (!report.ok) {
-    return <div className="banner warn">Scan failed: {report.error ?? 'unknown error'}</div>;
-  }
-  const findings: any[] = report.findings ?? [];
-  const summary = report.summary ?? {};
-  const visible = showAll ? findings : findings.slice(0, 25);
-  const worst = ['critical', 'high', 'medium', 'low', 'info'].find(s => (summary[s] ?? 0) > 0);
-
-  return (
-    <div className="col" style={{ gap: 8 }}>
-      <div className="row" style={{ flexWrap: 'wrap' }}>
-        <span className="badge ok">{report.fileCount} files</span>
-        <span className="badge">{Math.round((report.bytesScanned ?? 0) / 1024)} KB scanned</span>
-        <span className="badge">{report.durationMs} ms</span>
-        {summary.critical > 0 && <span className="badge bad">{summary.critical} critical</span>}
-        {summary.high > 0 && <span className="badge bad">{summary.high} high</span>}
-        {summary.medium > 0 && <span className="badge warn">{summary.medium} medium</span>}
-        {summary.low > 0 && <span className="badge">{summary.low} low</span>}
-        {summary.info > 0 && <span className="badge">{summary.info} info</span>}
-        {findings.length === 0 && <span className="badge ok">no risky patterns matched</span>}
-      </div>
-
-      {report.manifest && (
-        <div className="col" style={{ gap: 2, padding: 8, background: 'var(--panel-2)', borderRadius: 4 }}>
-          <div className="label"><strong>{report.manifest.name ?? '(unnamed)'}</strong> v{report.manifest.version ?? '?'} · {report.manifest.license ?? 'no license'}</div>
-          <div className="label" style={{ fontSize: 10, wordBreak: 'break-all' }}>{report.manifest.hash}</div>
-          {report.manifest.scripts && Object.keys(report.manifest.scripts).length > 0 && (
-            <div className="label">
-              Scripts: {Object.keys(report.manifest.scripts).join(', ')}
-              {(report.manifest.scripts.preinstall || report.manifest.scripts.install || report.manifest.scripts.postinstall) &&
-                <span className="badge warn" style={{ marginLeft: 6 }}>lifecycle hook present</span>}
-            </div>
-          )}
-          {report.manifest.dependencies && (
-            <div className="label">{Object.keys(report.manifest.dependencies).length} runtime deps</div>
-          )}
-        </div>
-      )}
-
-      {findings.length > 0 && (
-        <div className="col" style={{ gap: 4 }}>
-          <div className="label" style={{ color: 'var(--muted)' }}>
-            Findings (worst first; {showAll ? 'showing all' : `showing first ${visible.length} of ${findings.length}`})
-          </div>
-          {visible.map((f, i) => (
-            <div key={i} className="col" style={{ padding: 6, borderLeft: `3px solid ${f.severity === 'critical' || f.severity === 'high' ? 'var(--bad)' : f.severity === 'medium' ? '#d4a017' : 'var(--muted)'}`, paddingLeft: 8, background: 'var(--panel-2)', gap: 2 }}>
-              <div className="row">
-                <span className={severityBadge(f.severity)}>{f.severity}</span>
-                <code style={{ fontSize: 11 }}>{f.rule}</code>
-                <span className="label" style={{ fontSize: 11 }}>{f.file}:{f.line}</span>
-              </div>
-              <code style={{ fontSize: 11, wordBreak: 'break-all', color: 'var(--text)' }}>{f.snippet}</code>
-              <div className="label" style={{ fontSize: 11 }}>{f.reason}</div>
-            </div>
-          ))}
-          {findings.length > visible.length && (
-            <button onClick={onToggleShowAll} style={{ alignSelf: 'flex-start' }}>
-              Show all {findings.length}
-            </button>
-          )}
-          {showAll && findings.length > 25 && (
-            <button onClick={onToggleShowAll} style={{ alignSelf: 'flex-start' }}>Collapse</button>
-          )}
-        </div>
-      )}
-
-      {findings.length === 0 && worst === undefined && (
-        <div className="label" style={{ color: 'var(--ok)' }}>
-          ✓ No matches for the built-in rule set. This is NOT proof the code is safe — only that the static checks didn't fire.
-        </div>
-      )}
-    </div>
-  );
-}

@@ -30,6 +30,7 @@ function parseTags(s: string): string[] {
 
 export default function PromptVaultTab() {
   const branch = useUI(s => s.branchFromHistory);
+  const branchAgent = useUI(s => s.branchToAssistant);
   const [items, setItems] = useState<Prompt[]>([]);
   const [draft, setDraft] = useState<Draft>(EMPTY);
   const [filter, setFilter] = useState('');
@@ -83,6 +84,11 @@ export default function PromptVaultTab() {
   function useInChat() {
     if (!preview.trim()) return;
     branch(preview);
+  }
+
+  function useInAgent() {
+    if (!preview.trim()) return;
+    branchAgent(preview);
   }
 
   return (
@@ -147,6 +153,7 @@ export default function PromptVaultTab() {
         <div className="row" style={{ marginTop: 12 }}>
           <button onClick={save} disabled={!draft.name.trim() || !draft.template.trim()}>{draft.id ? 'Save changes' : 'Save new prompt'}</button>
           <button onClick={useInChat} disabled={!preview.trim()}>Use in Chat →</button>
+          <button onClick={useInAgent} disabled={!preview.trim()} title="Send to Chat in Agent (plan & execute) mode">Use in Agent 🤖 →</button>
         </div>
       </div>
     </div>

@@ -256,6 +256,16 @@ export default function ChatTab() {
       const parsed = parsePlan(r.content);
       const asst: Msg = { role: 'assistant', content: r.content, parsed };
       setMsgs(t => [...t, asst]);
+      // Record the agent turn in History (skip the auto plan-results follow-ups).
+      const lastUser = [...history].reverse().find(m => m.role === 'user');
+      if (lastUser && !lastUser.content.startsWith('[plan-results]')) {
+        window.api.history.add({
+          backend: 'agent', model: agentModel,
+          prompt: lastUser.content,
+          response: parsed.ok && parsed.plan ? `Plan: ${parsed.plan.summary}\n\n${r.content}` : r.content,
+          meta: { source: 'agent', planOk: parsed.ok, steps: parsed.plan?.steps?.length ?? 0 }
+        }).catch(() => { /* best-effort */ });
+      }
       if (parsed.ok && parsed.plan && autoApprove) {
         setTimeout(() => runPlan(history.length, parsed.plan!), 50);
       }

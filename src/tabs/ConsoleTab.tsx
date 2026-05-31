@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useSettings } from '../store/ui';
 import { useConsole, SessionKind } from '../store/console';
 import { parseArgs } from '../lib/cliargs';
+import TerminalView from '../components/TerminalView';
 
 /**
  * Unified Console — merges the former "Run a CLI" and "Terminal" tabs.
@@ -103,12 +104,15 @@ export default function ConsoleTab() {
 
     try {
       const backend = isAiCli ? r.kind : 'shell';
-      const res = await window.api.runner.start({ backend, binary: r.binary, args: r.args, cwd: cwd || undefined });
+      // Shells & custom binaries get a real pseudo-terminal (rendered with xterm);
+      // AI CLIs / tools stay piped (rendered in a <pre> with the input bar).
+      const wantPty = !isAiCli;
+      const res = await window.api.runner.start({ backend, binary: r.binary, args: r.args, cwd: cwd || undefined, pty: wantPty });
       add({
         id: res.id, kind: r.kind, label: r.label,
         detail: `${r.binary} ${r.args.join(' ')}`.trim(), cwd: cwd || undefined,
-        startedAt: Date.now(), supportsInput: true,
-        output: `[start] ${r.binary} ${r.args.join(' ')}\n`
+        startedAt: Date.now(), supportsInput: true, pty: !!res.pty,
+        output: res.pty ? '' : `[start] ${r.binary} ${r.args.join(' ')}\n`
       });
     } catch (e: any) {
       alert(`Failed to start: ${e.message}`);
@@ -220,32 +224,41 @@ export default function ConsoleTab() {
         {active && (
           <>
             <div className="row">
-              <span className="label" title={active.detail}>{active.detail || active.label}{active.cwd ? ` @ ${active.cwd}` : ''}</span>
+              <span className="label" title={active.detail}>
+                {active.pty && <span className="badge ok" style={{ marginRight: 6 }}>pty</span>}
+                {active.detail || active.label}{active.cwd ? ` @ ${active.cwd}` : ''}
+              </span>
               <div style={{ flex: 1 }} />
               {active.exited == null && <button onClick={() => stop(active.id)}>Stop</button>}
               <button onClick={() => remove(active.id)}>Close</button>
             </div>
-            <pre style={{
-              flex: 1, overflow: 'auto', background: 'var(--panel-2)',
-              borderRadius: 6, padding: 10, margin: 0,
-              fontFamily: 'Cascadia Code, Consolas, monospace', fontSize: 12,
-              whiteSpace: 'pre-wrap', wordBreak: 'break-word', minHeight: 200
-            }}>
-              {active.output}
-              <div ref={bottomRef} />
-            </pre>
-            {active.supportsInput && (
-              <div className="row">
-                <input
-                  placeholder="type input + Enter (piped to the process stdin)"
-                  value={input}
-                  onChange={e => setInput(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); send(); } }}
-                  disabled={active.exited != null}
-                  style={{ flex: 1, fontFamily: 'Cascadia Code, Consolas, monospace' }}
-                />
-                <button onClick={send} disabled={active.exited != null || !input.trim()}>Send</button>
-              </div>
+            {active.pty ? (
+              <TerminalView key={active.id} session={active} />
+            ) : (
+              <>
+                <pre style={{
+                  flex: 1, overflow: 'auto', background: 'var(--panel-2)',
+                  borderRadius: 6, padding: 10, margin: 0,
+                  fontFamily: 'Cascadia Code, Consolas, monospace', fontSize: 12,
+                  whiteSpace: 'pre-wrap', wordBreak: 'break-word', minHeight: 200
+                }}>
+                  {active.output}
+                  <div ref={bottomRef} />
+                </pre>
+                {active.supportsInput && (
+                  <div className="row">
+                    <input
+                      placeholder="type input + Enter (piped to the process stdin)"
+                      value={input}
+                      onChange={e => setInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); send(); } }}
+                      disabled={active.exited != null}
+                      style={{ flex: 1, fontFamily: 'Cascadia Code, Consolas, monospace' }}
+                    />
+                    <button onClick={send} disabled={active.exited != null || !input.trim()}>Send</button>
+                  </div>
+                )}
+              </>
             )}
           </>
         )}

@@ -12,9 +12,10 @@ declare global {
         clear: () => Promise<boolean>;
       };
       runner: {
-        start: (opts: any) => Promise<{ id: string }>;
+        start: (opts: any) => Promise<{ id: string; pty?: boolean }>;
         stop: (id: string) => Promise<boolean>;
-        input: (id: string, data: string) => Promise<boolean>;
+        input: (id: string, data: string, raw?: boolean) => Promise<boolean>;
+        resize: (id: string, cols: number, rows: number) => Promise<boolean>;
         onEvent: (cb: (e: any) => void) => () => void;
       };
       ollama: {
@@ -42,7 +43,6 @@ declare global {
       screenshot: {
         listSources: () => Promise<any[]>;
         captureScreen: (sourceId?: string) => Promise<{ dataUrl?: string; error?: string; name?: string }>;
-        captureRegion: () => Promise<{ dataUrl?: string; error?: string }>;
       };
       app: {
         pickPath: (opts?: any) => Promise<string | null>;
@@ -54,6 +54,12 @@ declare global {
       audit: {
         scan: (path: string) => Promise<import('../electron/lib/scanner').AuditReport>;
         pickAndScan: () => Promise<import('../electron/lib/scanner').AuditReport>;
+      };
+      extensions: {
+        install: (opts: { id: string; kind: 'npm' | 'github' | 'local'; ref: string }) => Promise<{ ok: boolean; path?: string; report?: import('../electron/lib/scanner').AuditReport; reason?: string }>;
+        uninstall: (id: string) => Promise<{ ok: boolean; reason?: string }>;
+        open: (id: string) => Promise<{ ok: boolean; path?: string }>;
+        dir: () => Promise<string>;
       };
       prompts: {
         list: () => Promise<{ id: number; name: string; template: string; tags: string; defaults: string; updated_at: number }[]>;

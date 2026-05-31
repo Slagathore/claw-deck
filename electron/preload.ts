@@ -21,7 +21,8 @@ contextBridge.exposeInMainWorld('api', {
   runner: {
     start: (opts: any) => invoke('runner:start', opts),
     stop: (id: string) => invoke('runner:stop', id),
-    input: (id: string, data: string) => invoke('runner:input', id, data),
+    input: (id: string, data: string, raw?: boolean) => invoke('runner:input', id, data, raw),
+    resize: (id: string, cols: number, rows: number) => invoke('runner:resize', id, cols, rows),
     onEvent: (cb: (e: any) => void) => on('runner:event', cb)
   },
   ollama: {
@@ -48,8 +49,7 @@ contextBridge.exposeInMainWorld('api', {
   },
   screenshot: {
     listSources: () => invoke('screenshot:sources'),
-    captureScreen: (sourceId?: string) => invoke('screenshot:capture', sourceId),
-    captureRegion: () => invoke('screenshot:region')
+    captureScreen: (sourceId?: string) => invoke('screenshot:capture', sourceId)
   },
   app: {
     pickPath: (opts?: any) => invoke('app:pickPath', opts ?? {}),
@@ -61,6 +61,12 @@ contextBridge.exposeInMainWorld('api', {
   audit: {
     scan: (path: string) => invoke('audit:scan', { path }),
     pickAndScan: () => invoke('audit:pickAndScan')
+  },
+  extensions: {
+    install: (opts: { id: string; kind: 'npm' | 'github' | 'local'; ref: string }) => invoke('extensions:install', opts),
+    uninstall: (id: string) => invoke('extensions:uninstall', { id }),
+    open: (id: string) => invoke('extensions:open', { id }),
+    dir: () => invoke('extensions:dir')
   },
   prompts: {
     list: () => invoke('prompts:list'),

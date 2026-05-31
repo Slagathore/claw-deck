@@ -16,11 +16,13 @@ with malware / bad-actor checks before any update is installed.
 | Area | What you get |
 |---|---|
 | Chat | Ollama native chat (streaming), OpenAI-compat vision (Gemini-flash workaround), `Auto` backend that picks chat/vision/reasoning by rules + `/vision` `/reason` `/chat` slash commands. **Agent mode** toggle turns Chat into a plan-and-execute agent (writes a JSON plan → you approve → it runs each step and feeds results back to itself) |
-| Console | One tab for OpenClaw / Claude Code **and** shells (PowerShell / cmd / Git Bash / WSL / custom). Per-session stdout/stderr stream, stdin input bar, start/stop, cwd picker, shell-style arg parser, UAC-elevated launch, MCP status chips. Library tool-installs stream here too |
+| Console | One tab for OpenClaw / Claude Code **and** shells (PowerShell / cmd / Git Bash / WSL / custom). Shells run in a **real pseudo-terminal** (node-pty + xterm.js — colors, line editing, isatty), with graceful fallback to piped stdio. Per-session streaming, start/stop, cwd picker, arg parser, UAC-elevated launch, MCP status chips. Library tool-installs stream here too |
 | Live metrics | Tok/s · TTFT · elapsed shown live in the chat header, persisted into history |
 | Thinking pane | Parses `<think>…</think>` blocks (DeepSeek-R1 / QwQ) + native Anthropic-style `thinking` |
 | Images | Multi-image attach + 1-click **desktop screenshot** + **region-select** crop |
-| History | SQLite, searchable, deletable, **branch** (↳) reuses a prior prompt as the new input |
+| Library | One-click Ollama model pulls, MCP presets, system-tool installers, and an OpenClaw extension catalog with **real Install & scan** (git clone / `npm pack` → static security scan) |
+| History | SQLite, searchable, deletable, **branch** (↳) reuses a prior prompt. Logs **every** run — chat, Agent plans, and Console sessions |
+| Security | **Deep folder scan** (eval / child_process / secret reads / obfuscation / exfil heuristics) shared with the upgrade gate + Library audit, plus the hash-chained audit log |
 | Reproducibility | Each turn auto-records model, backend, base URL, timestamp into `history.meta.snapshot` |
 | Settings | Persistent — Ollama URL, OpenAI-compat URL/key, model names, CLI paths, upgrade policy, signing keys, GitHub PAT, VirusTotal key |
 | Release feeds | GitHub Releases poller per `kind` (openclaw / self); release notes shown before install; "Use" button prefills install form |

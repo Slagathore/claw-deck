@@ -29,7 +29,10 @@
     "postinstall": "electron-builder install-app-deps || echo skipped"
   },
   "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "better-sqlite3": "^11.3.0",
+    "node-pty": "^1.1.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "zustand": "^4.5.5"
@@ -51,19 +54,43 @@
   "build": {
     "appId": "com.cole.clawdeck",
     "productName": "Claw Deck",
-    "files": ["dist/**/*", "dist-electron/**/*", "bin/**/*", "package.json"],
-    "extraResources": [
-      { "from": "staging-source", "to": "source" }
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "bin/**/*",
+      "package.json"
     ],
-    "directories": { "buildResources": "public", "output": "dist-installer" },
+    "extraResources": [
+      {
+        "from": "staging-source",
+        "to": "source"
+      }
+    ],
+    "asarUnpack": ["**/node_modules/node-pty/**"],
+    "directories": {
+      "buildResources": "public",
+      "output": "dist-installer"
+    },
     "win": {
       "target": [
-        { "target": "nsis", "arch": ["x64"] },
-        { "target": "portable", "arch": ["x64"] }
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "artifactName": "${productName}-${version}-${arch}.${ext}",
       "certificateSubjectName": "Claw Deck Dev",
-      "signingHashAlgorithms": ["sha256"]
+      "signingHashAlgorithms": [
+        "sha256"
+      ]
     },
     "nsis": {
       "oneClick": false,
@@ -75,7 +102,11 @@
       "artifactName": "${productName}-${version}-portable-${arch}.${ext}"
     },
     "publish": [
-      { "provider": "github", "owner": "Slagathore", "repo": "claw-deck" }
+      {
+        "provider": "github",
+        "owner": "Slagathore",
+        "repo": "claw-deck"
+      }
     ]
   }
 }

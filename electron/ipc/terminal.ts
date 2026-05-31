@@ -43,11 +43,14 @@ function detectShells(): ShellPreset[] {
   );
 
   const presets: ShellPreset[] = [
+    // Interactive args (the Console runs shells in a real PTY). `-Command -`
+    // (script-from-stdin) is intentionally omitted so PowerShell presents its
+    // normal interactive REPL on the terminal.
     pwsh
-      ? { id: 'pwsh', label: 'PowerShell 7 (pwsh)', binary: pwsh, args: ['-NoLogo', '-NoExit', '-Command', '-'], available: true }
+      ? { id: 'pwsh', label: 'PowerShell 7 (pwsh)', binary: pwsh, args: ['-NoLogo'], available: true }
       : { id: 'pwsh', label: 'PowerShell 7 (pwsh) — not installed', binary: 'pwsh.exe', args: [], available: false },
-    { id: 'powershell', label: 'Windows PowerShell', binary: powershell, args: ['-NoLogo', '-NoExit', '-Command', '-'], available: fs.existsSync(powershell) },
-    { id: 'cmd', label: 'Command Prompt (cmd)', binary: cmd, args: ['/Q', '/K'], available: fs.existsSync(cmd) },
+    { id: 'powershell', label: 'Windows PowerShell', binary: powershell, args: ['-NoLogo'], available: fs.existsSync(powershell) },
+    { id: 'cmd', label: 'Command Prompt (cmd)', binary: cmd, args: ['/Q'], available: fs.existsSync(cmd) },
     gitBash
       ? { id: 'gitbash', label: 'Git Bash', binary: gitBash, args: ['--login', '-i'], available: true }
       : { id: 'gitbash', label: 'Git Bash — not installed', binary: 'bash.exe', args: [], available: false },
