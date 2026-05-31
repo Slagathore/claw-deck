@@ -303,7 +303,126 @@ export const TOOL_CATALOG: readonly ToolPreset[] = [
 ];
 
 // ----------------------------------------------------------------------------
+// OpenClaw ecosystem — real plugins, skills, and tools.
+//
+// OpenClaw plugins install via the OpenClaw CLI:
+//   openclaw plugins install clawhub:<pkg> | npm:<pkg> | git:github.com/<owner>/<repo>
+// (docs.openclaw.ai/tools/plugin). ClawHub (clawhub.ai) is the official registry.
+//
+// Every entry below was verified to exist on GitHub; descriptions are the repos'
+// own. `type: 'plugin'` entries are installable through `openclaw plugins
+// install`; skills/tools/distros are surfaced for fetch-and-scan + their repo.
+
+export type OpenClawType = 'plugin' | 'skill' | 'tool' | 'distro';
+
+export interface OpenClawPluginEntry {
+  id: string;
+  name: string;
+  description: string;                 // the repo's own description (verbatim)
+  type: OpenClawType;
+  /** Install/fetch source. github 'ref' is "owner/repo". */
+  source: { kind: 'github' | 'npm' | 'clawhub'; ref: string };
+  license?: string;                    // SPDX id from GitHub, or undefined if unlicensed
+  homepage: string;
+}
+
+export const OPENCLAW_PLUGIN_CATALOG: readonly OpenClawPluginEntry[] = [
+  {
+    id: 'lobster', name: 'Lobster', type: 'plugin',
+    description: 'Openclaw-native workflow shell: a typed, local-first "macro engine" that turns skills/tools into composable pipelines and safe automations — and lets Openclaw call those workflows in one step.',
+    source: { kind: 'github', ref: 'openclaw/lobster' }, license: 'MIT',
+    homepage: 'https://github.com/openclaw/lobster'
+  },
+  {
+    id: 'secureclaw', name: 'SecureClaw', type: 'plugin',
+    description: 'Security plugin and skill for OpenClaw, OWASP-aligned: hardening checks, guardrails, and security review skills.',
+    source: { kind: 'github', ref: 'adversa-ai/secureclaw' },
+    homepage: 'https://github.com/adversa-ai/secureclaw'
+  },
+  {
+    id: 'composio', name: 'Composio for OpenClaw', type: 'plugin',
+    description: 'Access 1000+ third-party tools in OpenClaw via Composio — Gmail, Slack, GitHub, Notion, Linear, Jira, HubSpot, Salesforce, Google Drive, and more.',
+    source: { kind: 'github', ref: 'ComposioHQ/openclaw-composio-plugin' },
+    homepage: 'https://github.com/ComposioHQ/openclaw-composio-plugin'
+  },
+  {
+    id: 'agent-skills', name: 'Agent Skills', type: 'skill',
+    description: "OpenClaw's canonical library of useful, shareable skills for agents and claws.",
+    source: { kind: 'github', ref: 'openclaw/agent-skills' }, license: 'MIT',
+    homepage: 'https://github.com/openclaw/agent-skills'
+  },
+  {
+    id: 'memubot', name: 'memUBot', type: 'distro',
+    description: 'The enterprise-ready OpenClaw — a proactive AI assistant that remembers everything (long-term memory built in).',
+    source: { kind: 'github', ref: 'NevaMind-AI/memUBot' }, license: 'AGPL-3.0',
+    homepage: 'https://github.com/NevaMind-AI/memUBot'
+  },
+  {
+    id: 'peekaboo', name: 'Peekaboo', type: 'tool',
+    description: 'macOS CLI & optional MCP server that lets agents capture screenshots of apps or the whole system, with optional visual question answering.',
+    source: { kind: 'github', ref: 'openclaw/Peekaboo' }, license: 'MIT',
+    homepage: 'https://github.com/openclaw/Peekaboo'
+  },
+  {
+    id: 'gogcli', name: 'gogcli', type: 'tool',
+    description: 'Google Workspace in your terminal — Gmail, Calendar, Drive, etc. for your agent.',
+    source: { kind: 'github', ref: 'openclaw/gogcli' }, license: 'MIT',
+    homepage: 'https://github.com/openclaw/gogcli'
+  },
+  {
+    id: 'mcporter', name: 'mcporter', type: 'tool',
+    description: 'Call MCP servers via TypeScript as a simple API, or package them as a CLI.',
+    source: { kind: 'github', ref: 'openclaw/mcporter' }, license: 'MIT',
+    homepage: 'https://github.com/openclaw/mcporter'
+  },
+  {
+    id: 'clawpatch', name: 'clawpatch', type: 'tool',
+    description: 'Review code, patch bugs, and land PRs from your agent.',
+    source: { kind: 'github', ref: 'openclaw/clawpatch' }, license: 'MIT',
+    homepage: 'https://github.com/openclaw/clawpatch'
+  },
+  {
+    id: 'wacli', name: 'wacli', type: 'tool',
+    description: 'WhatsApp CLI: sync, search, and send — a messaging channel for your agent.',
+    source: { kind: 'github', ref: 'openclaw/wacli' }, license: 'MIT',
+    homepage: 'https://github.com/openclaw/wacli'
+  },
+  {
+    id: 'imsg', name: 'imsg', type: 'tool',
+    description: "CLI for Apple's Messages.app so your agent can send and receive texts/iMessages.",
+    source: { kind: 'github', ref: 'openclaw/imsg' }, license: 'MIT',
+    homepage: 'https://github.com/openclaw/imsg'
+  },
+  {
+    id: 'clawbench', name: 'clawbench', type: 'tool',
+    description: 'Agent benchmark that scores the full stack — harness, config, and model — with trace-based scoring and reliability metrics.',
+    source: { kind: 'github', ref: 'openclaw/clawbench' }, license: 'MIT',
+    homepage: 'https://github.com/openclaw/clawbench'
+  }
+];
+
+// Build the `openclaw plugins install` reference for an entry's source.
+export function openclawInstallRef(source: OpenClawPluginEntry['source']): string {
+  switch (source.kind) {
+    case 'github': return `git:github.com/${source.ref}`;
+    case 'npm': return `npm:${source.ref}`;
+    case 'clawhub': return `clawhub:${source.ref}`;
+  }
+}
+
+// ----------------------------------------------------------------------------
 // Pure search helpers (used by LibraryTab + tests).
+
+export function searchOpenClawPlugins(query: string, libs: readonly OpenClawPluginEntry[] = OPENCLAW_PLUGIN_CATALOG): OpenClawPluginEntry[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [...libs];
+  return libs.filter(l =>
+    l.id.toLowerCase().includes(q) ||
+    l.name.toLowerCase().includes(q) ||
+    l.description.toLowerCase().includes(q) ||
+    l.type.includes(q)
+  );
+}
 
 export function searchModels(query: string, models: readonly ModelEntry[] = MODEL_CATALOG): ModelEntry[] {
   const q = query.trim().toLowerCase();

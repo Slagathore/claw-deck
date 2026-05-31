@@ -2,14 +2,14 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useSettings, useUI } from '../store/ui';
 import { useConsole } from '../store/console';
 import {
-  MODEL_CATALOG, MCP_CATALOG, TOOL_CATALOG,
-  searchModels, searchMcp, searchTools,
-  ModelEntry, McpPreset, ToolPreset
+  MODEL_CATALOG, MCP_CATALOG, TOOL_CATALOG, OPENCLAW_PLUGIN_CATALOG,
+  searchModels, searchMcp, searchTools, searchOpenClawPlugins, openclawInstallRef,
+  ModelEntry, McpPreset, ToolPreset, OpenClawPluginEntry
 } from '../lib/catalog';
 import { formatBytes } from '../lib/vram';
 import DeepScanReport from '../components/DeepScanReport';
 
-type Section = 'models' | 'mcp' | 'tools';
+type Section = 'models' | 'mcp' | 'openclaw' | 'tools';
 
 interface PullState {
   running: boolean;
@@ -29,7 +29,7 @@ export default function LibraryTab() {
   const [capFilter, setCapFilter] = useState<string>('all');
   const [installed, setInstalled] = useState<string[]>([]);
   const [pulls, setPulls] = useState<Record<string, PullState>>({});
-  const [scanningMcp, setScanningMcp] = useState<string | null>(null);
+  const [scanningKey, setScanningKey] = useState<string | null>(null);
   const [scanModal, setScanModal] = useState<ScanModalState | null>(null);
 
   // Refresh installed model list periodically.
@@ -93,18 +93,34 @@ export default function LibraryTab() {
     await save({ mcpServers: next });
   }
 
-  // Fetch the real npm package and deep-scan it (vetting before you trust/run it).
-  async function scanMcp(p: McpPreset) {
-    if (!p.pkg) return;
-    const id = 'mcp-' + p.name;
-    setScanningMcp(p.name);
+  // Fetch the real source (npm pack / git clone) and deep-scan it before you trust it.
+  async function scanSource(id: string, kind: 'npm' | 'github', ref: string, name: string) {
+    setScanningKey(id);
     try {
-      const r = await window.api.extensions.install({ id, kind: p.pkg.kind, ref: p.pkg.ref });
-      setScanModal(r.ok ? { id, name: p.name, report: r.report, path: r.path } : { id, name: p.name, report: { ok: false, error: r.reason } });
+      const r = await window.api.extensions.install({ id, kind, ref });
+      setScanModal(r.ok ? { id, name, report: r.report, path: r.path } : { id, name, report: { ok: false, error: r.reason } });
     } catch (e: any) {
-      setScanModal({ id, name: p.name, report: { ok: false, error: e?.message ?? String(e) } });
+      setScanModal({ id, name, report: { ok: false, error: e?.message ?? String(e) } });
     } finally {
-      setScanningMcp(null);
+      setScanningKey(null);
+    }
+  }
+
+  // Install an OpenClaw plugin via the real OpenClaw CLI; output streams to the Console.
+  async function installOpenClawPlugin(entry: OpenClawPluginEntry) {
+    const binary = s.openclawPath;
+    if (!binary) { alert('Set the OpenClaw CLI path in Settings → CLIs first.'); return; }
+    const ref = openclawInstallRef(entry.source);
+    try {
+      const { id } = await window.api.runner.start({ backend: 'openclaw', binary, args: ['plugins', 'install', ref] });
+      useConsole.getState().add({
+        id, kind: 'openclaw', label: `install ${entry.name}`,
+        detail: `${binary} plugins install ${ref}`, startedAt: Date.now(), supportsInput: true,
+        output: `[openclaw] plugins install ${ref}\n`
+      });
+      setTab('console');
+    } catch (e: any) {
+      alert(`Failed to start OpenClaw: ${e.message}`);
     }
   }
 
@@ -123,6 +139,9 @@ export default function LibraryTab() {
           </button>
           <button className={section === 'mcp' ? 'primary' : ''} onClick={() => setSection('mcp')}>
             🔌 MCP Servers ({MCP_CATALOG.length})
+          </button>
+          <button className={section === 'openclaw' ? 'primary' : ''} onClick={() => setSection('openclaw')}>
+            🦞 OpenClaw Plugins ({OPENCLAW_PLUGIN_CATALOG.length})
           </button>
           <button className={section === 'tools' ? 'primary' : ''} onClick={() => setSection('tools')}>
             🛠 System Tools ({TOOL_CATALOG.length})
@@ -181,9 +200,31 @@ export default function LibraryTab() {
               key={p.name}
               preset={p}
               installed={(s.mcpServers ?? []).some((x: any) => x.name === p.name)}
-              scanning={scanningMcp === p.name}
+              scanning={scanningKey === 'mcp-' + p.name}
               onAdd={addMcp}
-              onScan={() => scanMcp(p)}
+              onScan={() => p.pkg && scanSource('mcp-' + p.name, p.pkg.kind, p.pkg.ref, p.name)}
+            />
+          ))}
+        </div>
+      )}
+
+      {section === 'openclaw' && (
+        <div className="card col">
+          <div className="label">
+            Real <a href="https://openclaw.ai/ecosystem" target="_blank" rel="noreferrer">OpenClaw</a> plugins, skills,
+            and ecosystem tools (verified on GitHub). <strong>Install</strong> runs the real
+            <code>openclaw plugins install git:…</code> and streams to the Console (set the OpenClaw CLI path in
+            Settings first). <strong>Fetch &amp; scan</strong> clones the repo and runs the static security scanner.
+            Discover more at <a href="https://clawhub.ai" target="_blank" rel="noreferrer">ClawHub</a> and{' '}
+            <a href="https://openclawdir.com/plugins" target="_blank" rel="noreferrer">openclawdir.com</a>.
+          </div>
+          {searchOpenClawPlugins(q).map(entry => (
+            <OpenClawPluginRow
+              key={entry.id}
+              entry={entry}
+              scanning={scanningKey === 'ocp-' + entry.id}
+              onInstall={() => installOpenClawPlugin(entry)}
+              onScan={() => scanSource('ocp-' + entry.id, entry.source.kind === 'npm' ? 'npm' : 'github', entry.source.ref, entry.name)}
             />
           ))}
         </div>
@@ -392,6 +433,41 @@ function ToolRow({ preset }: { preset: ToolPreset }) {
           </button>
         )}
         <a href={preset.install.manualUrl} target="_blank" rel="noreferrer" className="label">Manual download ↗</a>
+      </div>
+    </div>
+  );
+}
+
+function OpenClawPluginRow({ entry, scanning, onInstall, onScan }: {
+  entry: OpenClawPluginEntry;
+  scanning: boolean;
+  onInstall: () => void;
+  onScan: () => void;
+}) {
+  const typeColor = entry.type === 'plugin' ? 'badge ok' : entry.type === 'skill' ? 'badge' : entry.type === 'distro' ? 'badge warn' : 'badge';
+  return (
+    <div className="row" style={{ borderTop: '1px solid var(--border)', paddingTop: 10, alignItems: 'flex-start' }}>
+      <div className="col" style={{ flex: 1, gap: 4 }}>
+        <div className="row">
+          <strong>{entry.name}</strong>
+          <span className={typeColor}>{entry.type}</span>
+          {entry.license && <span className="label">{entry.license}</span>}
+        </div>
+        <div className="label" style={{ color: 'var(--text)' }}>{entry.description}</div>
+        <div className="label"><code>{entry.source.kind}:{entry.source.ref}</code></div>
+      </div>
+      <div className="col" style={{ width: 230, gap: 6 }}>
+        {entry.type === 'plugin' && (
+          <button className="primary" onClick={onInstall} title={`openclaw plugins install ${openclawInstallRef(entry.source)}`}>
+            ⬇ Install via OpenClaw
+          </button>
+        )}
+        {entry.source.kind !== 'clawhub' && (
+          <button onClick={onScan} disabled={scanning} title="Clone the repo and run the static security scanner">
+            {scanning ? 'Scanning…' : '🛡 Fetch & scan'}
+          </button>
+        )}
+        <a href={entry.homepage} target="_blank" rel="noreferrer" className="label">Repo ↗</a>
       </div>
     </div>
   );

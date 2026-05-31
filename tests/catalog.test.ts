@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
-  MODEL_CATALOG, MCP_CATALOG, TOOL_CATALOG,
-  searchModels, searchMcp, searchTools
+  MODEL_CATALOG, MCP_CATALOG, TOOL_CATALOG, OPENCLAW_PLUGIN_CATALOG,
+  searchModels, searchMcp, searchTools, searchOpenClawPlugins, openclawInstallRef
 } from '../src/lib/catalog';
 
 describe('catalog', () => {
@@ -94,5 +94,29 @@ describe('catalog', () => {
 
   it('ships uv so uvx MCP servers can run', () => {
     expect(TOOL_CATALOG.some(t => t.installCheck.startsWith('uv '))).toBe(true);
+  });
+
+  it('OpenClaw plugin entries are well-formed with unique ids', () => {
+    expect(OPENCLAW_PLUGIN_CATALOG.length).toBeGreaterThanOrEqual(8);
+    const ids = OPENCLAW_PLUGIN_CATALOG.map(e => e.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const e of OPENCLAW_PLUGIN_CATALOG) {
+      expect(['plugin', 'skill', 'tool', 'distro']).toContain(e.type);
+      expect(['github', 'npm', 'clawhub']).toContain(e.source.kind);
+      expect(e.description.length).toBeGreaterThan(10);
+      expect(e.homepage).toMatch(/^https?:\/\//);
+      if (e.source.kind === 'github') expect(e.source.ref).toMatch(/^[\w.-]+\/[\w.-]+$/);
+    }
+  });
+
+  it('openclawInstallRef builds the correct CLI source prefix', () => {
+    expect(openclawInstallRef({ kind: 'github', ref: 'openclaw/lobster' })).toBe('git:github.com/openclaw/lobster');
+    expect(openclawInstallRef({ kind: 'npm', ref: 'some-plugin' })).toBe('npm:some-plugin');
+    expect(openclawInstallRef({ kind: 'clawhub', ref: 'voice-call' })).toBe('clawhub:voice-call');
+  });
+
+  it('searchOpenClawPlugins filters by type and name', () => {
+    expect(searchOpenClawPlugins('plugin').every(e => e.type === 'plugin' || e.name.toLowerCase().includes('plugin') || e.description.toLowerCase().includes('plugin'))).toBe(true);
+    expect(searchOpenClawPlugins('').length).toBe(OPENCLAW_PLUGIN_CATALOG.length);
   });
 });

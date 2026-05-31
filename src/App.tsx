@@ -18,7 +18,7 @@ type TabDef = readonly [key: string, icon: string, label: string, hint: string];
 
 const TABS: readonly TabDef[] = [
   ['chat',      '💬', 'Chat',           'Talk to your local LLM. Auto-routes to chat / vision / reasoning. Flip on Agent mode to plan & execute multi-step tasks.'],
-  ['library',   '📚', 'Library',        'One-click installs: popular Ollama models, MCP servers, system tools.'],
+  ['library',   '📚', 'Library',        'One-click installs: popular Ollama models, real MCP servers, OpenClaw plugins, system tools.'],
   ['console',   '🐚', 'Console',        'Run OpenClaw / Claude Code or any shell (PowerShell / cmd / Git Bash / WSL / custom) with live streaming + UAC elevation.'],
   ['history',   '📜', 'History',        'Searchable log of every chat turn. Click ↳ to branch a prior prompt back into Chat.'],
   ['prompts',   '📋', 'Prompts',        'Reusable prompt templates with {{variable}} substitution.'],
