@@ -20,7 +20,7 @@ with malware / bad-actor checks before any update is installed.
 | Live metrics | Tok/s · TTFT · elapsed shown live in the chat header, persisted into history |
 | Thinking pane | Parses `<think>…</think>` blocks (DeepSeek-R1 / QwQ) + native Anthropic-style `thinking` |
 | Images | Multi-image attach + 1-click **desktop screenshot** + **region-select** crop |
-| Library | One-click Ollama model pulls, MCP presets, system-tool installers, and an OpenClaw extension catalog with **real Install & scan** (git clone / `npm pack` → static security scan) |
+| Library | One-click Ollama model pulls, a catalog of **real MCP servers** (verified npm `npx` + PyPI `uvx` packages — filesystem, git, fetch, github, playwright, context7, …) with **Install & scan** (`npm pack` → static security scan before you trust it), and system-tool installers (winget/choco) |
 | History | SQLite, searchable, deletable, **branch** (↳) reuses a prior prompt. Logs **every** run — chat, Agent plans, and Console sessions |
 | Security | **Deep folder scan** (eval / child_process / secret reads / obfuscation / exfil heuristics) shared with the upgrade gate + Library audit, plus the hash-chained audit log |
 | Reproducibility | Each turn auto-records model, backend, base URL, timestamp into `history.meta.snapshot` |

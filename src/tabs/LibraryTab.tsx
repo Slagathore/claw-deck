@@ -2,14 +2,14 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useSettings, useUI } from '../store/ui';
 import { useConsole } from '../store/console';
 import {
-  MODEL_CATALOG, MCP_CATALOG, TOOL_CATALOG, OPENCLAW_LIB_CATALOG_FULL,
-  searchModels, searchMcp, searchTools, searchOpenClawLibs, riskSummary,
-  ModelEntry, McpPreset, ToolPreset, OpenClawLibEntry, SecurityAudit
+  MODEL_CATALOG, MCP_CATALOG, TOOL_CATALOG,
+  searchModels, searchMcp, searchTools,
+  ModelEntry, McpPreset, ToolPreset
 } from '../lib/catalog';
 import { formatBytes } from '../lib/vram';
 import DeepScanReport from '../components/DeepScanReport';
 
-type Section = 'models' | 'mcp' | 'tools' | 'openclaw';
+type Section = 'models' | 'mcp' | 'tools';
 
 interface PullState {
   running: boolean;
@@ -19,6 +19,8 @@ interface PullState {
   error?: string;
 }
 
+interface ScanModalState { id: string; name: string; report: any; path?: string; }
+
 export default function LibraryTab() {
   const { data: s, save } = useSettings();
   const setTab = useUI(u => u.setTab);
@@ -27,43 +29,8 @@ export default function LibraryTab() {
   const [capFilter, setCapFilter] = useState<string>('all');
   const [installed, setInstalled] = useState<string[]>([]);
   const [pulls, setPulls] = useState<Record<string, PullState>>({});
-  const [installedOpenclaw, setInstalledOpenclaw] = useState<string[]>(() => {
-    try { return JSON.parse(localStorage.getItem('clawdeck:installedExtensions') ?? '[]'); } catch { return []; }
-  });
-  const [auditFor, setAuditFor] = useState<{ entry: OpenClawLibEntry; report?: any; path?: string } | null>(null);
-  // Real installs: id -> on-disk path (fetched + scanned via the extensions IPC).
-  const [extPaths, setExtPaths] = useState<Record<string, string>>(() => {
-    try { return JSON.parse(localStorage.getItem('clawdeck:extPaths') ?? '{}'); } catch { return {}; }
-  });
-  const [installingExt, setInstallingExt] = useState<string | null>(null);
-
-  function persistInstalledOpenclaw(ids: string[]) {
-    setInstalledOpenclaw(ids);
-    try { localStorage.setItem('clawdeck:installedExtensions', JSON.stringify(ids)); } catch { /* ignore */ }
-  }
-  function persistExtPaths(map: Record<string, string>) {
-    setExtPaths(map);
-    try { localStorage.setItem('clawdeck:extPaths', JSON.stringify(map)); } catch { /* ignore */ }
-  }
-
-  async function installExtension(lib: OpenClawLibEntry) {
-    setInstallingExt(lib.id);
-    try {
-      const r = await window.api.extensions.install({ id: lib.id, kind: lib.source.kind, ref: lib.source.ref });
-      if (!r.ok) { alert(`Install failed: ${r.reason || 'unknown'}`); return; }
-      persistExtPaths({ ...extPaths, [lib.id]: r.path || '' });
-      setAuditFor({ entry: lib, report: r.report, path: r.path });  // show the fresh scan
-    } finally {
-      setInstallingExt(null);
-    }
-  }
-
-  async function uninstallExtension(lib: OpenClawLibEntry) {
-    if (!confirm(`Delete the installed files for ${lib.name}? (Keeps it on your shortlist.)`)) return;
-    await window.api.extensions.uninstall(lib.id);
-    const next = { ...extPaths }; delete next[lib.id];
-    persistExtPaths(next);
-  }
+  const [scanningMcp, setScanningMcp] = useState<string | null>(null);
+  const [scanModal, setScanModal] = useState<ScanModalState | null>(null);
 
   // Refresh installed model list periodically.
   useEffect(() => {
@@ -114,14 +81,31 @@ export default function LibraryTab() {
   async function addMcp(p: McpPreset, extra: string) {
     const args = [...p.args];
     const env: Record<string, string> = {};
-    if (p.needsArg?.key === 'path' && extra) args.push(extra);
-    if (p.needsArg?.key === 'token' && extra) {
-      const envKey = p.needsArg.label.split(' ')[0]; // e.g. "GITHUB_PERSONAL_ACCESS_TOKEN"
-      env[envKey] = extra;
+    if (p.needsArg && extra) {
+      if (p.needsArg.key === 'token') {
+        if (p.needsArg.env) env[p.needsArg.env] = extra;
+      } else {
+        args.push(extra); // 'path' or 'arg' — positional
+      }
     }
     const existing = s.mcpServers ?? [];
     const next = [...existing.filter((x: any) => x.name !== p.name), { name: p.name, command: p.command, args, env, enabled: true }];
     await save({ mcpServers: next });
+  }
+
+  // Fetch the real npm package and deep-scan it (vetting before you trust/run it).
+  async function scanMcp(p: McpPreset) {
+    if (!p.pkg) return;
+    const id = 'mcp-' + p.name;
+    setScanningMcp(p.name);
+    try {
+      const r = await window.api.extensions.install({ id, kind: p.pkg.kind, ref: p.pkg.ref });
+      setScanModal(r.ok ? { id, name: p.name, report: r.report, path: r.path } : { id, name: p.name, report: { ok: false, error: r.reason } });
+    } catch (e: any) {
+      setScanModal({ id, name: p.name, report: { ok: false, error: e?.message ?? String(e) } });
+    } finally {
+      setScanningMcp(null);
+    }
   }
 
   return (
@@ -129,8 +113,9 @@ export default function LibraryTab() {
       <div className="card col">
         <h2 style={{ margin: 0 }}>Library</h2>
         <div className="label">
-          One-click installs for the most common models, MCP servers, and tools.
-          Models stream into Ollama; MCP presets land in Settings; system tools open the right install page.
+          One-click installs for popular Ollama models, real Model-Context-Protocol servers, and the system tools
+          they need. Models stream into Ollama; MCP presets land in Settings (and can be fetched + security-scanned
+          first); system tools open the right installer.
         </div>
         <div className="row">
           <button className={section === 'models' ? 'primary' : ''} onClick={() => setSection('models')}>
@@ -138,9 +123,6 @@ export default function LibraryTab() {
           </button>
           <button className={section === 'mcp' ? 'primary' : ''} onClick={() => setSection('mcp')}>
             🔌 MCP Servers ({MCP_CATALOG.length})
-          </button>
-          <button className={section === 'openclaw' ? 'primary' : ''} onClick={() => setSection('openclaw')}>
-            🦞 OpenClaw Extensions ({OPENCLAW_LIB_CATALOG_FULL.length})
           </button>
           <button className={section === 'tools' ? 'primary' : ''} onClick={() => setSection('tools')}>
             🛠 System Tools ({TOOL_CATALOG.length})
@@ -188,8 +170,21 @@ export default function LibraryTab() {
 
       {section === 'mcp' && (
         <div className="card col">
+          <div className="label">
+            Real MCP servers. <strong>Add to Settings</strong> wires the server so it launches alongside your CLI
+            sessions; <strong>Install &amp; scan</strong> fetches the actual npm package and runs the static security
+            scanner over it first. Node servers run via <code>npx</code>; Python servers via <code>uvx</code> (install
+            <code>uv</code> from System Tools).
+          </div>
           {searchMcp(q).map(p => (
-            <McpRow key={p.name} preset={p} installed={(s.mcpServers ?? []).some((x: any) => x.name === p.name)} onAdd={addMcp} />
+            <McpRow
+              key={p.name}
+              preset={p}
+              installed={(s.mcpServers ?? []).some((x: any) => x.name === p.name)}
+              scanning={scanningMcp === p.name}
+              onAdd={addMcp}
+              onScan={() => scanMcp(p)}
+            />
           ))}
         </div>
       )}
@@ -202,43 +197,8 @@ export default function LibraryTab() {
         </div>
       )}
 
-      {section === 'openclaw' && (
-        <div className="card col">
-          <div className="label">
-            Community packs that extend OpenClaw with skills, prompts, tools, or integrations.
-            <strong>Install &amp; scan</strong> fetches the real source (git clone / npm pack) into your
-            app data and runs the static security scanner over it before you trust it — curated/unpublished
-            refs will fail honestly. <strong>Track</strong> keeps a lightweight shortlist without fetching.
-            Click <strong>Security audit</strong> any time for the curated review + a deep scan.
-          </div>
-          {searchOpenClawLibs(q).map(lib => (
-            <OpenClawRow
-              key={lib.id}
-              entry={lib}
-              installed={installedOpenclaw.includes(lib.id)}
-              realInstalled={!!extPaths[lib.id]}
-              installing={installingExt === lib.id}
-              onAudit={() => setAuditFor({ entry: lib })}
-              onRealInstall={() => installExtension(lib)}
-              onRealUninstall={() => uninstallExtension(lib)}
-              onOpenFolder={() => window.api.extensions.open(lib.id)}
-              onTrack={() => {
-                const next = installedOpenclaw.includes(lib.id) ? installedOpenclaw : [...installedOpenclaw, lib.id];
-                persistInstalledOpenclaw(next);
-              }}
-              onUntrack={() => persistInstalledOpenclaw(installedOpenclaw.filter(x => x !== lib.id))}
-            />
-          ))}
-        </div>
-      )}
-
-      {auditFor && (
-        <AuditModal
-          entry={auditFor.entry}
-          initialReport={auditFor.report}
-          installedPath={auditFor.path}
-          onClose={() => setAuditFor(null)}
-        />
+      {scanModal && (
+        <ScanModal state={scanModal} onClose={() => setScanModal(null)} />
       )}
     </div>
   );
@@ -305,24 +265,9 @@ function ModelRow({ entry, installed, pull, currentChat, currentReasoning, curre
         {isInstalled && (
           <div className="row" style={{ flexWrap: 'wrap', gap: 4 }}>
             <span className="label">Set as:</span>
-            <button
-              onClick={() => onAssign('chatModel', variant)}
-              disabled={currentChat === variant}
-              style={{ padding: '3px 8px', fontSize: 11 }}
-              title="Use as default Chat model"
-            >chat{currentChat === variant ? ' ✓' : ''}</button>
-            <button
-              onClick={() => onAssign('reasoningModel', variant)}
-              disabled={currentReasoning === variant}
-              style={{ padding: '3px 8px', fontSize: 11 }}
-              title="Use as Reasoning model (/reason)"
-            >reason{currentReasoning === variant ? ' ✓' : ''}</button>
-            <button
-              onClick={() => onAssign('visionModel', variant)}
-              disabled={currentVision === variant}
-              style={{ padding: '3px 8px', fontSize: 11 }}
-              title="Use as Vision model (/vision)"
-            >vision{currentVision === variant ? ' ✓' : ''}</button>
+            <button onClick={() => onAssign('chatModel', variant)} disabled={currentChat === variant} style={{ padding: '3px 8px', fontSize: 11 }} title="Use as default Chat model">chat{currentChat === variant ? ' ✓' : ''}</button>
+            <button onClick={() => onAssign('reasoningModel', variant)} disabled={currentReasoning === variant} style={{ padding: '3px 8px', fontSize: 11 }} title="Use as Reasoning model (/reason)">reason{currentReasoning === variant ? ' ✓' : ''}</button>
+            <button onClick={() => onAssign('visionModel', variant)} disabled={currentVision === variant} style={{ padding: '3px 8px', fontSize: 11 }} title="Use as Vision model (/vision)">vision{currentVision === variant ? ' ✓' : ''}</button>
           </div>
         )}
       </div>
@@ -330,7 +275,13 @@ function ModelRow({ entry, installed, pull, currentChat, currentReasoning, curre
   );
 }
 
-function McpRow({ preset, installed, onAdd }: { preset: McpPreset; installed: boolean; onAdd: (p: McpPreset, extra: string) => void }) {
+function McpRow({ preset, installed, scanning, onAdd, onScan }: {
+  preset: McpPreset;
+  installed: boolean;
+  scanning: boolean;
+  onAdd: (p: McpPreset, extra: string) => void;
+  onScan: () => void;
+}) {
   const [extra, setExtra] = useState('');
   const ready = !preset.needsArg || extra.length > 0;
   return (
@@ -338,11 +289,15 @@ function McpRow({ preset, installed, onAdd }: { preset: McpPreset; installed: bo
       <div className="col" style={{ flex: 1, gap: 4 }}>
         <div className="row">
           <strong>{preset.name}</strong>
+          <span className="badge" style={{ background: 'var(--panel-2)', color: 'var(--muted)' }}>
+            {preset.runtime === 'python' ? 'python · uvx' : 'node · npx'}
+          </span>
           {installed && <span className="badge ok">configured</span>}
           {preset.homepage && <a href={preset.homepage} target="_blank" rel="noreferrer" className="label">docs ↗</a>}
         </div>
         <div className="label" style={{ color: 'var(--text)' }}>{preset.description}</div>
-        <div className="label"><code>{preset.command} {preset.args.join(' ')}</code></div>
+        <div className="label"><code>{preset.command} {preset.args.join(' ')}{preset.needsArg && preset.needsArg.key !== 'token' ? ' <…>' : ''}</code></div>
+        {preset.notes && <div className="label" style={{ color: 'var(--warn)' }}>{preset.notes}</div>}
       </div>
       <div className="col" style={{ width: 280, gap: 6 }}>
         {preset.needsArg && (
@@ -365,6 +320,11 @@ function McpRow({ preset, installed, onAdd }: { preset: McpPreset; installed: bo
         <button className="primary" disabled={!ready} onClick={() => onAdd(preset, extra)}>
           {installed ? 'Update in Settings' : 'Add to Settings'}
         </button>
+        {preset.pkg && (
+          <button onClick={onScan} disabled={scanning} title="Fetch the real npm package and run the static security scanner">
+            {scanning ? 'Scanning…' : '🛡 Install & scan'}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -377,7 +337,6 @@ function ToolRow({ preset }: { preset: ToolPreset }) {
   async function check() {
     setChecking(true);
     try {
-      // Probe via a shell runner — we just spawn the binary with --version and watch exit code.
       const parts = preset.installCheck.split(/\s+/);
       const r = await window.api.runner.start({ backend: 'shell', binary: parts[0], args: parts.slice(1) });
       let done = false;
@@ -385,28 +344,21 @@ function ToolRow({ preset }: { preset: ToolPreset }) {
         if (ev.id !== r.id) return;
         if (ev.kind === 'exit') {
           if (done) return; done = true;
-          setPresent(ev.data === 0);
-          setChecking(false);
-          off();
+          setPresent(ev.data === 0); setChecking(false); off();
         } else if (ev.kind === 'error') {
           if (done) return; done = true;
-          setPresent(false);
-          setChecking(false);
-          off();
+          setPresent(false); setChecking(false); off();
         }
       });
-      // 4-second safety timeout.
       setTimeout(() => { if (!done) { done = true; setChecking(false); setPresent(false); off(); } }, 4000);
     } catch {
-      setPresent(false);
-      setChecking(false);
+      setPresent(false); setChecking(false);
     }
   }
 
   async function installWith(cmd: string, args: string[]) {
     const r = await window.api.runner.start({ backend: 'shell', binary: cmd, args });
-    // Register the session in the Console store so its output is visible, and
-    // jump there so the user sees the install progress instead of nothing.
+    // Surface the install in the Console (instead of silently dropping the session).
     useConsole.getState().add({
       id: r.id, kind: 'tool', label: `${preset.name} install`,
       detail: `${cmd} ${args.join(' ')}`, startedAt: Date.now(), supportsInput: true,
@@ -445,195 +397,27 @@ function ToolRow({ preset }: { preset: ToolPreset }) {
   );
 }
 
-// ----------------------------------------------------------------------------
-
-function riskBadgeClass(risk: SecurityAudit['risk']): string {
-  if (risk === 'low') return 'badge ok';
-  if (risk === 'medium') return 'badge warn';
-  if (risk === 'high') return 'badge bad';
-  return 'badge';
-}
-
-function OpenClawRow({ entry, installed, realInstalled, installing, onAudit, onRealInstall, onRealUninstall, onOpenFolder, onTrack, onUntrack }: {
-  entry: OpenClawLibEntry;
-  installed: boolean;
-  realInstalled: boolean;
-  installing: boolean;
-  onAudit: () => void;
-  onRealInstall: () => void;
-  onRealUninstall: () => void;
-  onOpenFolder: () => void;
-  onTrack: () => void;
-  onUntrack: () => void;
-}) {
+function ScanModal({ state, onClose }: { state: ScanModalState; onClose: () => void }) {
+  const [showAll, setShowAll] = useState(false);
   return (
-    <div className="row" style={{ borderTop: '1px solid var(--border)', paddingTop: 10, alignItems: 'flex-start' }}>
-      <div className="col" style={{ flex: 1, gap: 4 }}>
-        <div className="row">
-          <strong>{entry.name}</strong>
-          <span className="badge" style={{ background: 'var(--panel-2)', color: 'var(--muted)' }}>{entry.category}</span>
-          <span className={riskBadgeClass(entry.audit.risk)} title="Click Audit for full report">
-            {entry.audit.risk} risk
-          </span>
-          <span className="label" title="Permissions surface">{riskSummary(entry.audit)}</span>
-          {realInstalled && <span className="badge ok" title="Fetched + scanned on disk">installed</span>}
-          {installed && !realInstalled && <span className="badge ok" title="On your local shortlist">tracked</span>}
-        </div>
-        <div className="label" style={{ color: 'var(--text)' }}>{entry.description}</div>
-        <div className="label">
-          v{entry.version} · {entry.source.kind}:<code>{entry.source.ref}</code> · {entry.audit.license}
-        </div>
-      </div>
-      <div className="col" style={{ width: 230, gap: 6 }}>
-        <button onClick={onAudit} title="Show detailed security audit">🛡 Security audit</button>
-        {realInstalled ? (
-          <div className="row" style={{ gap: 6 }}>
-            <button onClick={onOpenFolder} title="Open the installed files" style={{ flex: 1 }}>📂 Open</button>
-            <button onClick={onRealUninstall} title="Delete the installed files" style={{ color: 'var(--bad)' }}>Uninstall</button>
-          </div>
-        ) : (
-          <button className="primary" onClick={onRealInstall} disabled={installing}
-            title="Fetch the real source (git clone / npm pack) and deep-scan it">
-            {installing ? 'Installing…' : '⬇ Install & scan'}
-          </button>
-        )}
-        {installed
-          ? <button onClick={onUntrack} title="Remove from your local shortlist">Untrack</button>
-          : <button onClick={onTrack} title="Add to your local shortlist (no fetch)">＋ Track</button>}
-        {entry.homepage && <a href={entry.homepage} target="_blank" rel="noreferrer" className="label">Homepage ↗</a>}
-      </div>
-    </div>
-  );
-}
-
-function AuditRow({ k, v }: { k: string; v: React.ReactNode }) {
-  return (
-    <div className="row" style={{ gap: 8, alignItems: 'flex-start', borderBottom: '1px solid var(--border)', paddingBottom: 6 }}>
-      <div className="label" style={{ width: 130, color: 'var(--muted)' }}>{k}</div>
-      <div style={{ flex: 1, wordBreak: 'break-word' }}>{v}</div>
-    </div>
-  );
-}
-
-function AuditModal({ entry, onClose, initialReport, installedPath }: {
-  entry: OpenClawLibEntry; onClose: () => void; initialReport?: any; installedPath?: string;
-}) {
-  const a = entry.audit;
-  const [scanning, setScanning] = useState(false);
-  const [report, setReport] = useState<any | null>(initialReport ?? null);
-  const [showAllFindings, setShowAllFindings] = useState(false);
-
-  async function runDeepScan(picker: boolean) {
-    setScanning(true);
-    setReport(null);
-    try {
-      const r = picker
-        ? await window.api.audit.pickAndScan()
-        : await window.api.audit.scan(`${entry.id}`); // best-effort path; user usually wants picker
-      setReport(r);
-    } catch (e: any) {
-      setReport({ ok: false, error: e?.message ?? String(e) });
-    } finally {
-      setScanning(false);
-    }
-  }
-
-  return (
-    <div
-      className="wizard-backdrop"
-      onClick={onClose}
-      role="dialog"
-      aria-modal="true"
-      aria-label={`Security audit for ${entry.name}`}
-    >
+    <div className="wizard-backdrop" onClick={onClose} role="dialog" aria-modal="true" aria-label={`Scan of ${state.name}`}>
       <div className="wizard" onClick={e => e.stopPropagation()} style={{ maxWidth: 820, maxHeight: '85vh', overflowY: 'auto' }}>
         <div className="row" style={{ alignItems: 'flex-start' }}>
           <div className="col" style={{ flex: 1, gap: 2 }}>
-            <h2 style={{ margin: 0 }}>🛡 Security audit</h2>
-            <div className="label">{entry.name} · v{entry.version}</div>
+            <h2 style={{ margin: 0 }}>🛡 Security scan — {state.name}</h2>
+            {state.path && <div className="label" style={{ wordBreak: 'break-all' }}>Fetched to <code style={{ fontSize: 11 }}>{state.path}</code></div>}
           </div>
-          <span className={riskBadgeClass(a.risk)} style={{ fontSize: 14, padding: '4px 10px' }}>
-            {a.risk.toUpperCase()} RISK
-          </span>
-          <button onClick={onClose} title="Close (Esc)">×</button>
+          <button onClick={onClose} title="Close">×</button>
         </div>
-
-        {installedPath && (
-          <div className="banner info" style={{ marginTop: 8 }}>
-            ✓ Fetched + scanned on disk at <code style={{ fontSize: 11 }}>{installedPath}</code>. The scan below is of the real code.
-          </div>
-        )}
-
-        <div className="col" style={{ gap: 6, marginTop: 12 }}>
-          <AuditRow k="Source" v={<code>{entry.source.kind}:{entry.source.ref}</code>} />
-          <AuditRow k="Maintainer" v={<code>{a.maintainer}</code>} />
-          <AuditRow k="License" v={a.license} />
-          <AuditRow k="Reviewed" v={`${a.reviewedAt} by ${a.reviewer}`} />
-          <AuditRow k="Tarball hash" v={<code style={{ fontSize: 11 }}>{a.hash}</code>} />
-          <AuditRow k="Dependencies" v={`${a.depCount} direct`} />
-          <AuditRow
-            k="Known CVEs"
-            v={a.cves.length === 0
-              ? <span className="badge ok">none</span>
-              : <span className="badge bad">{a.cves.join(', ')}</span>}
-          />
-          <AuditRow
-            k="Network"
-            v={a.permissions.network === 'none'
-              ? <span className="badge ok">no network</span>
-              : <span className="badge warn">{a.permissions.network}</span>}
-          />
-          <AuditRow
-            k="Filesystem"
-            v={a.permissions.filesystem === 'none'
-              ? <span className="badge ok">no fs access</span>
-              : <span className={a.permissions.filesystem === 'read' ? 'badge' : 'badge warn'}>{a.permissions.filesystem}</span>}
-          />
-          <AuditRow
-            k="Shell exec"
-            v={a.permissions.shell
-              ? <span className="badge warn">can spawn child processes</span>
-              : <span className="badge ok">no shell</span>}
-          />
-          <AuditRow
-            k="Secrets"
-            v={a.permissions.secrets
-              ? <span className="badge warn">reads env vars / credentials</span>
-              : <span className="badge ok">no secret access</span>}
-          />
+        <div style={{ marginTop: 12 }}>
+          <DeepScanReport report={state.report} showAll={showAll} onToggleShowAll={() => setShowAll(s => !s)} />
         </div>
-
-        {a.notes.length > 0 && (
-          <div className="col" style={{ marginTop: 12, gap: 4 }}>
-            <div className="label" style={{ color: 'var(--muted)' }}>Reviewer notes</div>
-            <ul style={{ margin: 0, paddingLeft: 18 }}>
-              {a.notes.map((n, i) => <li key={i} style={{ marginBottom: 4 }}>{n}</li>)}
-            </ul>
-          </div>
-        )}
-
-        <div className="col" style={{ marginTop: 16, gap: 8, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-          <div className="row">
-            <strong>Deep file scan</strong>
-            <span className="label" style={{ color: 'var(--muted)' }}>
-              Walks a folder for risky JS/TS patterns (eval, child_process, secret reads, obfuscation, exfil endpoints).
-            </span>
-          </div>
-          <div className="row">
-            <button onClick={() => runDeepScan(true)} disabled={scanning} className="primary">
-              {scanning ? 'Scanning…' : '📂 Pick folder & deep-scan'}
-            </button>
-            <span className="label">Use this after npm-installing the package locally, or on any source tree.</span>
-          </div>
-
-          {report && <DeepScanReport report={report} showAll={showAllFindings} onToggleShowAll={() => setShowAllFindings(s => !s)} />}
-        </div>
-
         <div className="row" style={{ marginTop: 16, justifyContent: 'flex-end' }}>
-          {entry.homepage && (
-            <a href={entry.homepage} target="_blank" rel="noreferrer" className="label" style={{ marginRight: 'auto' }}>
-              View on homepage ↗
-            </a>
+          {state.path && (
+            <>
+              <button style={{ marginRight: 'auto' }} onClick={() => window.api.extensions.open(state.id)}>📂 Open folder</button>
+              <button onClick={async () => { if (confirm('Delete the fetched files?')) { await window.api.extensions.uninstall(state.id); onClose(); } }} style={{ color: 'var(--bad)' }}>Delete files</button>
+            </>
           )}
           <button className="primary" onClick={onClose}>Close</button>
         </div>
@@ -641,4 +425,3 @@ function AuditModal({ entry, onClose, initialReport, installedPath }: {
     </div>
   );
 }
-

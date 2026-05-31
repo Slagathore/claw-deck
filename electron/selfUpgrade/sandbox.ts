@@ -1,28 +1,21 @@
 import * as path from 'path';
 import * as os from 'os';
 import * as fsp from 'fs/promises';
-import { run, which } from './exec';
+import { run } from './exec';
 
 /**
- * High-risk patches go through here. Strategy:
- *   - If Windows Sandbox is available, generate a .wsb pointing at a clone,
- *     run `npm ci && npm test` inside, capture exit code via shared folder.
- *   - Otherwise: clone the source tree to a tempdir, run tests there, never
- *     touch the live tree until both pass.
+ * Stages a high-risk patch in isolation before the live tree is trusted: the
+ * (already-patched) source is cloned to an OS temp dir, its dependencies are
+ * made available (the live node_modules is reused via a junction, falling back
+ * to a fresh `npm ci`), and the full test suite runs there. The live process is
+ * never executed during this check, and the temp dir is removed afterward.
  */
 export interface SandboxResult {
   ok: boolean;
-  mode: 'wsb' | 'tempdir' | 'unavailable';
+  mode: 'tempdir' | 'unavailable';
   reason?: string;
   testOutput?: string;
   durationMs: number;
-}
-
-async function sandboxAvailable(): Promise<boolean> {
-  if (process.platform !== 'win32') return false;
-  // WindowsSandbox.exe ships only on Win10/11 Pro/Enterprise with the feature enabled.
-  const r = await which('WindowsSandbox.exe');
-  return r;
 }
 
 const SKIP = new Set(['node_modules', '.git', 'dist', 'dist-electron', 'dist-installer', 'dist-installer2', 'dist-installer3', 'dist-installer4', 'dist-installer5', 'dist-installer6', 'dist-installer7', 'dist-installer8']);
@@ -64,14 +57,6 @@ export async function runInSandbox(opts: { sourceRoot: string; timeoutMs?: numbe
     }
   }
 
-  const useWsb = await sandboxAvailable();
-  if (useWsb) {
-    // Generate a .wsb that runs the test inside the sandbox and writes the
-    // exit code to a shared file. Out of caution we only enable this when
-    // explicitly available; the tempdir path below is the workhorse.
-    // (Full WSB orchestration is fiddly; treat WSB as a future opt-in.)
-  }
-
   const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
   const test = await run(npm, ['test', '--silent'], { cwd: tmp, timeoutMs });
   const out = (test.stdout + test.stderr).slice(-6000);
@@ -81,7 +66,7 @@ export async function runInSandbox(opts: { sourceRoot: string; timeoutMs?: numbe
 
   return {
     ok: test.ok,
-    mode: useWsb ? 'wsb' : 'tempdir',
+    mode: 'tempdir',
     reason: test.ok ? undefined : 'tests failed in sandbox',
     testOutput: out,
     durationMs: Date.now() - started
