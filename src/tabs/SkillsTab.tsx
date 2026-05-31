@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useSettings, useUI } from '../store/ui';
 import { useConsole } from '../store/console';
 import { buildSkillMd, slugify } from '../lib/skills';
+import DeepScanReport from '../components/DeepScanReport';
 
 /**
  * OpenClaw skills pipeline:
@@ -61,6 +62,12 @@ export default function SkillsTab() {
   const [inspecting, setInspecting] = useState<Record<string, InspectInfo>>({});
   const [q, setQ] = useState('');             // semantic (vector) search query
   const [installSlug, setInstallSlug] = useState('');
+
+  // Security: scan-before-install + scan results modal.
+  const [scanBeforeInstall, setScanBeforeInstall] = useState(true);
+  const [scanningSlug, setScanningSlug] = useState<string | null>(null);
+  const [scanResult, setScanResult] = useState<{ slug: string; name: string; report: any } | null>(null);
+  const [scanShowAll, setScanShowAll] = useState(false);
 
   async function reloadLocal() {
     if (!workspace) { setSkills([]); return; }
@@ -159,6 +166,26 @@ export default function SkillsTab() {
     } catch (e: any) {
       setInspecting(prev => ({ ...prev, [slug]: { error: e.message } }));
     }
+  }
+
+  // Security-scan a registry skill (install to quarantine + scan); opens the modal.
+  async function scanSkill(slug: string, name: string) {
+    setScanningSlug(slug);
+    setScanShowAll(false);
+    try {
+      const r = await window.api.skills.scanRegistry(slug, s.clawhubPath || 'clawhub');
+      setScanResult({ slug, name, report: r.ok ? r.report : { ok: false, error: r.reason } });
+    } catch (e: any) {
+      setScanResult({ slug, name, report: { ok: false, error: e?.message ?? String(e) } });
+    } finally {
+      setScanningSlug(null);
+    }
+  }
+
+  // Install honoring the scan-before-install toggle.
+  function installFromCard(it: RegistryItem) {
+    if (scanBeforeInstall) scanSkill(it.slug, it.displayName || it.slug);
+    else runClawhub(['install', it.slug]);
   }
 
   const visibleReg = regItems.filter(it => {
@@ -281,6 +308,11 @@ export default function SkillsTab() {
           <button onClick={() => runClawhub(['list'])} disabled={cliBusy} title="What's installed locally (clawhub list)">Installed</button>
           <button onClick={() => runClawhub(['update', '--all'])} disabled={cliBusy} title="Update all installed skills">Update all</button>
         </div>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          title="Before installing, fetch the skill into a throwaway quarantine dir and run the security scanner over its files (eval / child_process / secret reads / exfil heuristics). Nothing runs.">
+          <input type="checkbox" checked={scanBeforeInstall} onChange={e => setScanBeforeInstall(e.target.checked)} />
+          <span className="label">🛡 Security-scan skills before installing</span>
+        </label>
 
         {browseErr && <div className="banner">{browseErr}</div>}
 
@@ -310,9 +342,15 @@ export default function SkillsTab() {
                         ? <div className="label">files: <code>{ins.files.slice(0, 12).join('  ')}</code>{ins.files.length > 12 ? ` …(+${ins.files.length - 12})` : ''}</div>
                         : <div className="label">inspecting…</div>)}
                   </div>
-                  <div className="col" style={{ gap: 6, width: 140 }}>
-                    <button className="primary" onClick={() => runClawhub(['install', it.slug])} disabled={cliBusy} title={`clawhub install ${it.slug}`}>⬇ Install</button>
-                    <button onClick={() => inspectSkill(it.slug)} disabled={!!ins && !ins.error && !ins.files}>🔎 Inspect</button>
+                  <div className="col" style={{ gap: 6, width: 150 }}>
+                    <button className="primary" onClick={() => installFromCard(it)} disabled={cliBusy || scanningSlug === it.slug}
+                      title={scanBeforeInstall ? `Scan, then clawhub install ${it.slug}` : `clawhub install ${it.slug}`}>
+                      {scanningSlug === it.slug ? 'Scanning…' : (scanBeforeInstall ? '🛡 Scan & install' : '⬇ Install')}
+                    </button>
+                    <div className="row" style={{ gap: 6 }}>
+                      <button onClick={() => scanSkill(it.slug, it.displayName || it.slug)} disabled={scanningSlug === it.slug} title="Security-scan only (no install)">🛡</button>
+                      <button onClick={() => inspectSkill(it.slug)} disabled={!!ins && !ins.error && !ins.files} style={{ flex: 1 }}>🔎 Inspect</button>
+                    </div>
                   </div>
                 </div>
               );
@@ -386,6 +424,38 @@ export default function SkillsTab() {
           </div>
         )}
       </div>
+
+      {scanResult && (() => {
+        const sum = scanResult.report?.summary || {};
+        const risky = (sum.critical || 0) + (sum.high || 0) > 0;
+        return (
+          <div className="wizard-backdrop" onClick={() => setScanResult(null)} role="dialog" aria-modal="true" aria-label={`Security scan of ${scanResult.name}`}>
+            <div className="wizard" onClick={e => e.stopPropagation()} style={{ maxWidth: 820, maxHeight: '85vh', overflowY: 'auto' }}>
+              <div className="row" style={{ alignItems: 'flex-start' }}>
+                <div className="col" style={{ flex: 1, gap: 2 }}>
+                  <h2 style={{ margin: 0 }}>🛡 Security scan — {scanResult.name}</h2>
+                  <div className="label">Installed into a throwaway quarantine dir, scanned, then discarded — nothing ran on your machine.</div>
+                </div>
+                <button onClick={() => setScanResult(null)} title="Close">×</button>
+              </div>
+              <div style={{ marginTop: 12 }}>
+                <DeepScanReport report={scanResult.report} showAll={scanShowAll} onToggleShowAll={() => setScanShowAll(v => !v)} />
+              </div>
+              <div className="row" style={{ marginTop: 16, justifyContent: 'flex-end', gap: 8 }}>
+                <button onClick={() => setScanResult(null)}>Cancel</button>
+                <button
+                  className="primary"
+                  style={risky ? { background: 'var(--bad)' } : undefined}
+                  onClick={() => { const slug = scanResult.slug; setScanResult(null); runClawhub(['install', slug]); }}
+                  title={`clawhub install ${scanResult.slug}`}
+                >
+                  {risky ? '⚠ Install anyway' : `⬇ Install ${scanResult.slug}`}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

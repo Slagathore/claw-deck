@@ -63,8 +63,12 @@ export function registerRunnerHandlers(getWindow: () => BrowserWindow | null) {
       }
     }
 
-    // Pipe path.
-    const proc = spawn(opts.binary, opts.args ?? [], { cwd: opts.cwd, env, shell: false });
+    // Pipe path. On Windows, bare command names (e.g. `clawhub`, `npm`, `winget`)
+    // are usually `.cmd`/`.exe` resolved via PATHEXT — which spawn() only does
+    // with a shell. Use a shell for bare names so npm-installed CLIs resolve.
+    const bareName = !/[\\/]/.test(opts.binary);
+    const useShell = process.platform === 'win32' && bareName;
+    const proc = spawn(opts.binary, opts.args ?? [], { cwd: opts.cwd, env, shell: useShell });
     sessions.set(id, { kind: 'pipe', proc, backend: opts.backend });
     proc.stdout?.on('data', d => emit(id, 'stdout', d.toString()));
     proc.stderr?.on('data', d => emit(id, 'stderr', d.toString()));

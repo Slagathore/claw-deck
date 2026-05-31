@@ -74,7 +74,8 @@ contextBridge.exposeInMainWorld('api', {
     write: (skillMd: string, content: string) => invoke('skills:write', { skillMd, content }),
     create: (workspace: string, slug: string, content: string) => invoke('skills:create', { workspace, slug, content }),
     delete: (dir: string) => invoke('skills:delete', { dir }),
-    open: (target: string) => invoke('skills:open', { target })
+    open: (target: string) => invoke('skills:open', { target }),
+    scanRegistry: (slug: string, clawhubPath?: string) => invoke('skills:scanRegistry', { slug, clawhubPath })
   },
   prompts: {
     list: () => invoke('prompts:list'),

@@ -1,6 +1,26 @@
 import { ipcMain, shell } from 'electron';
+import { spawn } from 'child_process';
+import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs/promises';
+import { auditDirectory } from '../lib/scanner';
+
+/** Run a CLI capturing combined output; shell-resolves bare names on Windows. */
+function runCli(bin: string, args: string[], timeoutMs: number): Promise<{ ok: boolean; out: string }> {
+  return new Promise(resolve => {
+    const useShell = process.platform === 'win32' && !/[\\/]/.test(bin);
+    let child;
+    try { child = spawn(bin, args, { shell: useShell, windowsHide: true }); }
+    catch (e: any) { resolve({ ok: false, out: e.message }); return; }
+    let out = '';
+    const onData = (d: Buffer) => { out += d.toString(); };
+    child.stdout?.on('data', onData);
+    child.stderr?.on('data', onData);
+    const t = setTimeout(() => { try { child!.kill('SIGKILL'); } catch { /* ignore */ } }, timeoutMs);
+    child.on('error', e => { clearTimeout(t); resolve({ ok: false, out: out + String(e) }); });
+    child.on('close', code => { clearTimeout(t); resolve({ ok: code === 0, out }); });
+  });
+}
 
 /**
  * Local OpenClaw skill management. Skills live at `<workspace>/skills/<slug>/`,
@@ -102,5 +122,32 @@ export function registerSkillHandlers() {
   ipcMain.handle('skills:open', async (_e, opts: { target: string }) => {
     await shell.openPath(opts.target);
     return { ok: true };
+  });
+
+  // Vet a registry skill BEFORE installing it for real: install it into a
+  // throwaway quarantine dir (download only — nothing runs), scan the files with
+  // the same static security engine used by the upgrade gate, then delete the
+  // quarantine. Returns the AuditReport.
+  ipcMain.handle('skills:scanRegistry', async (_e, opts: { slug: string; clawhubPath?: string }) => {
+    const slug = (opts?.slug || '').trim();
+    if (!slug) return { ok: false, reason: 'no slug' };
+    const bin = opts.clawhubPath || 'clawhub';
+    const tmp = path.join(os.tmpdir(), `clawdeck-skillscan-${Date.now().toString(36)}`);
+    try {
+      await fs.mkdir(tmp, { recursive: true });
+      const inst = await runCli(bin, ['--workdir', tmp, '--dir', 'skills', '--no-input', 'install', slug], 120000);
+      const skillDir = path.join(tmp, 'skills', slug);
+      let exists = false;
+      try { await fs.access(skillDir); exists = true; } catch { /* not installed */ }
+      if (!exists) {
+        return { ok: false, reason: (inst.out || 'clawhub install produced no skill folder').trim().slice(-600) };
+      }
+      const report = await auditDirectory(skillDir);
+      return { ok: true, report };
+    } catch (e: any) {
+      return { ok: false, reason: e.message };
+    } finally {
+      fs.rm(tmp, { recursive: true, force: true }).catch(() => { /* best-effort */ });
+    }
   });
 }

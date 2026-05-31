@@ -68,6 +68,7 @@ declare global {
         create: (workspace: string, slug: string, content: string) => Promise<{ ok: boolean; dir?: string; skillMd?: string; reason?: string }>;
         delete: (dir: string) => Promise<{ ok: boolean; reason?: string }>;
         open: (target: string) => Promise<{ ok: boolean }>;
+        scanRegistry: (slug: string, clawhubPath?: string) => Promise<{ ok: boolean; report?: import('../electron/lib/scanner').AuditReport; reason?: string }>;
       };
       prompts: {
         list: () => Promise<{ id: number; name: string; template: string; tags: string; defaults: string; updated_at: number }[]>;
