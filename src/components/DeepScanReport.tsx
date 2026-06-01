@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { findingFingerprint, effectiveSummary, ignoredCount } from '../lib/scanReview';
+import { RULE_INFO } from '../lib/ruleInfo';
 
 /**
  * Renders an AuditReport from the static scanner (electron/lib/scanner).
@@ -20,20 +21,23 @@ export function severityBadge(sev: string): string {
   return 'badge';
 }
 
-export default function DeepScanReport({ report, showAll, onToggleShowAll, allowlist, onToggleIgnore }: {
+export default function DeepScanReport({ report, showAll, onToggleShowAll, allowlist, onToggleIgnore, scope = '' }: {
   report: any;
   showAll: boolean;
   onToggleShowAll: () => void;
   allowlist?: ReadonlySet<string>;
   onToggleIgnore?: (fp: string) => void;
+  scope?: string;
 }) {
+  const [whyOpen, setWhyOpen] = useState<Set<string>>(new Set());
+  const toggleWhy = (k: string) => setWhyOpen(prev => { const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); return n; });
   if (!report.ok) {
     return <div className="banner warn">Scan failed: {report.error ?? 'unknown error'}</div>;
   }
   const findings: any[] = report.findings ?? [];
   const al = allowlist ?? new Set<string>();
-  const summary = allowlist ? effectiveSummary(findings, al) : (report.summary ?? {});
-  const ignored = allowlist ? ignoredCount(findings, al) : 0;
+  const summary = allowlist ? effectiveSummary(scope, findings, al) : (report.summary ?? {});
+  const ignored = allowlist ? ignoredCount(scope, findings, al) : 0;
   const visible = showAll ? findings : findings.slice(0, 25);
   const worst = ['critical', 'high', 'medium', 'low', 'info'].find(s => (summary[s] ?? 0) > 0);
 
@@ -75,8 +79,10 @@ export default function DeepScanReport({ report, showAll, onToggleShowAll, allow
             Findings (worst first; {showAll ? 'showing all' : `showing first ${visible.length} of ${findings.length}`})
           </div>
           {visible.map((f, i) => {
-            const fp = findingFingerprint(f);
+            const fp = findingFingerprint(scope, f);
             const isIgnored = al.has(fp);
+            const why = RULE_INFO[f.rule];
+            const whyShown = whyOpen.has(fp);
             const accent = f.severity === 'critical' || f.severity === 'high' ? 'var(--bad)' : f.severity === 'medium' ? '#d4a017' : 'var(--muted)';
             return (
               <div key={i} className="col" style={{ padding: 6, borderLeft: `3px solid ${isIgnored ? 'var(--muted)' : accent}`, paddingLeft: 8, background: 'var(--panel-2)', gap: 2, opacity: isIgnored ? 0.55 : 1 }}>
@@ -89,14 +95,29 @@ export default function DeepScanReport({ report, showAll, onToggleShowAll, allow
                     <>
                       <div style={{ flex: 1 }} />
                       <button style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => onToggleIgnore(fp)}
-                        title={isIgnored ? 'Stop ignoring this finding' : 'Mark this exact finding as a trusted false-positive (persists)'}>
+                        title={isIgnored ? 'Stop ignoring this finding (this skill/package only)' : 'Mark this exact finding as a trusted false-positive for this skill/package (persists; other packages still flag it)'}>
                         {isIgnored ? 'Un-ignore' : 'Ignore'}
                       </button>
                     </>
                   )}
                 </div>
                 <code style={{ fontSize: 11, wordBreak: 'break-all', color: 'var(--text)', textDecoration: isIgnored ? 'line-through' : 'none' }}>{f.snippet}</code>
-                <div className="label" style={{ fontSize: 11 }}>{f.reason}</div>
+                <div className="label" style={{ fontSize: 11 }}>
+                  {f.reason}
+                  {why && (
+                    <>
+                      {' '}
+                      <a href="#" onClick={e => { e.preventDefault(); toggleWhy(fp); }} style={{ whiteSpace: 'nowrap' }}>
+                        {whyShown ? 'why? ▴' : 'why? ▾'}
+                      </a>
+                    </>
+                  )}
+                </div>
+                {why && whyShown && (
+                  <div className="label" style={{ fontSize: 11, background: 'var(--bg)', borderRadius: 4, padding: 6, lineHeight: 1.45 }}>
+                    {why}
+                  </div>
+                )}
               </div>
             );
           })}

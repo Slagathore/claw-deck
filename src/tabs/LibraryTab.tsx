@@ -505,7 +505,7 @@ function ScanModal({ state, onClose, blockRisky, allowlist, onToggleIgnore }: {
   allowlist?: ReadonlySet<string>; onToggleIgnore?: (fp: string) => void;
 }) {
   const [showAll, setShowAll] = useState(false);
-  const risky = isRisky(state.report?.findings ?? [], allowlist ?? new Set<string>());
+  const risky = isRisky(state.id, state.report?.findings ?? [], allowlist ?? new Set<string>());
   const blocked = risky && !!blockRisky;
   return (
     <div className="wizard-backdrop" onClick={onClose} role="dialog" aria-modal="true" aria-label={`Scan of ${state.name}`}>
@@ -518,7 +518,7 @@ function ScanModal({ state, onClose, blockRisky, allowlist, onToggleIgnore }: {
           <button onClick={onClose} title="Close">×</button>
         </div>
         <div style={{ marginTop: 12 }}>
-          <DeepScanReport report={state.report} showAll={showAll} onToggleShowAll={() => setShowAll(s => !s)} allowlist={allowlist} onToggleIgnore={onToggleIgnore} />
+          <DeepScanReport report={state.report} showAll={showAll} onToggleShowAll={() => setShowAll(s => !s)} allowlist={allowlist} onToggleIgnore={onToggleIgnore} scope={state.id} />
         </div>
         <div className="row" style={{ marginTop: 16, alignItems: 'center', gap: 8 }}>
           {state.path && (

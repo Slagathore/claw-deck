@@ -44,7 +44,7 @@ export default function SecurityTab() {
           Same engine used by the upgrade gate and the Library security audit. Use it on a downloaded
           extension, an npm package, or any source tree before you trust it.
         </div>
-        {report && <DeepScanReport report={report} showAll={showAll} onToggleShowAll={() => setShowAll(v => !v)} allowlist={allowlist} onToggleIgnore={toggleIgnore} />}
+        {report && <DeepScanReport report={report} showAll={showAll} onToggleShowAll={() => setShowAll(v => !v)} allowlist={allowlist} onToggleIgnore={toggleIgnore} scope={`folder:${report.root ?? ''}`} />}
       </div>
 
       <div className="card">

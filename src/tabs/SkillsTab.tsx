@@ -431,7 +431,8 @@ export default function SkillsTab() {
       </div>
 
       {scanResult && (() => {
-        const risky = isRisky(scanResult.report?.findings ?? [], allowlist);
+        const scope = `skill:${scanResult.slug}`;
+        const risky = isRisky(scope, scanResult.report?.findings ?? [], allowlist);
         const blocked = risky && blockRisky;
         return (
           <div className="wizard-backdrop" onClick={() => setScanResult(null)} role="dialog" aria-modal="true" aria-label={`Security scan of ${scanResult.name}`}>
@@ -444,7 +445,7 @@ export default function SkillsTab() {
                 <button onClick={() => setScanResult(null)} title="Close">×</button>
               </div>
               <div style={{ marginTop: 12 }}>
-                <DeepScanReport report={scanResult.report} showAll={scanShowAll} onToggleShowAll={() => setScanShowAll(v => !v)} allowlist={allowlist} onToggleIgnore={toggleIgnore} />
+                <DeepScanReport report={scanResult.report} showAll={scanShowAll} onToggleShowAll={() => setScanShowAll(v => !v)} allowlist={allowlist} onToggleIgnore={toggleIgnore} scope={scope} />
               </div>
               <div className="row" style={{ marginTop: 16, alignItems: 'center', gap: 8 }}>
                 {blocked && <span className="label" style={{ color: 'var(--bad)', flex: 1 }}>Blocked by policy: critical/high findings. Disable "Block installs" in Settings → Install Security to override.</span>}
