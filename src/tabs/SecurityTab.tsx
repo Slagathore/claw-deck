@@ -1,7 +1,12 @@
 import React, { useEffect, useState } from 'react';
+import { useSettings } from '../store/ui';
+import { toggleAllowlist } from '../lib/scanReview';
 import DeepScanReport from '../components/DeepScanReport';
 
 export default function SecurityTab() {
+  const { data: s, save } = useSettings();
+  const allowlist = new Set<string>(s.scanAllowlist ?? []);
+  const toggleIgnore = (fp: string) => save({ scanAllowlist: toggleAllowlist(s.scanAllowlist ?? [], fp) });
   const [rows, setRows] = useState<any[]>([]);
   const [scanning, setScanning] = useState(false);
   const [report, setReport] = useState<any | null>(null);
@@ -39,7 +44,7 @@ export default function SecurityTab() {
           Same engine used by the upgrade gate and the Library security audit. Use it on a downloaded
           extension, an npm package, or any source tree before you trust it.
         </div>
-        {report && <DeepScanReport report={report} showAll={showAll} onToggleShowAll={() => setShowAll(s => !s)} />}
+        {report && <DeepScanReport report={report} showAll={showAll} onToggleShowAll={() => setShowAll(v => !v)} allowlist={allowlist} onToggleIgnore={toggleIgnore} />}
       </div>
 
       <div className="card">

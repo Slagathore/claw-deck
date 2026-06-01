@@ -7,6 +7,7 @@ import {
   ModelEntry, McpPreset, ToolPreset, OpenClawPluginEntry
 } from '../lib/catalog';
 import { formatBytes } from '../lib/vram';
+import { isRisky, toggleAllowlist } from '../lib/scanReview';
 import DeepScanReport from '../components/DeepScanReport';
 
 type Section = 'models' | 'mcp' | 'openclaw' | 'tools';
@@ -19,7 +20,7 @@ interface PullState {
   error?: string;
 }
 
-interface ScanModalState { id: string; name: string; report: any; path?: string; install?: () => void; }
+interface ScanModalState { id: string; name: string; report: any; path?: string; install?: () => void; installLabel?: string; }
 
 export default function LibraryTab() {
   const { data: s, save } = useSettings();
@@ -78,7 +79,7 @@ export default function LibraryTab() {
     await save({ [slot]: model });
   }
 
-  async function addMcp(p: McpPreset, extra: string) {
+  async function doAddMcp(p: McpPreset, extra: string) {
     const args = [...p.args];
     const env: Record<string, string> = {};
     if (p.needsArg && extra) {
@@ -93,18 +94,30 @@ export default function LibraryTab() {
     await save({ mcpServers: next });
   }
 
+  // Adding an MCP server wires it to auto-run, so gate it behind a scan too
+  // (node servers carry an npm `pkg` we can fetch + scan; uvx servers add direct).
+  function addMcpGated(p: McpPreset, extra: string) {
+    if (scanBeforeInstall && p.pkg) {
+      scanSource('mcp-' + p.name, p.pkg.kind, p.pkg.ref, p.name, () => doAddMcp(p, extra), 'Add to Settings');
+    } else {
+      doAddMcp(p, extra);
+    }
+  }
+
   const scanBeforeInstall = s.scanBeforeInstall !== false;
   const blockRisky = s.blockRiskyInstalls !== false;
+  const allowlist = new Set<string>(s.scanAllowlist ?? []);
+  const toggleIgnore = (fp: string) => save({ scanAllowlist: toggleAllowlist(s.scanAllowlist ?? [], fp) });
 
   // Fetch the real source (npm pack / git clone) and deep-scan it. `install` is an
   // optional "do it for real" action shown in the modal (scan-gated install).
-  async function scanSource(id: string, kind: 'npm' | 'github', ref: string, name: string, install?: () => void) {
+  async function scanSource(id: string, kind: 'npm' | 'github', ref: string, name: string, install?: () => void, installLabel?: string) {
     setScanningKey(id);
     try {
       const r = await window.api.extensions.install({ id, kind, ref });
-      setScanModal(r.ok ? { id, name, report: r.report, path: r.path, install } : { id, name, report: { ok: false, error: r.reason }, install });
+      setScanModal(r.ok ? { id, name, report: r.report, path: r.path, install, installLabel } : { id, name, report: { ok: false, error: r.reason }, install, installLabel });
     } catch (e: any) {
-      setScanModal({ id, name, report: { ok: false, error: e?.message ?? String(e) }, install });
+      setScanModal({ id, name, report: { ok: false, error: e?.message ?? String(e) }, install, installLabel });
     } finally {
       setScanningKey(null);
     }
@@ -214,7 +227,7 @@ export default function LibraryTab() {
               preset={p}
               installed={(s.mcpServers ?? []).some((x: any) => x.name === p.name)}
               scanning={scanningKey === 'mcp-' + p.name}
-              onAdd={addMcp}
+              onAdd={addMcpGated}
               onScan={() => p.pkg && scanSource('mcp-' + p.name, p.pkg.kind, p.pkg.ref, p.name)}
             />
           ))}
@@ -253,7 +266,7 @@ export default function LibraryTab() {
       )}
 
       {scanModal && (
-        <ScanModal state={scanModal} blockRisky={blockRisky} onClose={() => setScanModal(null)} />
+        <ScanModal state={scanModal} blockRisky={blockRisky} allowlist={allowlist} onToggleIgnore={toggleIgnore} onClose={() => setScanModal(null)} />
       )}
     </div>
   );
@@ -487,10 +500,12 @@ function OpenClawPluginRow({ entry, scanning, onInstall, onScan }: {
   );
 }
 
-function ScanModal({ state, onClose, blockRisky }: { state: ScanModalState; onClose: () => void; blockRisky?: boolean }) {
+function ScanModal({ state, onClose, blockRisky, allowlist, onToggleIgnore }: {
+  state: ScanModalState; onClose: () => void; blockRisky?: boolean;
+  allowlist?: ReadonlySet<string>; onToggleIgnore?: (fp: string) => void;
+}) {
   const [showAll, setShowAll] = useState(false);
-  const sum = state.report?.summary || {};
-  const risky = (sum.critical || 0) + (sum.high || 0) > 0;
+  const risky = isRisky(state.report?.findings ?? [], allowlist ?? new Set<string>());
   const blocked = risky && !!blockRisky;
   return (
     <div className="wizard-backdrop" onClick={onClose} role="dialog" aria-modal="true" aria-label={`Scan of ${state.name}`}>
@@ -503,7 +518,7 @@ function ScanModal({ state, onClose, blockRisky }: { state: ScanModalState; onCl
           <button onClick={onClose} title="Close">×</button>
         </div>
         <div style={{ marginTop: 12 }}>
-          <DeepScanReport report={state.report} showAll={showAll} onToggleShowAll={() => setShowAll(s => !s)} />
+          <DeepScanReport report={state.report} showAll={showAll} onToggleShowAll={() => setShowAll(s => !s)} allowlist={allowlist} onToggleIgnore={onToggleIgnore} />
         </div>
         <div className="row" style={{ marginTop: 16, alignItems: 'center', gap: 8 }}>
           {state.path && (
@@ -522,9 +537,9 @@ function ScanModal({ state, onClose, blockRisky }: { state: ScanModalState; onCl
                 disabled={blocked}
                 style={risky && !blocked ? { background: 'var(--bad)' } : undefined}
                 onClick={() => { const fn = state.install!; onClose(); fn(); }}
-                title={blocked ? 'Blocked by Install Security policy' : 'Install for real'}
+                title={blocked ? 'Blocked by Install Security policy' : 'Proceed for real'}
               >
-                {blocked ? '🚫 Blocked' : risky ? '⚠ Install anyway' : '⬇ Install'}
+                {blocked ? '🚫 Blocked' : `${risky ? '⚠ ' : '⬇ '}${state.installLabel ?? 'Install'}${risky && !state.installLabel ? ' anyway' : ''}`}
               </button>
             </>
           ) : (

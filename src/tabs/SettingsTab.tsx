@@ -224,6 +224,10 @@ export default function SettingsTab() {
           <input type="checkbox" checked={draft.blockRiskyInstalls !== false} onChange={e => set('blockRiskyInstalls', e.target.checked)} />
           {' '}Block installs with critical/high findings (otherwise warn + allow override)
         </label>
+        <div className="row">
+          <span className="label">{(draft.scanAllowlist?.length ?? 0)} ignored finding{(draft.scanAllowlist?.length ?? 0) === 1 ? '' : 's'} on the allowlist (known false-positives, set via the scan reports).</span>
+          {(draft.scanAllowlist?.length ?? 0) > 0 && <button onClick={() => set('scanAllowlist', [])}>Clear allowlist</button>}
+        </div>
       </div>
 
       <div className="card col">

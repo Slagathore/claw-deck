@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useSettings, useUI } from '../store/ui';
 import { useConsole } from '../store/console';
 import { buildSkillMd, slugify } from '../lib/skills';
+import { isRisky, toggleAllowlist } from '../lib/scanReview';
 import DeepScanReport from '../components/DeepScanReport';
 
 /**
@@ -66,6 +67,8 @@ export default function SkillsTab() {
   // Security: scan-before-install policy comes from Settings (shared with plugins).
   const scanBeforeInstall = s.scanBeforeInstall !== false;
   const blockRisky = s.blockRiskyInstalls !== false;
+  const allowlist = new Set<string>(s.scanAllowlist ?? []);
+  const toggleIgnore = (fp: string) => save({ scanAllowlist: toggleAllowlist(s.scanAllowlist ?? [], fp) });
   const [scanningSlug, setScanningSlug] = useState<string | null>(null);
   const [scanResult, setScanResult] = useState<{ slug: string; name: string; report: any } | null>(null);
   const [scanShowAll, setScanShowAll] = useState(false);
@@ -428,8 +431,7 @@ export default function SkillsTab() {
       </div>
 
       {scanResult && (() => {
-        const sum = scanResult.report?.summary || {};
-        const risky = (sum.critical || 0) + (sum.high || 0) > 0;
+        const risky = isRisky(scanResult.report?.findings ?? [], allowlist);
         const blocked = risky && blockRisky;
         return (
           <div className="wizard-backdrop" onClick={() => setScanResult(null)} role="dialog" aria-modal="true" aria-label={`Security scan of ${scanResult.name}`}>
@@ -442,7 +444,7 @@ export default function SkillsTab() {
                 <button onClick={() => setScanResult(null)} title="Close">×</button>
               </div>
               <div style={{ marginTop: 12 }}>
-                <DeepScanReport report={scanResult.report} showAll={scanShowAll} onToggleShowAll={() => setScanShowAll(v => !v)} />
+                <DeepScanReport report={scanResult.report} showAll={scanShowAll} onToggleShowAll={() => setScanShowAll(v => !v)} allowlist={allowlist} onToggleIgnore={toggleIgnore} />
               </div>
               <div className="row" style={{ marginTop: 16, alignItems: 'center', gap: 8 }}>
                 {blocked && <span className="label" style={{ color: 'var(--bad)', flex: 1 }}>Blocked by policy: critical/high findings. Disable "Block installs" in Settings → Install Security to override.</span>}

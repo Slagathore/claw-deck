@@ -1,9 +1,15 @@
 import React from 'react';
+import { findingFingerprint, effectiveSummary, ignoredCount } from '../lib/scanReview';
 
 /**
  * Renders an AuditReport from the static scanner (electron/lib/scanner).
- * Shared by the Library security-audit modal and the Security tab's
- * folder-scan panel so there's one canonical findings UI.
+ * Shared by the Library security-audit modal, the Skills scan modal, and the
+ * Security tab's folder-scan panel so there's one canonical findings UI.
+ *
+ * When `allowlist` + `onToggleIgnore` are supplied, each finding gains an
+ * Ignore/Un-ignore control and the headline counts reflect the *effective*
+ * severities (allowlisted findings excluded) — so a trusted false-positive
+ * stops counting toward the install block.
  */
 
 export function severityBadge(sev: string): string {
@@ -14,16 +20,20 @@ export function severityBadge(sev: string): string {
   return 'badge';
 }
 
-export default function DeepScanReport({ report, showAll, onToggleShowAll }: {
+export default function DeepScanReport({ report, showAll, onToggleShowAll, allowlist, onToggleIgnore }: {
   report: any;
   showAll: boolean;
   onToggleShowAll: () => void;
+  allowlist?: ReadonlySet<string>;
+  onToggleIgnore?: (fp: string) => void;
 }) {
   if (!report.ok) {
     return <div className="banner warn">Scan failed: {report.error ?? 'unknown error'}</div>;
   }
   const findings: any[] = report.findings ?? [];
-  const summary = report.summary ?? {};
+  const al = allowlist ?? new Set<string>();
+  const summary = allowlist ? effectiveSummary(findings, al) : (report.summary ?? {});
+  const ignored = allowlist ? ignoredCount(findings, al) : 0;
   const visible = showAll ? findings : findings.slice(0, 25);
   const worst = ['critical', 'high', 'medium', 'low', 'info'].find(s => (summary[s] ?? 0) > 0);
 
@@ -38,6 +48,7 @@ export default function DeepScanReport({ report, showAll, onToggleShowAll }: {
         {summary.medium > 0 && <span className="badge warn">{summary.medium} medium</span>}
         {summary.low > 0 && <span className="badge">{summary.low} low</span>}
         {summary.info > 0 && <span className="badge">{summary.info} info</span>}
+        {ignored > 0 && <span className="badge" title="Allowlisted findings excluded from the counts above">{ignored} ignored</span>}
         {findings.length === 0 && <span className="badge ok">no risky patterns matched</span>}
       </div>
 
@@ -63,17 +74,32 @@ export default function DeepScanReport({ report, showAll, onToggleShowAll }: {
           <div className="label" style={{ color: 'var(--muted)' }}>
             Findings (worst first; {showAll ? 'showing all' : `showing first ${visible.length} of ${findings.length}`})
           </div>
-          {visible.map((f, i) => (
-            <div key={i} className="col" style={{ padding: 6, borderLeft: `3px solid ${f.severity === 'critical' || f.severity === 'high' ? 'var(--bad)' : f.severity === 'medium' ? '#d4a017' : 'var(--muted)'}`, paddingLeft: 8, background: 'var(--panel-2)', gap: 2 }}>
-              <div className="row">
-                <span className={severityBadge(f.severity)}>{f.severity}</span>
-                <code style={{ fontSize: 11 }}>{f.rule}</code>
-                <span className="label" style={{ fontSize: 11 }}>{f.file}:{f.line}</span>
+          {visible.map((f, i) => {
+            const fp = findingFingerprint(f);
+            const isIgnored = al.has(fp);
+            const accent = f.severity === 'critical' || f.severity === 'high' ? 'var(--bad)' : f.severity === 'medium' ? '#d4a017' : 'var(--muted)';
+            return (
+              <div key={i} className="col" style={{ padding: 6, borderLeft: `3px solid ${isIgnored ? 'var(--muted)' : accent}`, paddingLeft: 8, background: 'var(--panel-2)', gap: 2, opacity: isIgnored ? 0.55 : 1 }}>
+                <div className="row">
+                  <span className={severityBadge(f.severity)}>{f.severity}</span>
+                  <code style={{ fontSize: 11 }}>{f.rule}</code>
+                  <span className="label" style={{ fontSize: 11 }}>{f.file}:{f.line}</span>
+                  {isIgnored && <span className="badge" title="On your allowlist — excluded from counts">ignored</span>}
+                  {onToggleIgnore && (
+                    <>
+                      <div style={{ flex: 1 }} />
+                      <button style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => onToggleIgnore(fp)}
+                        title={isIgnored ? 'Stop ignoring this finding' : 'Mark this exact finding as a trusted false-positive (persists)'}>
+                        {isIgnored ? 'Un-ignore' : 'Ignore'}
+                      </button>
+                    </>
+                  )}
+                </div>
+                <code style={{ fontSize: 11, wordBreak: 'break-all', color: 'var(--text)', textDecoration: isIgnored ? 'line-through' : 'none' }}>{f.snippet}</code>
+                <div className="label" style={{ fontSize: 11 }}>{f.reason}</div>
               </div>
-              <code style={{ fontSize: 11, wordBreak: 'break-all', color: 'var(--text)' }}>{f.snippet}</code>
-              <div className="label" style={{ fontSize: 11 }}>{f.reason}</div>
-            </div>
-          ))}
+            );
+          })}
           {findings.length > visible.length && (
             <button onClick={onToggleShowAll} style={{ alignSelf: 'flex-start' }}>
               Show all {findings.length}
