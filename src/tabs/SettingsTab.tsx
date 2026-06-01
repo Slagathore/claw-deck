@@ -214,6 +214,19 @@ export default function SettingsTab() {
       </div>
 
       <div className="card col">
+        <h3 style={{ margin: 0 }}>Install Security</h3>
+        <div className="label">Applies to Skills (ClawHub) and OpenClaw plugin installs.</div>
+        <label title="Before installing, fetch the skill/plugin into a throwaway quarantine dir and run the static security scanner over its files. Nothing runs during the scan.">
+          <input type="checkbox" checked={draft.scanBeforeInstall !== false} onChange={e => set('scanBeforeInstall', e.target.checked)} />
+          {' '}Security-scan before installing
+        </label>
+        <label title="When a pre-install scan finds critical or high-severity matches, block the install entirely instead of just warning.">
+          <input type="checkbox" checked={draft.blockRiskyInstalls !== false} onChange={e => set('blockRiskyInstalls', e.target.checked)} />
+          {' '}Block installs with critical/high findings (otherwise warn + allow override)
+        </label>
+      </div>
+
+      <div className="card col">
         <h3 style={{ margin: 0 }}>Upgrade Policy</h3>
         <label className="label">Allowed hosts (comma-separated)</label>
         <input

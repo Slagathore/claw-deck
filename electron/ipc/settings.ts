@@ -12,6 +12,8 @@ const DEFAULTS = {
   claudeCodePath: 'claude',
   clawhubPath: 'clawhub',
   skillsDir: '',
+  scanBeforeInstall: true,     // fetch + security-scan skills/plugins before installing
+  blockRiskyInstalls: true,    // hard-block installs with critical/high findings (else just warn)
   theme: 'dark',
   showThinking: true,
   policy: { allowlist: ['github.com', 'releases.openclaw.org', 'objects.githubusercontent.com'], requireSignature: false, autoScan: true, signingKeys: [] as { name: string; format: 'pem' | 'hex'; key: string }[] },

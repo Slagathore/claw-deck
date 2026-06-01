@@ -63,8 +63,9 @@ export default function SkillsTab() {
   const [q, setQ] = useState('');             // semantic (vector) search query
   const [installSlug, setInstallSlug] = useState('');
 
-  // Security: scan-before-install + scan results modal.
-  const [scanBeforeInstall, setScanBeforeInstall] = useState(true);
+  // Security: scan-before-install policy comes from Settings (shared with plugins).
+  const scanBeforeInstall = s.scanBeforeInstall !== false;
+  const blockRisky = s.blockRiskyInstalls !== false;
   const [scanningSlug, setScanningSlug] = useState<string | null>(null);
   const [scanResult, setScanResult] = useState<{ slug: string; name: string; report: any } | null>(null);
   const [scanShowAll, setScanShowAll] = useState(false);
@@ -310,9 +311,10 @@ export default function SkillsTab() {
         </div>
         <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
           title="Before installing, fetch the skill into a throwaway quarantine dir and run the security scanner over its files (eval / child_process / secret reads / exfil heuristics). Nothing runs.">
-          <input type="checkbox" checked={scanBeforeInstall} onChange={e => setScanBeforeInstall(e.target.checked)} />
+          <input type="checkbox" checked={scanBeforeInstall} onChange={e => save({ scanBeforeInstall: e.target.checked })} />
           <span className="label">🛡 Security-scan skills before installing</span>
         </label>
+        {scanBeforeInstall && <span className="label">{blockRisky ? 'Critical/high findings block install.' : 'Findings warn only.'} (Settings → Install Security)</span>}
 
         {browseErr && <div className="banner">{browseErr}</div>}
 
@@ -428,6 +430,7 @@ export default function SkillsTab() {
       {scanResult && (() => {
         const sum = scanResult.report?.summary || {};
         const risky = (sum.critical || 0) + (sum.high || 0) > 0;
+        const blocked = risky && blockRisky;
         return (
           <div className="wizard-backdrop" onClick={() => setScanResult(null)} role="dialog" aria-modal="true" aria-label={`Security scan of ${scanResult.name}`}>
             <div className="wizard" onClick={e => e.stopPropagation()} style={{ maxWidth: 820, maxHeight: '85vh', overflowY: 'auto' }}>
@@ -441,15 +444,18 @@ export default function SkillsTab() {
               <div style={{ marginTop: 12 }}>
                 <DeepScanReport report={scanResult.report} showAll={scanShowAll} onToggleShowAll={() => setScanShowAll(v => !v)} />
               </div>
-              <div className="row" style={{ marginTop: 16, justifyContent: 'flex-end', gap: 8 }}>
+              <div className="row" style={{ marginTop: 16, alignItems: 'center', gap: 8 }}>
+                {blocked && <span className="label" style={{ color: 'var(--bad)', flex: 1 }}>Blocked by policy: critical/high findings. Disable "Block installs" in Settings → Install Security to override.</span>}
+                <div style={{ flex: blocked ? 0 : 1 }} />
                 <button onClick={() => setScanResult(null)}>Cancel</button>
                 <button
                   className="primary"
-                  style={risky ? { background: 'var(--bad)' } : undefined}
+                  disabled={blocked}
+                  style={risky && !blocked ? { background: 'var(--bad)' } : undefined}
                   onClick={() => { const slug = scanResult.slug; setScanResult(null); runClawhub(['install', slug]); }}
-                  title={`clawhub install ${scanResult.slug}`}
+                  title={blocked ? 'Blocked by Install Security policy' : `clawhub install ${scanResult.slug}`}
                 >
-                  {risky ? '⚠ Install anyway' : `⬇ Install ${scanResult.slug}`}
+                  {blocked ? '🚫 Blocked' : risky ? '⚠ Install anyway' : `⬇ Install ${scanResult.slug}`}
                 </button>
               </div>
             </div>

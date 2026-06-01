@@ -19,7 +19,7 @@ interface PullState {
   error?: string;
 }
 
-interface ScanModalState { id: string; name: string; report: any; path?: string; }
+interface ScanModalState { id: string; name: string; report: any; path?: string; install?: () => void; }
 
 export default function LibraryTab() {
   const { data: s, save } = useSettings();
@@ -93,34 +93,47 @@ export default function LibraryTab() {
     await save({ mcpServers: next });
   }
 
-  // Fetch the real source (npm pack / git clone) and deep-scan it before you trust it.
-  async function scanSource(id: string, kind: 'npm' | 'github', ref: string, name: string) {
+  const scanBeforeInstall = s.scanBeforeInstall !== false;
+  const blockRisky = s.blockRiskyInstalls !== false;
+
+  // Fetch the real source (npm pack / git clone) and deep-scan it. `install` is an
+  // optional "do it for real" action shown in the modal (scan-gated install).
+  async function scanSource(id: string, kind: 'npm' | 'github', ref: string, name: string, install?: () => void) {
     setScanningKey(id);
     try {
       const r = await window.api.extensions.install({ id, kind, ref });
-      setScanModal(r.ok ? { id, name, report: r.report, path: r.path } : { id, name, report: { ok: false, error: r.reason } });
+      setScanModal(r.ok ? { id, name, report: r.report, path: r.path, install } : { id, name, report: { ok: false, error: r.reason }, install });
     } catch (e: any) {
-      setScanModal({ id, name, report: { ok: false, error: e?.message ?? String(e) } });
+      setScanModal({ id, name, report: { ok: false, error: e?.message ?? String(e) }, install });
     } finally {
       setScanningKey(null);
     }
   }
 
-  // Install an OpenClaw plugin via the real OpenClaw CLI; output streams to the Console.
-  async function installOpenClawPlugin(entry: OpenClawPluginEntry) {
+  // Run the real OpenClaw CLI install; output streams to the Console.
+  function runOpenclawInstall(entry: OpenClawPluginEntry) {
     const binary = s.openclawPath;
     if (!binary) { alert('Set the OpenClaw CLI path in Settings → CLIs first.'); return; }
     const ref = openclawInstallRef(entry.source);
-    try {
-      const { id } = await window.api.runner.start({ backend: 'openclaw', binary, args: ['plugins', 'install', ref] });
+    window.api.runner.start({ backend: 'openclaw', binary, args: ['plugins', 'install', ref] }).then(({ id }) => {
       useConsole.getState().add({
         id, kind: 'openclaw', label: `install ${entry.name}`,
         detail: `${binary} plugins install ${ref}`, startedAt: Date.now(), supportsInput: true,
         output: `[openclaw] plugins install ${ref}\n`
       });
       setTab('console');
-    } catch (e: any) {
-      alert(`Failed to start OpenClaw: ${e.message}`);
+    }).catch((e: any) => alert(`Failed to start OpenClaw: ${e.message}`));
+  }
+
+  // Install honoring the scan-before-install policy (fetch + scan the real source,
+  // then install only on confirm). clawhub-sourced refs can't be source-fetched, so
+  // they install directly.
+  function installOpenClawPlugin(entry: OpenClawPluginEntry) {
+    if (!s.openclawPath) { alert('Set the OpenClaw CLI path in Settings → CLIs first.'); return; }
+    if (scanBeforeInstall && entry.source.kind !== 'clawhub') {
+      scanSource('ocp-' + entry.id, entry.source.kind === 'npm' ? 'npm' : 'github', entry.source.ref, entry.name, () => runOpenclawInstall(entry));
+    } else {
+      runOpenclawInstall(entry);
     }
   }
 
@@ -213,8 +226,9 @@ export default function LibraryTab() {
           <div className="label">
             Real <a href="https://openclaw.ai/ecosystem" target="_blank" rel="noreferrer">OpenClaw</a> plugins, skills,
             and ecosystem tools (verified on GitHub). <strong>Install</strong> runs the real
-            <code>openclaw plugins install git:…</code> and streams to the Console (set the OpenClaw CLI path in
-            Settings first). <strong>Fetch &amp; scan</strong> clones the repo and runs the static security scanner.
+            <code>openclaw plugins install git:…</code> (set the OpenClaw CLI path in Settings first) — and when
+            <em>Security-scan before installing</em> is on (Settings → Install Security), it first clones + scans the
+            source and only installs on your confirm. <strong>Fetch &amp; scan</strong> reviews the source any time.
             Discover more at <a href="https://clawhub.ai" target="_blank" rel="noreferrer">ClawHub</a> and{' '}
             <a href="https://openclawdir.com/plugins" target="_blank" rel="noreferrer">openclawdir.com</a>.
           </div>
@@ -239,7 +253,7 @@ export default function LibraryTab() {
       )}
 
       {scanModal && (
-        <ScanModal state={scanModal} onClose={() => setScanModal(null)} />
+        <ScanModal state={scanModal} blockRisky={blockRisky} onClose={() => setScanModal(null)} />
       )}
     </div>
   );
@@ -473,8 +487,11 @@ function OpenClawPluginRow({ entry, scanning, onInstall, onScan }: {
   );
 }
 
-function ScanModal({ state, onClose }: { state: ScanModalState; onClose: () => void }) {
+function ScanModal({ state, onClose, blockRisky }: { state: ScanModalState; onClose: () => void; blockRisky?: boolean }) {
   const [showAll, setShowAll] = useState(false);
+  const sum = state.report?.summary || {};
+  const risky = (sum.critical || 0) + (sum.high || 0) > 0;
+  const blocked = risky && !!blockRisky;
   return (
     <div className="wizard-backdrop" onClick={onClose} role="dialog" aria-modal="true" aria-label={`Scan of ${state.name}`}>
       <div className="wizard" onClick={e => e.stopPropagation()} style={{ maxWidth: 820, maxHeight: '85vh', overflowY: 'auto' }}>
@@ -488,14 +505,31 @@ function ScanModal({ state, onClose }: { state: ScanModalState; onClose: () => v
         <div style={{ marginTop: 12 }}>
           <DeepScanReport report={state.report} showAll={showAll} onToggleShowAll={() => setShowAll(s => !s)} />
         </div>
-        <div className="row" style={{ marginTop: 16, justifyContent: 'flex-end' }}>
+        <div className="row" style={{ marginTop: 16, alignItems: 'center', gap: 8 }}>
           {state.path && (
             <>
-              <button style={{ marginRight: 'auto' }} onClick={() => window.api.extensions.open(state.id)}>📂 Open folder</button>
+              <button onClick={() => window.api.extensions.open(state.id)}>📂 Open folder</button>
               <button onClick={async () => { if (confirm('Delete the fetched files?')) { await window.api.extensions.uninstall(state.id); onClose(); } }} style={{ color: 'var(--bad)' }}>Delete files</button>
             </>
           )}
-          <button className="primary" onClick={onClose}>Close</button>
+          {state.install && blocked && <span className="label" style={{ color: 'var(--bad)' }}>Blocked: critical/high findings (override in Settings → Install Security)</span>}
+          <div style={{ flex: 1 }} />
+          {state.install ? (
+            <>
+              <button onClick={onClose}>Cancel</button>
+              <button
+                className="primary"
+                disabled={blocked}
+                style={risky && !blocked ? { background: 'var(--bad)' } : undefined}
+                onClick={() => { const fn = state.install!; onClose(); fn(); }}
+                title={blocked ? 'Blocked by Install Security policy' : 'Install for real'}
+              >
+                {blocked ? '🚫 Blocked' : risky ? '⚠ Install anyway' : '⬇ Install'}
+              </button>
+            </>
+          ) : (
+            <button className="primary" onClick={onClose}>Close</button>
+          )}
         </div>
       </div>
     </div>
