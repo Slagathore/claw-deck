@@ -2,8 +2,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useSettings, useUI } from '../store/ui';
 import { useConsole } from '../store/console';
 import { buildSkillMd, slugify } from '../lib/skills';
-import { isRisky, toggleAllowlist } from '../lib/scanReview';
+import { isRisky, toggleAllowlist, effectiveSummary, ignoredCount, RuleOverride } from '../lib/scanReview';
 import DeepScanReport from '../components/DeepScanReport';
+import RiskBadge from '../components/RiskBadge';
 
 /**
  * OpenClaw skills pipeline:
@@ -69,6 +70,19 @@ export default function SkillsTab() {
   const blockRisky = s.blockRiskyInstalls !== false;
   const allowlist = new Set<string>(s.scanAllowlist ?? []);
   const toggleIgnore = (fp: string) => save({ scanAllowlist: toggleAllowlist(s.scanAllowlist ?? [], fp) });
+  const overrides = s.ruleOverrides ?? {};
+  const setOverride = (rule: string, ov: RuleOverride | null) => {
+    const next = { ...overrides };
+    if (ov) next[rule] = ov; else delete next[rule];
+    save({ ruleOverrides: next });
+  };
+  const scanSummaries = s.scanSummaries ?? {};
+  function cacheSummary(scope: string, report: any) {
+    if (!report?.ok) return;
+    const counts = effectiveSummary(scope, report.findings ?? [], allowlist, overrides);
+    const ign = ignoredCount(scope, report.findings ?? [], allowlist);
+    save({ scanSummaries: { ...(s.scanSummaries ?? {}), [scope]: { counts, ignored: ign, at: Date.now() } } });
+  }
   const [scanningSlug, setScanningSlug] = useState<string | null>(null);
   const [scanResult, setScanResult] = useState<{ slug: string; name: string; report: any } | null>(null);
   const [scanShowAll, setScanShowAll] = useState(false);
@@ -179,6 +193,7 @@ export default function SkillsTab() {
     try {
       const r = await window.api.skills.scanRegistry(slug, s.clawhubPath || 'clawhub');
       setScanResult({ slug, name, report: r.ok ? r.report : { ok: false, error: r.reason } });
+      if (r.ok) cacheSummary(`skill:${slug}`, r.report);
     } catch (e: any) {
       setScanResult({ slug, name, report: { ok: false, error: e?.message ?? String(e) } });
     } finally {
@@ -334,6 +349,7 @@ export default function SkillsTab() {
                       <code className="label">{it.slug}</code>
                       {it.tags?.latest && <span className="badge">v{it.tags.latest}</span>}
                       {it.latestVersion?.license && <span className="label">{it.latestVersion.license}</span>}
+                      <RiskBadge entry={scanSummaries['skill:' + it.slug]} />
                     </div>
                     {it.summary && <div className="label" style={{ color: 'var(--text)' }}>{it.summary}</div>}
                     <div className="label">
@@ -432,7 +448,7 @@ export default function SkillsTab() {
 
       {scanResult && (() => {
         const scope = `skill:${scanResult.slug}`;
-        const risky = isRisky(scope, scanResult.report?.findings ?? [], allowlist);
+        const risky = isRisky(scope, scanResult.report?.findings ?? [], allowlist, overrides);
         const blocked = risky && blockRisky;
         return (
           <div className="wizard-backdrop" onClick={() => setScanResult(null)} role="dialog" aria-modal="true" aria-label={`Security scan of ${scanResult.name}`}>
@@ -445,7 +461,7 @@ export default function SkillsTab() {
                 <button onClick={() => setScanResult(null)} title="Close">×</button>
               </div>
               <div style={{ marginTop: 12 }}>
-                <DeepScanReport report={scanResult.report} showAll={scanShowAll} onToggleShowAll={() => setScanShowAll(v => !v)} allowlist={allowlist} onToggleIgnore={toggleIgnore} scope={scope} />
+                <DeepScanReport report={scanResult.report} showAll={scanShowAll} onToggleShowAll={() => setScanShowAll(v => !v)} allowlist={allowlist} onToggleIgnore={toggleIgnore} scope={scope} overrides={overrides} onSetOverride={setOverride} />
               </div>
               <div className="row" style={{ marginTop: 16, alignItems: 'center', gap: 8 }}>
                 {blocked && <span className="label" style={{ color: 'var(--bad)', flex: 1 }}>Blocked by policy: critical/high findings. Disable "Block installs" in Settings → Install Security to override.</span>}

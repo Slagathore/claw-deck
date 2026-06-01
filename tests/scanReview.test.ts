@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { findingFingerprint, effectiveSummary, isRisky, ignoredCount, toggleAllowlist, ScanFinding } from '../src/lib/scanReview';
+import { findingFingerprint, effectiveSummary, isRisky, ignoredCount, toggleAllowlist, effectiveSeverity, worstSeverity, ScanFinding } from '../src/lib/scanReview';
 
 const f = (rule: string, file: string, severity: string, snippet = ''): ScanFinding => ({ rule, file, severity, snippet });
 
@@ -50,5 +50,27 @@ describe('scanReview', () => {
     const added = toggleAllowlist([], fp);
     expect(added).toEqual([fp]);
     expect(toggleAllowlist(added, fp)).toEqual([]);
+  });
+
+  it('a rule override downgrades severity in the summary', () => {
+    const findings = [f('suspicious-ip', 'a.js', 'medium', '1.2.3.4')];
+    const ov = { 'suspicious-ip': { severity: 'info' as const } };
+    expect(effectiveSeverity(findings[0], ov)).toBe('info');
+    const s = effectiveSummary('skill:x', findings, new Set(), ov);
+    expect(s.medium).toBe(0);
+    expect(s.info).toBe(1);
+  });
+
+  it("a rule overridden to 'off' is excluded entirely and unblocks", () => {
+    const findings = [f('shell-true', 'a.js', 'high', 'shell:true')];
+    expect(isRisky('skill:x', findings, new Set())).toBe(true);
+    const ov = { 'shell-true': { severity: 'off' as const, note: 'build script, reviewed' } };
+    expect(isRisky('skill:x', findings, new Set(), ov)).toBe(false);
+    expect(effectiveSummary('skill:x', findings, new Set(), ov).high).toBe(0);
+  });
+
+  it('worstSeverity picks the highest non-zero bucket', () => {
+    expect(worstSeverity({ info: 1, low: 2, medium: 0, high: 1, critical: 0 })).toBe('high');
+    expect(worstSeverity({ info: 0, low: 0, medium: 0, high: 0, critical: 0 })).toBe('clean');
   });
 });

@@ -7,8 +7,9 @@ import {
   ModelEntry, McpPreset, ToolPreset, OpenClawPluginEntry
 } from '../lib/catalog';
 import { formatBytes } from '../lib/vram';
-import { isRisky, toggleAllowlist } from '../lib/scanReview';
+import { isRisky, toggleAllowlist, effectiveSummary, ignoredCount, RuleOverride } from '../lib/scanReview';
 import DeepScanReport from '../components/DeepScanReport';
+import RiskBadge from '../components/RiskBadge';
 
 type Section = 'models' | 'mcp' | 'openclaw' | 'tools';
 
@@ -108,6 +109,19 @@ export default function LibraryTab() {
   const blockRisky = s.blockRiskyInstalls !== false;
   const allowlist = new Set<string>(s.scanAllowlist ?? []);
   const toggleIgnore = (fp: string) => save({ scanAllowlist: toggleAllowlist(s.scanAllowlist ?? [], fp) });
+  const overrides = s.ruleOverrides ?? {};
+  const setOverride = (rule: string, ov: RuleOverride | null) => {
+    const next = { ...overrides };
+    if (ov) next[rule] = ov; else delete next[rule];
+    save({ ruleOverrides: next });
+  };
+  const scanSummaries = s.scanSummaries ?? {};
+  function cacheSummary(scope: string, report: any) {
+    if (!report?.ok) return;
+    const counts = effectiveSummary(scope, report.findings ?? [], allowlist, overrides);
+    const ign = ignoredCount(scope, report.findings ?? [], allowlist);
+    save({ scanSummaries: { ...(s.scanSummaries ?? {}), [scope]: { counts, ignored: ign, at: Date.now() } } });
+  }
 
   // Fetch the real source (npm pack / git clone) and deep-scan it. `install` is an
   // optional "do it for real" action shown in the modal (scan-gated install).
@@ -116,6 +130,7 @@ export default function LibraryTab() {
     try {
       const r = await window.api.extensions.install({ id, kind, ref });
       setScanModal(r.ok ? { id, name, report: r.report, path: r.path, install, installLabel } : { id, name, report: { ok: false, error: r.reason }, install, installLabel });
+      if (r.ok) cacheSummary(id, r.report);
     } catch (e: any) {
       setScanModal({ id, name, report: { ok: false, error: e?.message ?? String(e) }, install, installLabel });
     } finally {
@@ -227,6 +242,7 @@ export default function LibraryTab() {
               preset={p}
               installed={(s.mcpServers ?? []).some((x: any) => x.name === p.name)}
               scanning={scanningKey === 'mcp-' + p.name}
+              riskEntry={scanSummaries['mcp-' + p.name]}
               onAdd={addMcpGated}
               onScan={() => p.pkg && scanSource('mcp-' + p.name, p.pkg.kind, p.pkg.ref, p.name)}
             />
@@ -250,6 +266,7 @@ export default function LibraryTab() {
               key={entry.id}
               entry={entry}
               scanning={scanningKey === 'ocp-' + entry.id}
+              riskEntry={scanSummaries['ocp-' + entry.id]}
               onInstall={() => installOpenClawPlugin(entry)}
               onScan={() => scanSource('ocp-' + entry.id, entry.source.kind === 'npm' ? 'npm' : 'github', entry.source.ref, entry.name)}
             />
@@ -266,7 +283,7 @@ export default function LibraryTab() {
       )}
 
       {scanModal && (
-        <ScanModal state={scanModal} blockRisky={blockRisky} allowlist={allowlist} onToggleIgnore={toggleIgnore} onClose={() => setScanModal(null)} />
+        <ScanModal state={scanModal} blockRisky={blockRisky} allowlist={allowlist} onToggleIgnore={toggleIgnore} overrides={overrides} onSetOverride={setOverride} onClose={() => setScanModal(null)} />
       )}
     </div>
   );
@@ -343,10 +360,11 @@ function ModelRow({ entry, installed, pull, currentChat, currentReasoning, curre
   );
 }
 
-function McpRow({ preset, installed, scanning, onAdd, onScan }: {
+function McpRow({ preset, installed, scanning, riskEntry, onAdd, onScan }: {
   preset: McpPreset;
   installed: boolean;
   scanning: boolean;
+  riskEntry?: { counts: any; ignored: number; at: number };
   onAdd: (p: McpPreset, extra: string) => void;
   onScan: () => void;
 }) {
@@ -361,6 +379,7 @@ function McpRow({ preset, installed, scanning, onAdd, onScan }: {
             {preset.runtime === 'python' ? 'python · uvx' : 'node · npx'}
           </span>
           {installed && <span className="badge ok">configured</span>}
+          <RiskBadge entry={riskEntry} />
           {preset.homepage && <a href={preset.homepage} target="_blank" rel="noreferrer" className="label">docs ↗</a>}
         </div>
         <div className="label" style={{ color: 'var(--text)' }}>{preset.description}</div>
@@ -465,9 +484,10 @@ function ToolRow({ preset }: { preset: ToolPreset }) {
   );
 }
 
-function OpenClawPluginRow({ entry, scanning, onInstall, onScan }: {
+function OpenClawPluginRow({ entry, scanning, riskEntry, onInstall, onScan }: {
   entry: OpenClawPluginEntry;
   scanning: boolean;
+  riskEntry?: { counts: any; ignored: number; at: number };
   onInstall: () => void;
   onScan: () => void;
 }) {
@@ -479,6 +499,7 @@ function OpenClawPluginRow({ entry, scanning, onInstall, onScan }: {
           <strong>{entry.name}</strong>
           <span className={typeColor}>{entry.type}</span>
           {entry.license && <span className="label">{entry.license}</span>}
+          <RiskBadge entry={riskEntry} />
         </div>
         <div className="label" style={{ color: 'var(--text)' }}>{entry.description}</div>
         <div className="label"><code>{entry.source.kind}:{entry.source.ref}</code></div>
@@ -500,12 +521,13 @@ function OpenClawPluginRow({ entry, scanning, onInstall, onScan }: {
   );
 }
 
-function ScanModal({ state, onClose, blockRisky, allowlist, onToggleIgnore }: {
+function ScanModal({ state, onClose, blockRisky, allowlist, onToggleIgnore, overrides, onSetOverride }: {
   state: ScanModalState; onClose: () => void; blockRisky?: boolean;
   allowlist?: ReadonlySet<string>; onToggleIgnore?: (fp: string) => void;
+  overrides?: Record<string, RuleOverride>; onSetOverride?: (rule: string, ov: RuleOverride | null) => void;
 }) {
   const [showAll, setShowAll] = useState(false);
-  const risky = isRisky(state.id, state.report?.findings ?? [], allowlist ?? new Set<string>());
+  const risky = isRisky(state.id, state.report?.findings ?? [], allowlist ?? new Set<string>(), overrides ?? {});
   const blocked = risky && !!blockRisky;
   return (
     <div className="wizard-backdrop" onClick={onClose} role="dialog" aria-modal="true" aria-label={`Scan of ${state.name}`}>
@@ -518,7 +540,7 @@ function ScanModal({ state, onClose, blockRisky, allowlist, onToggleIgnore }: {
           <button onClick={onClose} title="Close">×</button>
         </div>
         <div style={{ marginTop: 12 }}>
-          <DeepScanReport report={state.report} showAll={showAll} onToggleShowAll={() => setShowAll(s => !s)} allowlist={allowlist} onToggleIgnore={onToggleIgnore} scope={state.id} />
+          <DeepScanReport report={state.report} showAll={showAll} onToggleShowAll={() => setShowAll(s => !s)} allowlist={allowlist} onToggleIgnore={onToggleIgnore} scope={state.id} overrides={overrides} onSetOverride={onSetOverride} />
         </div>
         <div className="row" style={{ marginTop: 16, alignItems: 'center', gap: 8 }}>
           {state.path && (

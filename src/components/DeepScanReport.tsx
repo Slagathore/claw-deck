@@ -1,42 +1,44 @@
 import React, { useState } from 'react';
-import { findingFingerprint, effectiveSummary, ignoredCount } from '../lib/scanReview';
+import {
+  findingFingerprint, effectiveSummary, ignoredCount, effectiveSeverity,
+  RuleOverride, RuleOverrides
+} from '../lib/scanReview';
 import { RULE_INFO } from '../lib/ruleInfo';
 
 /**
  * Renders an AuditReport from the static scanner (electron/lib/scanner).
- * Shared by the Library security-audit modal, the Skills scan modal, and the
- * Security tab's folder-scan panel so there's one canonical findings UI.
+ * Shared by the Library audit modal, the Skills scan modal, and the Security
+ * tab's folder-scan panel.
  *
- * When `allowlist` + `onToggleIgnore` are supplied, each finding gains an
- * Ignore/Un-ignore control and the headline counts reflect the *effective*
- * severities (allowlisted findings excluded) — so a trusted false-positive
- * stops counting toward the install block.
+ *  - `allowlist` + `onToggleIgnore` (+ `scope`): per-package Ignore of a finding.
+ *  - `overrides` + `onSetOverride`: global per-rule severity override (downgrade
+ *    or disable a noisy rule) with a saved justification.
+ *  Headline counts and the install-block decision use the *effective* severities.
  */
 
 export function severityBadge(sev: string): string {
-  if (sev === 'critical') return 'badge bad';
-  if (sev === 'high') return 'badge bad';
+  if (sev === 'critical' || sev === 'high') return 'badge bad';
   if (sev === 'medium') return 'badge warn';
-  if (sev === 'low') return 'badge';
   return 'badge';
 }
 
-export default function DeepScanReport({ report, showAll, onToggleShowAll, allowlist, onToggleIgnore, scope = '' }: {
+export default function DeepScanReport({ report, showAll, onToggleShowAll, allowlist, onToggleIgnore, scope = '', overrides, onSetOverride }: {
   report: any;
   showAll: boolean;
   onToggleShowAll: () => void;
   allowlist?: ReadonlySet<string>;
   onToggleIgnore?: (fp: string) => void;
   scope?: string;
+  overrides?: RuleOverrides;
+  onSetOverride?: (rule: string, ov: RuleOverride | null) => void;
 }) {
-  const [whyOpen, setWhyOpen] = useState<Set<string>>(new Set());
-  const toggleWhy = (k: string) => setWhyOpen(prev => { const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); return n; });
   if (!report.ok) {
     return <div className="banner warn">Scan failed: {report.error ?? 'unknown error'}</div>;
   }
   const findings: any[] = report.findings ?? [];
   const al = allowlist ?? new Set<string>();
-  const summary = allowlist ? effectiveSummary(scope, findings, al) : (report.summary ?? {});
+  const ov = overrides ?? {};
+  const summary = allowlist ? effectiveSummary(scope, findings, al, ov) : (report.summary ?? {});
   const ignored = allowlist ? ignoredCount(scope, findings, al) : 0;
   const visible = showAll ? findings : findings.slice(0, 25);
   const worst = ['critical', 'high', 'medium', 'low', 'info'].find(s => (summary[s] ?? 0) > 0);
@@ -78,53 +80,19 @@ export default function DeepScanReport({ report, showAll, onToggleShowAll, allow
           <div className="label" style={{ color: 'var(--muted)' }}>
             Findings (worst first; {showAll ? 'showing all' : `showing first ${visible.length} of ${findings.length}`})
           </div>
-          {visible.map((f, i) => {
-            const fp = findingFingerprint(scope, f);
-            const isIgnored = al.has(fp);
-            const why = RULE_INFO[f.rule];
-            const whyShown = whyOpen.has(fp);
-            const accent = f.severity === 'critical' || f.severity === 'high' ? 'var(--bad)' : f.severity === 'medium' ? '#d4a017' : 'var(--muted)';
-            return (
-              <div key={i} className="col" style={{ padding: 6, borderLeft: `3px solid ${isIgnored ? 'var(--muted)' : accent}`, paddingLeft: 8, background: 'var(--panel-2)', gap: 2, opacity: isIgnored ? 0.55 : 1 }}>
-                <div className="row">
-                  <span className={severityBadge(f.severity)}>{f.severity}</span>
-                  <code style={{ fontSize: 11 }}>{f.rule}</code>
-                  <span className="label" style={{ fontSize: 11 }}>{f.file}:{f.line}</span>
-                  {isIgnored && <span className="badge" title="On your allowlist — excluded from counts">ignored</span>}
-                  {onToggleIgnore && (
-                    <>
-                      <div style={{ flex: 1 }} />
-                      <button style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => onToggleIgnore(fp)}
-                        title={isIgnored ? 'Stop ignoring this finding (this skill/package only)' : 'Mark this exact finding as a trusted false-positive for this skill/package (persists; other packages still flag it)'}>
-                        {isIgnored ? 'Un-ignore' : 'Ignore'}
-                      </button>
-                    </>
-                  )}
-                </div>
-                <code style={{ fontSize: 11, wordBreak: 'break-all', color: 'var(--text)', textDecoration: isIgnored ? 'line-through' : 'none' }}>{f.snippet}</code>
-                <div className="label" style={{ fontSize: 11 }}>
-                  {f.reason}
-                  {why && (
-                    <>
-                      {' '}
-                      <a href="#" onClick={e => { e.preventDefault(); toggleWhy(fp); }} style={{ whiteSpace: 'nowrap' }}>
-                        {whyShown ? 'why? ▴' : 'why? ▾'}
-                      </a>
-                    </>
-                  )}
-                </div>
-                {why && whyShown && (
-                  <div className="label" style={{ fontSize: 11, background: 'var(--bg)', borderRadius: 4, padding: 6, lineHeight: 1.45 }}>
-                    {why}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+          {visible.map((f, i) => (
+            <FindingRow
+              key={i}
+              f={f}
+              fp={findingFingerprint(scope, f)}
+              isIgnored={al.has(findingFingerprint(scope, f))}
+              overrides={ov}
+              onToggleIgnore={onToggleIgnore}
+              onSetOverride={onSetOverride}
+            />
+          ))}
           {findings.length > visible.length && (
-            <button onClick={onToggleShowAll} style={{ alignSelf: 'flex-start' }}>
-              Show all {findings.length}
-            </button>
+            <button onClick={onToggleShowAll} style={{ alignSelf: 'flex-start' }}>Show all {findings.length}</button>
           )}
           {showAll && findings.length > 25 && (
             <button onClick={onToggleShowAll} style={{ alignSelf: 'flex-start' }}>Collapse</button>
@@ -135,6 +103,94 @@ export default function DeepScanReport({ report, showAll, onToggleShowAll, allow
       {findings.length === 0 && worst === undefined && (
         <div className="label" style={{ color: 'var(--ok)' }}>
           ✓ No matches for the built-in rule set. This is NOT proof the code is safe — only that the static checks didn't fire.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FindingRow({ f, fp, isIgnored, overrides, onToggleIgnore, onSetOverride }: {
+  f: any;
+  fp: string;
+  isIgnored: boolean;
+  overrides: RuleOverrides;
+  onToggleIgnore?: (fp: string) => void;
+  onSetOverride?: (rule: string, ov: RuleOverride | null) => void;
+}) {
+  const [whyShown, setWhyShown] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const current = overrides[f.rule];
+  const eff = effectiveSeverity(f, overrides);          // may be 'off'
+  const overridden = !!current;
+  const isOff = eff === 'off';
+  const why = RULE_INFO[f.rule];
+  const dimmed = isIgnored || isOff;
+
+  const [sevDraft, setSevDraft] = useState<string>(current?.severity ?? 'keep');
+  const [noteDraft, setNoteDraft] = useState<string>(current?.note ?? '');
+
+  const accent = dimmed ? 'var(--muted)'
+    : (eff === 'critical' || eff === 'high') ? 'var(--bad)'
+    : eff === 'medium' ? '#d4a017' : 'var(--muted)';
+
+  return (
+    <div className="col" style={{ padding: 6, borderLeft: `3px solid ${accent}`, paddingLeft: 8, background: 'var(--panel-2)', gap: 2, opacity: dimmed ? 0.55 : 1 }}>
+      <div className="row">
+        {isOff
+          ? <span className="badge" title={`Rule disabled globally (was ${f.severity})`}>rule off</span>
+          : <span className={severityBadge(eff)}>{eff}{overridden ? '*' : ''}</span>}
+        {overridden && !isOff && <span className="label" style={{ fontSize: 10 }} title={current?.note || `overridden from ${f.severity}`}>(was {f.severity})</span>}
+        <code style={{ fontSize: 11 }}>{f.rule}</code>
+        <span className="label" style={{ fontSize: 11 }}>{f.file}:{f.line}</span>
+        {isIgnored && <span className="badge" title="On your allowlist for this package — excluded from counts">ignored</span>}
+        <div style={{ flex: 1 }} />
+        {onSetOverride && (
+          <button style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEditorOpen(o => !o)} title="Globally downgrade or disable this rule (with a note)">
+            rule {editorOpen ? '▴' : '▾'}
+          </button>
+        )}
+        {onToggleIgnore && (
+          <button style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => onToggleIgnore(fp)}
+            title={isIgnored ? 'Stop ignoring (this package only)' : 'Mark as a trusted false-positive for this package only (persists; other packages still flag it)'}>
+            {isIgnored ? 'Un-ignore' : 'Ignore'}
+          </button>
+        )}
+      </div>
+
+      <code style={{ fontSize: 11, wordBreak: 'break-all', color: 'var(--text)', textDecoration: dimmed ? 'line-through' : 'none' }}>{f.snippet}</code>
+
+      <div className="label" style={{ fontSize: 11 }}>
+        {f.reason}
+        {why && <> <a href="#" onClick={e => { e.preventDefault(); setWhyShown(v => !v); }} style={{ whiteSpace: 'nowrap' }}>{whyShown ? 'why? ▴' : 'why? ▾'}</a></>}
+      </div>
+      {why && whyShown && (
+        <div className="label" style={{ fontSize: 11, background: 'var(--bg)', borderRadius: 4, padding: 6, lineHeight: 1.45 }}>{why}</div>
+      )}
+
+      {editorOpen && onSetOverride && (
+        <div className="col" style={{ gap: 6, background: 'var(--bg)', borderRadius: 4, padding: 8 }}>
+          <div className="row" style={{ flexWrap: 'wrap' }}>
+            <span className="label">Globally treat <code>{f.rule}</code> as:</span>
+            <select value={sevDraft} onChange={e => setSevDraft(e.target.value)}>
+              <option value="keep">keep ({f.severity})</option>
+              <option value="info">info</option>
+              <option value="low">low</option>
+              <option value="medium">medium</option>
+              <option value="high">high</option>
+              <option value="critical">critical</option>
+              <option value="off">off (disable rule)</option>
+            </select>
+          </div>
+          <input placeholder="justification (optional, saved with the override)" value={noteDraft} onChange={e => setNoteDraft(e.target.value)} />
+          <div className="row">
+            <button className="primary" onClick={() => {
+              onSetOverride(f.rule, sevDraft === 'keep' ? null : { severity: sevDraft as RuleOverride['severity'], note: noteDraft.trim() || undefined });
+              setEditorOpen(false);
+            }}>Apply</button>
+            {overridden && <button onClick={() => { onSetOverride(f.rule, null); setSevDraft('keep'); setEditorOpen(false); }}>Reset to default</button>}
+            <button onClick={() => setEditorOpen(false)}>Cancel</button>
+            <span className="label">Applies to <code>{f.rule}</code> in every scan, not just this one.</span>
+          </div>
         </div>
       )}
     </div>

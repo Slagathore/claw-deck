@@ -228,6 +228,21 @@ export default function SettingsTab() {
           <span className="label">{(draft.scanAllowlist?.length ?? 0)} ignored finding{(draft.scanAllowlist?.length ?? 0) === 1 ? '' : 's'} on the allowlist (known false-positives, set via the scan reports).</span>
           {(draft.scanAllowlist?.length ?? 0) > 0 && <button onClick={() => set('scanAllowlist', [])}>Clear allowlist</button>}
         </div>
+        {Object.keys(draft.ruleOverrides ?? {}).length > 0 && (
+          <div className="col" style={{ gap: 4, borderTop: '1px solid var(--border)', paddingTop: 8 }}>
+            <span className="label">Rule overrides (global — set via the “rule ▾” control in any scan report):</span>
+            {Object.entries(draft.ruleOverrides as Record<string, { severity: string; note?: string }>).map(([rule, ov]) => (
+              <div key={rule} className="row" style={{ gap: 6, alignItems: 'center' }}>
+                <code style={{ fontSize: 11 }}>{rule}</code>
+                <span className={ov.severity === 'off' ? 'badge' : ov.severity === 'high' || ov.severity === 'critical' ? 'badge bad' : ov.severity === 'medium' ? 'badge warn' : 'badge'}>{ov.severity}</span>
+                {ov.note && <span className="label" style={{ flex: 1 }} title={ov.note}>{ov.note}</span>}
+                <div style={{ flex: ov.note ? 0 : 1 }} />
+                <button onClick={() => { const next = { ...(draft.ruleOverrides as any) }; delete next[rule]; set('ruleOverrides', next); }}>reset</button>
+              </div>
+            ))}
+            <button style={{ alignSelf: 'flex-start' }} onClick={() => set('ruleOverrides', {})}>Reset all rule overrides</button>
+          </div>
+        )}
       </div>
 
       <div className="card col">

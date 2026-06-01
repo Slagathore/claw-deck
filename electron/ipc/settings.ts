@@ -14,7 +14,9 @@ const DEFAULTS = {
   skillsDir: '',
   scanBeforeInstall: true,     // fetch + security-scan skills/plugins before installing
   blockRiskyInstalls: true,    // hard-block installs with critical/high findings (else just warn)
-  scanAllowlist: [] as string[], // ignored finding fingerprints (rule::file::snippet) — known false-positives
+  scanAllowlist: [] as string[], // ignored finding fingerprints (scope::rule::file::snippet) — known false-positives
+  ruleOverrides: {} as Record<string, { severity: 'info' | 'low' | 'medium' | 'high' | 'critical' | 'off'; note?: string }>, // global per-rule severity overrides
+  scanSummaries: {} as Record<string, { counts: { info: number; low: number; medium: number; high: number; critical: number }; ignored: number; at: number }>, // cached per-scope risk snapshot for at-a-glance row badges
   theme: 'dark',
   showThinking: true,
   policy: { allowlist: ['github.com', 'releases.openclaw.org', 'objects.githubusercontent.com'], requireSignature: false, autoScan: true, signingKeys: [] as { name: string; format: 'pem' | 'hex'; key: string }[] },
