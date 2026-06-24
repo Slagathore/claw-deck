@@ -145,6 +145,14 @@ Cole (a tab) and to agents (an MCP server). **One Atlas DB per workspace**, stor
 gdscript), `sqlite-vec` (vectors in better-sqlite3). Embeddings: **`nomic-embed-text` via Ollama, 768-dim**
 (the `vec0` column is `FLOAT[768]`). Use the **TypeScript compiler API** (`typescript`, already a dep) for
 resolved refs on `.ts/.tsx`. `chokidar` for the watcher (or `fs.watch` — note the choice).
+> ⚠️ **sqlite-vec load risk (verify before committing the `vec0` schema):** `sqlite-vec` loads as a *runtime
+> extension* into the Electron-rebuilt `better-sqlite3@^12` binary via `db.loadExtension(sqliteVec.getLoadablePath())`.
+> Confirm that actually loads on this Windows/Electron build first. If it doesn't, fall back to a plain
+> `atlas_embeddings(symbol_id, vec BLOB)` table (float32 blobs) + JS cosine behind the same `find_similar` query
+> interface — keep the query API identical so callers don't care which backend won.
+> **Phase-1-as-shipped note:** the structural index (files/symbols/edges via the TS compiler API), reachability
+> staleness, queries, MCP server, and graph UI need **neither** Ollama **nor** tree-sitter WASM. Build that core
+> first and dogfood it; embeddings/summaries (Ollama) and polyglot tree-sitter grammars are an additive second pass.
 
 **New files**
 ```
@@ -195,7 +203,10 @@ an unreferenced duplicate flags `superseded`; queries return expected rows; migr
 **Worktree lifecycle:** `git -C <repo> worktree add .fusion/wt/<runId> -b fusion/run-<runId>`; actors run with
 `cwd=<wt>` (delegate) or `applyDiff.ts` writes a diff there (apply); `git -C <wt> add -A && diff --cached` →
 `changes.diff`; author writes `CHANGE_PLAN.md` into the wt; validate via `runInSandbox({sourceRoot:<wt>})`;
-**approve** → apply onto live tree + `audit.ts` append + persist; **reject** → `git worktree remove --force`.
+**approve** → apply onto live tree + `appendAudit('exec:approved', …)` + persist; **reject** → `git worktree remove --force`.
+**Audit reuse note:** the append-only sha256 hash-chain ledger is `appendAudit(kind, payload)` exported from
+`electron/ipc/security.ts` (already used by `upgrades.ts`) — reuse it. `electron/ipc/audit.ts` is an unrelated
+security *scanner* IPC, **not** an append target; do not write the ledger there.
 **Executor modes + fallback chain:** (1) **delegate** CLI edits in wt; (2) **apply** any model's diff via
 `applyDiff`; (3) **fallback** — on a designated actor's quota/auth error (401/403/429 or "out of credits/rate
 limit" stderr) drop to the next actor, final fallback = apply-mode using the best available `*-coder:cloud`.
@@ -350,6 +361,10 @@ orchestrator also auto-injects the target symbol's card + 1-hop neighbors into e
 - Spawn with absolute binary paths where possible; the runner shells bare names. Use `path.join`, never hardcode
   slashes. `node-pty` is ABI-bound to Electron (already `asarUnpack`-ed); pipe fallback covers load failure.
 - Git worktrees under `.fusion/wt/<id>`; add `.fusion/` to `.gitignore` (also where each Atlas DB lives).
+  **Also exclude `.fusion/` from packaging:** `scripts/stage-source.mjs` (the `stage:source` step) and the
+  electron-builder `files` / `extraResources` globs must not sweep worktrees or Atlas DBs into `staging-source`
+  or the asar. When dogfooding on claw-deck itself, `.fusion/` lives inside the repo being packaged — verify a
+  `dist` run does not bundle it.
   Junction symlinks may need permissions — mirror `sandbox.ts`'s `npm ci` fallback.
 - Long command lines / big diffs: pass via temp files, not giant argv (previously hit).
 - **CLI version probes:** never assume `--version`. Some CLIs (e.g. clawhub → `--cli-version`) remap it; probe
@@ -375,3 +390,20 @@ orchestrator also auto-injects the target symbol's card + 1-hop neighbors into e
 ### Still genuinely open (ask Cole if it blocks you)
 - Default panelist roster: which 3–4 `*:cloud` models. (Pick sensible coder-leaning defaults; let Cole edit.)
 - `claw-bridge` now or later (Phase 6 optional; Atlas runs on filesystem+git without it).
+
+---
+
+## 9. Build progress log (agent-maintained)
+> Running record of what's been built/touched, per phase. Newest at top. Keep honest — note partials.
+
+### 2026-06-24 — Phase 0 ✅ + Phase 1 (in progress) — branch `fusion/phase-1-atlas`
+**Phase 0 (done):** Recon complete → `docs/fusion/RECON.md`. Verified node 24 / git 2.53 / clawhub 0.23 /
+openclaw / claude all present. **`codex` CLI absent** (confirmed) → roster omits it; QA-gate runs apply-mode.
+Three BOOTSTRAP corrections applied (audit→`appendAudit`, sqlite-vec load risk, `.fusion/` packaging) and
+`.fusion/` added to `.gitignore`.
+
+**Phase 1 (Atlas) — see entries appended below as files land.** Scope decision (locked by the §3 Phase-1
+note): ship the **structural core first** — TS-compiler-API parse → files/symbols/edges, reachability staleness,
+queries, `code-brain` MCP, and the Project Brain UI — none of which need Ollama or tree-sitter WASM. Embeddings/
+summaries (Ollama) and polyglot tree-sitter grammars are an additive second pass, flagged where stubbed.
+
