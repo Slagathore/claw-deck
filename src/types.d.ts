@@ -85,7 +85,7 @@ declare global {
       atlas: {
         open: (workspace: string) => Promise<{ ok: boolean; dbPath?: string; mcpServer?: string; error?: string }>;
         index: (workspace: string) => Promise<{ ok: boolean; counts?: import('../electron/atlas/index').IndexCounts; error?: string }>;
-        status: (workspace: string) => Promise<{ ok: boolean; counts?: ReturnType<typeof import('../electron/atlas/query').statusCounts>; lastRun?: { started: number; finished: number; files: number; symbols: number; mode: string } | null; error?: string }>;
+        status: (workspace: string) => Promise<{ ok: boolean; counts?: ReturnType<typeof import('../electron/atlas/query').statusCounts>; lastRun?: { started: number; finished: number; files: number; symbols: number; mode: string } | null; vecAvailable?: boolean; error?: string }>;
         query: (workspace: string, tool: string, arg: string) => Promise<{ ok: boolean; result?: any; error?: string }>;
         graph: (workspace: string, statuses?: string[], file?: string) => Promise<{ ok: boolean; graph?: { nodes: import('../electron/atlas/query').GraphNode[]; edges: import('../electron/atlas/query').GraphEdge[] }; error?: string }>;
         card: (workspace: string, ref: string) => Promise<{ ok: boolean; card?: import('../electron/atlas/types').SymbolCard | null; error?: string }>;

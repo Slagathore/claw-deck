@@ -7,7 +7,7 @@ import { ipcMain, BrowserWindow } from 'electron';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { getDb } from './db';
-import { openAtlas, closeAtlas, getOpenAtlas, asQueryable, atlasDbPath } from '../atlas/db';
+import { openAtlas, closeAtlas, getOpenAtlas, asQueryable, atlasDbPath, sqliteVecAvailable } from '../atlas/db';
 import { scanWorkspace, writeIndex } from '../atlas/index';
 import { watchWorkspace, Watcher } from '../atlas/watch';
 import { embedPending, applySupersededFromEmbeddings } from '../atlas/embed';
@@ -102,7 +102,7 @@ export function registerAtlasHandlers(getWindow: () => BrowserWindow | null) {
     const db = asQueryable(h);
     const counts = q.statusCounts(db);
     const lastRun = db.prepare('SELECT started, finished, files_indexed AS files, symbols, mode FROM atlas_runs ORDER BY id DESC LIMIT 1').get() as any;
-    return { ok: true, counts, lastRun: lastRun ?? null };
+    return { ok: true, counts, lastRun: lastRun ?? null, vecAvailable: sqliteVecAvailable(opts.workspace) };
   });
 
   ipcMain.handle('atlas:query', (_e, opts: { workspace: string; tool: string; arg: string }) => {
