@@ -434,11 +434,23 @@ answered all 7 tools ✅.
 4. **fs.watch (recursive)** instead of chokidar — avoids a dep; §3 explicitly allows it.
 5. **codex CLI absent** (RECON) — no `'codex'` backend added in Phase 1 (it's a Phase-2 concern).
 
+*Phase-1 refinements added (2026-06-24, post-review answers from Cole):*
+- **Auto-enrichment after every index** — `atlas:index` + the watcher now kick a guarded, gated, non-blocking
+  background pass: embeddings → `applySupersededFromEmbeddings` → summaries. `embedModel` setting added
+  (default `nomic-embed-text`). Still fails soft if Ollama/the model is down.
+- **Polyglot done — python / bash / gdscript** via `parse/polyglot.ts` (205 tests now; +5 polyglot). **Deviation:**
+  line/indentation structural extractor, NOT web-tree-sitter — gdscript has no prebuilt grammar wasm on npm
+  (tree-sitter-gdscript is C-source-only) and the python/bash wasms carry ABI/packaging risk vs web-tree-sitter
+  0.26. The line parser ships all three now (symbols + intra-file structural edges, resolved=0) with zero
+  native/wasm surface; swapping python/bash to tree-sitter later is a drop-in precision upgrade behind the same
+  ParseResult. Merged into `scanWorkspace` (TS via compiler API for resolved edges; polyglot for the rest).
+- **fusionRoster seeded** in settings defaults: kimi-k2.7-code / qwen3.5-397b / gemini-3-flash / qwen3-coder-480b
+  (`*:cloud` panelists) + claude-code / codex / openclaw actors. (Cole is installing a real `codex` CLI → it's
+  in the roster and gets a real `'codex'` runner backend in Phase 2.)
+
 *Not done / deferred (flagged, not silently dropped):*
-- **Embeddings/summaries need Ollama** — `atlas:enrich` is wired + gated (fails soft), but unverified end-to-end
-  (no model pulled in this session). `superseded` stays 0 until embeddings exist.
-- **Polyglot tree-sitter (python/bash/gdscript)** — `parse/treeSitter.ts` NOT created; TS/TSX only so far
-  (covers all of claw-deck). Grammar-WASM sourcing is the open piece.
+- **Embeddings/summaries need Ollama** — now auto-run after index, but unverified end-to-end (no model pulled in
+  this session). `superseded` stays 0 until embeddings exist.
 - **Incremental re-index** — watch.ts triggers a *full* re-index (correct, simple); per-file diff is a refinement.
 - **git_last_date** — column exists, populated null (no `git log` shell-out yet).
 - **Packaging** — `dist-electron/atlas/codeBrainServer.js` runs via `node` (dev-verified). Packaged builds will

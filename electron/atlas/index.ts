@@ -13,6 +13,7 @@ import * as crypto from 'crypto';
 import { Queryable, rowId } from './driver';
 import { migrate } from './schema';
 import { parseTsProgram } from './parse/tsProgram';
+import { parsePolyglot, polyLangOf } from './parse/polyglot';
 import { computeStaleness, makeEntrypointPredicate } from './staleness';
 import { ParseResult } from './types';
 
@@ -98,7 +99,13 @@ export function writeIndex(db: Queryable, input: WriteIndexInput, now: number): 
 // ---- Electron-side FS walk ------------------------------------------------
 
 const SKIP_DIRS = new Set(['node_modules', 'dist', 'dist-electron', 'dist-installer', '.git', '.fusion', 'staging-source', 'quarantine', 'certs', 'data', '.vite', 'out']);
-const EXTS = new Set(['.ts', '.tsx']);
+const EXTS = new Set(['.ts', '.tsx', '.py', '.pyi', '.sh', '.bash', '.gd']);
+
+function langOf(rel: string): string {
+  if (rel.endsWith('.tsx')) return 'tsx';
+  if (rel.endsWith('.ts')) return 'ts';
+  return polyLangOf(rel) ?? 'text';
+}
 
 export function collectSourceFiles(root: string): string[] {
   const out: string[] = [];
@@ -137,17 +144,20 @@ function entryFilesFor(root: string, rels: string[]): string[] {
 /** Read + parse a workspace into a ParseResult plus per-file metadata. */
 export function scanWorkspace(root: string): { parse: ParseResult; fileMeta: Record<string, FileMeta>; entryFiles: string[] } {
   const abs = collectSourceFiles(root);
-  const files: Record<string, string> = {};
+  const tsFiles: Record<string, string> = {};
+  const polyFiles: Record<string, string> = {};
   const fileMeta: Record<string, FileMeta> = {};
   for (const f of abs) {
     let content: string;
     try { content = fs.readFileSync(f, 'utf8'); } catch { continue; }
     const rel = path.relative(root, f).replace(/\\/g, '/');
-    files[rel] = content;
+    if (rel.endsWith('.ts') || rel.endsWith('.tsx')) tsFiles[rel] = content; else polyFiles[rel] = content;
     let mtime = Date.now();
     try { mtime = Math.floor(fs.statSync(f).mtimeMs); } catch { /* ignore */ }
-    fileMeta[rel] = { lang: rel.endsWith('.tsx') ? 'tsx' : 'ts', hash: crypto.createHash('sha256').update(content).digest('hex'), mtime, gitLastDate: null };
+    fileMeta[rel] = { lang: langOf(rel), hash: crypto.createHash('sha256').update(content).digest('hex'), mtime, gitLastDate: null };
   }
-  const parse = parseTsProgram(files);
-  return { parse, fileMeta, entryFiles: entryFilesFor(root, Object.keys(files)) };
+  const ts = parseTsProgram(tsFiles);
+  const poly = parsePolyglot(polyFiles);
+  const parse: ParseResult = { symbols: [...ts.symbols, ...poly.symbols], edges: [...ts.edges, ...poly.edges] };
+  return { parse, fileMeta, entryFiles: entryFilesFor(root, [...Object.keys(tsFiles), ...Object.keys(polyFiles)]) };
 }

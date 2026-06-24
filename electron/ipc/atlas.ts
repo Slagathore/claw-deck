@@ -50,6 +50,30 @@ function doIndex(workspace: string) {
   return writeIndex(db, { parse, fileMeta, entryFiles }, Date.now());
 }
 
+// Background enrichment (embeddings → superseded clustering → summaries) kicked
+// off after every index. Guarded (one pass per workspace at a time), gated (each
+// pass fails soft when Ollama/the model is unavailable), non-blocking.
+const enriching = new Set<string>();
+async function runEnrichment(workspace: string, emit: (p: unknown) => void): Promise<void> {
+  const k = keyOf(workspace);
+  if (enriching.has(k)) return;
+  enriching.add(k);
+  try {
+    const h = getOpenAtlas(workspace);
+    if (!h) return;
+    const db = asQueryable(h);
+    const baseUrl = getSetting<string>('ollamaUrl', 'http://localhost:11434');
+    const embedModel = getSetting<string>('embedModel', 'nomic-embed-text');
+    const chatModel = getSetting<string>('chatModel', 'llama3.2');
+    const e = await embedPending(db, { baseUrl, model: embedModel });
+    let superseded = 0;
+    if (e.ok && e.embedded > 0) superseded = applySupersededFromEmbeddings(db);
+    emit({ kind: 'enriched', workspace, pass: 'embed', ...e, superseded });
+    const s = await summarizePending(db, { baseUrl, model: chatModel });
+    emit({ kind: 'enriched', workspace, pass: 'summarize', ...s });
+  } catch { /* gated — enrichment never breaks indexing */ } finally { enriching.delete(k); }
+}
+
 export function registerAtlasHandlers(getWindow: () => BrowserWindow | null) {
   const emit = (payload: unknown) => { try { getWindow()?.webContents.send('atlas:event', payload); } catch { /* window gone */ } };
 
@@ -60,7 +84,7 @@ export function registerAtlasHandlers(getWindow: () => BrowserWindow | null) {
       const serverName = ensureCodeBrainServer(ws);
       if (!watchers.has(keyOf(ws))) {
         watchers.set(keyOf(ws), watchWorkspace(ws, () => {
-          try { const counts = doIndex(ws); emit({ kind: 'reindexed', workspace: ws, counts }); } catch { /* ignore */ }
+          try { const counts = doIndex(ws); emit({ kind: 'reindexed', workspace: ws, counts }); void runEnrichment(ws, emit); } catch { /* ignore */ }
         }));
       }
       return { ok: true, dbPath: atlasDbPath(ws), mcpServer: serverName };
@@ -68,7 +92,7 @@ export function registerAtlasHandlers(getWindow: () => BrowserWindow | null) {
   });
 
   ipcMain.handle('atlas:index', (_e, opts: { workspace: string }) => {
-    try { const counts = doIndex(opts.workspace); emit({ kind: 'indexed', workspace: opts.workspace, counts }); return { ok: true, counts }; }
+    try { const counts = doIndex(opts.workspace); emit({ kind: 'indexed', workspace: opts.workspace, counts }); void runEnrichment(opts.workspace, emit); return { ok: true, counts }; }
     catch (e: any) { return { ok: false, error: e?.message ?? String(e) }; }
   });
 
