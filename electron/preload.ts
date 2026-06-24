@@ -89,6 +89,17 @@ contextBridge.exposeInMainWorld('api', {
     startAll: () => invoke('mcp:startAll'),
     stopAll: () => invoke('mcp:stopAll')
   },
+  atlas: {
+    open: (workspace: string) => invoke('atlas:open', { workspace }),
+    index: (workspace: string) => invoke('atlas:index', { workspace }),
+    status: (workspace: string) => invoke('atlas:status', { workspace }),
+    query: (workspace: string, tool: string, arg: string) => invoke('atlas:query', { workspace, tool, arg }),
+    graph: (workspace: string, statuses?: string[], file?: string) => invoke('atlas:graph', { workspace, statuses, file }),
+    card: (workspace: string, ref: string) => invoke('atlas:card', { workspace, ref }),
+    enrich: (workspace: string, kind: 'embed' | 'summarize') => invoke('atlas:enrich', { workspace, kind }),
+    close: (workspace: string) => invoke('atlas:close', { workspace }),
+    onEvent: (cb: (e: any) => void) => on('atlas:event', cb)
+  },
   terminal: {
     shells: () => invoke('terminal:shells'),
     launchElevated: (opts: { binary: string; args?: string[]; cwd?: string }) => invoke('terminal:launchElevated', opts)

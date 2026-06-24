@@ -82,6 +82,17 @@ declare global {
         startAll: () => Promise<{ name: string; ok: boolean; status?: string; pid?: number; reason?: string }[]>;
         stopAll: () => Promise<{ stopped: number }>;
       };
+      atlas: {
+        open: (workspace: string) => Promise<{ ok: boolean; dbPath?: string; mcpServer?: string; error?: string }>;
+        index: (workspace: string) => Promise<{ ok: boolean; counts?: import('../electron/atlas/index').IndexCounts; error?: string }>;
+        status: (workspace: string) => Promise<{ ok: boolean; counts?: ReturnType<typeof import('../electron/atlas/query').statusCounts>; lastRun?: { started: number; finished: number; files: number; symbols: number; mode: string } | null; error?: string }>;
+        query: (workspace: string, tool: string, arg: string) => Promise<{ ok: boolean; result?: any; error?: string }>;
+        graph: (workspace: string, statuses?: string[], file?: string) => Promise<{ ok: boolean; graph?: { nodes: import('../electron/atlas/query').GraphNode[]; edges: import('../electron/atlas/query').GraphEdge[] }; error?: string }>;
+        card: (workspace: string, ref: string) => Promise<{ ok: boolean; card?: import('../electron/atlas/types').SymbolCard | null; error?: string }>;
+        enrich: (workspace: string, kind: 'embed' | 'summarize') => Promise<{ ok: boolean; embedded?: number; summarized?: number; remaining?: number; superseded?: number; reason?: string }>;
+        close: (workspace: string) => Promise<{ ok: boolean }>;
+        onEvent: (cb: (e: { kind: string; workspace: string; counts?: import('../electron/atlas/index').IndexCounts; [k: string]: any }) => void) => () => void;
+      };
       terminal: {
         shells: () => Promise<{ id: string; label: string; binary: string; args: string[]; available: boolean }[]>;
         launchElevated: (opts: { binary: string; args?: string[]; cwd?: string }) => Promise<{ ok: boolean; pid?: number; reason?: string }>;

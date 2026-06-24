@@ -14,6 +14,8 @@ import { registerTerminalHandlers } from './ipc/terminal';
 import { registerAuditHandlers } from './ipc/audit';
 import { registerExtensionHandlers } from './ipc/extensions';
 import { registerSkillHandlers } from './ipc/skills';
+import { registerAtlasHandlers, closeAllAtlasWatchers } from './ipc/atlas';
+import { closeAllAtlas } from './atlas/db';
 import { registerSelfUpgradeHandlers } from './selfUpgrade/registry';
 import { executeProbeMode } from './selfUpgrade/probe';
 
@@ -187,6 +189,7 @@ app.whenReady().then(async () => {
   registerAuditHandlers();
   registerExtensionHandlers();
   registerSkillHandlers();
+  registerAtlasHandlers(() => mainWindow);
   registerSelfUpgradeHandlers();
 
   ipcMain.handle('app:pickPath', async (_e, opts: { properties?: string[] }) => {
@@ -232,5 +235,7 @@ app.on('before-quit', () => { quitting = true; });
 app.on('window-all-closed', () => {
   // With close-to-tray we generally never reach here. Only fires if tray creation failed.
   stopAllMcp();
+  closeAllAtlasWatchers();
+  closeAllAtlas();
   if (process.platform !== 'darwin') app.quit();
 });
