@@ -95,12 +95,15 @@ export default function SkillsTab() {
   }
   useEffect(() => { reloadLocal(); /* eslint-disable-next-line */ }, [workspace]);
 
-  // Probe whether the clawhub CLI is on PATH.
+  // Probe whether the clawhub CLI is available.
   useEffect(() => {
     let done = false;
     (async () => {
       try {
-        const { id } = await window.api.runner.start({ backend: 'shell', binary: s.clawhubPath || 'clawhub', args: ['--version'] });
+        // NOTE: clawhub remaps its version flag to --cli-version (commander.js), so `--version`
+        // hits the unknown-option path and exits non-zero — which used to make this probe
+        // report "clawhub not found" even when it was installed and on PATH. Use --cli-version.
+        const { id } = await window.api.runner.start({ backend: 'shell', binary: s.clawhubPath || 'clawhub', args: ['--cli-version'] });
         const off = window.api.runner.onEvent((ev: any) => {
           if (ev.id !== id) return;
           if (ev.kind === 'exit') { if (!done) { done = true; setClawhubOk(ev.data === 0); off(); } }

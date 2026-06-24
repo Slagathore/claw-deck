@@ -17,7 +17,11 @@ import { registerSkillHandlers } from './ipc/skills';
 import { registerSelfUpgradeHandlers } from './selfUpgrade/registry';
 import { executeProbeMode } from './selfUpgrade/probe';
 
-const isDev = !app.isPackaged;
+// Dev only when explicitly launched via `npm run dev` (which sets CLAW_DEV).
+// `npm start` builds to dist/ and runs no Vite server, so it must load the file.
+const isDev = !app.isPackaged && process.env.CLAW_DEV === '1';
+// Vite dev server URL — overridable so you can point at a different port.
+const devServerUrl = process.env.CLAW_DEV_SERVER_URL || 'http://localhost:5173';
 const isProbeMode = !!process.env.CLAW_PROBE_ID;
 
 let mainWindow: BrowserWindow | null = null;
@@ -76,11 +80,15 @@ function createWindow() {
     }
   });
 
+  const indexFile = path.join(__dirname, '..', 'dist', 'index.html');
   if (isDev) {
-    mainWindow.loadURL('http://localhost:5173');
-    mainWindow.webContents.openDevTools({ mode: 'detach' });
+    // `npm run dev` runs the Vite server; `npm start` builds to dist/ with no
+    // server. Try the dev server and fall back to the built file when it isn't up.
+    mainWindow.loadURL(devServerUrl)
+      .then(() => mainWindow?.webContents.openDevTools({ mode: 'detach' }))
+      .catch(() => mainWindow?.loadFile(indexFile));
   } else {
-    mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+    mainWindow.loadFile(indexFile);
   }
 
   // Close → hide-to-tray (unless user explicitly quitting).
