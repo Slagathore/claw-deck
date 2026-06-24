@@ -402,8 +402,47 @@ openclaw / claude all present. **`codex` CLI absent** (confirmed) → roster omi
 Three BOOTSTRAP corrections applied (audit→`appendAudit`, sqlite-vec load risk, `.fusion/` packaging) and
 `.fusion/` added to `.gitignore`.
 
-**Phase 1 (Atlas) — see entries appended below as files land.** Scope decision (locked by the §3 Phase-1
-note): ship the **structural core first** — TS-compiler-API parse → files/symbols/edges, reachability staleness,
-queries, `code-brain` MCP, and the Project Brain UI — none of which need Ollama or tree-sitter WASM. Embeddings/
-summaries (Ollama) and polyglot tree-sitter grammars are an additive second pass, flagged where stubbed.
+**Phase 1 (Atlas) — structural core SHIPPED + dogfood-verified.** Scope decision (locked by the §3 Phase-1
+note): ship the structural core first — none of it needs Ollama or tree-sitter WASM.
+
+*Built (all lint-clean, 200/200 tests green incl. 20 new atlas tests):*
+- `electron/atlas/types.ts`, `driver.ts` (Queryable shared by better-sqlite3 + node:sqlite), `schema.ts`,
+  `parse/tsProgram.ts` (TS compiler API → symbols + resolved edges), `staleness.ts`, `query.ts`, `index.ts`
+  (`writeIndex` agnostic + `scanWorkspace`), `db.ts` (per-workspace better-sqlite3), `embed.ts` (gated
+  nomic-embed + embedding-cluster superseded), `summarize.ts` (gated), `watch.ts` (fs.watch), `codeBrainServer.ts`.
+- `electron/ipc/atlas.ts` IPC (`atlas:open/index/status/query/graph/card/enrich/close`), wired into
+  `main.ts` / `preload.ts` / `src/types.d.ts` (new `window.api.atlas.*`, superset).
+- `src/lib/atlasClient.ts` + `src/tabs/ProjectBrainTab.tsx` (cytoscape graph + status filters + cards + locate),
+  registered as the **Project Brain** tab in `App.tsx` (`store/ui.ts` Tab union extended).
+- Tests: `tests/atlas.parse.test.ts` (7), `tests/atlas.staleness.test.ts` (6), `tests/atlas.index.test.ts` (7,
+  full parse→persist→tag→query on node:sqlite).
+
+*Dogfood acceptance (verified by indexing claw-deck itself, headless):* 113 files / 590 symbols / 1409 edges in
+~0.9s; 459 active / 18 orphaned. `locate("screenshot region cropping")` → `screenshot.ts` + `RegionSelect.tsx` ✅.
+The compiled `code-brain` server completed a full MCP stdio handshake (initialize→tools/list→tools/call) and
+answered all 7 tools ✅.
+
+*Key build decisions (deviations from the doc, all justified):*
+1. **node:sqlite (Node 24, unflagged) verified** → the whole data layer is driver-agnostic over a tiny
+   `Queryable`, so the real SQL is unit-tested under vitest (better-sqlite3 is Electron-ABI-bound and can't load
+   in node) and the MCP server reuses `query.ts` verbatim.
+2. **sqlite-vec NOT added** — shipped the float32-blob + JS-cosine fallback (per the §3 risk note). Revisit once
+   it's verified to load in the Electron `better-sqlite3@^12` build.
+3. **code-brain server relocated** to `electron/atlas/codeBrainServer.ts` (compiles via the existing electron
+   tsconfig → `dist-electron/atlas/codeBrainServer.js`) instead of `mcp/code-brain/server.ts`, and is
+   **hand-rolled JSON-RPC** (no `@modelcontextprotocol/sdk` dep — that dep was NOT in the Phase-1 locked list).
+4. **fs.watch (recursive)** instead of chokidar — avoids a dep; §3 explicitly allows it.
+5. **codex CLI absent** (RECON) — no `'codex'` backend added in Phase 1 (it's a Phase-2 concern).
+
+*Not done / deferred (flagged, not silently dropped):*
+- **Embeddings/summaries need Ollama** — `atlas:enrich` is wired + gated (fails soft), but unverified end-to-end
+  (no model pulled in this session). `superseded` stays 0 until embeddings exist.
+- **Polyglot tree-sitter (python/bash/gdscript)** — `parse/treeSitter.ts` NOT created; TS/TSX only so far
+  (covers all of claw-deck). Grammar-WASM sourcing is the open piece.
+- **Incremental re-index** — watch.ts triggers a *full* re-index (correct, simple); per-file diff is a refinement.
+- **git_last_date** — column exists, populated null (no `git log` shell-out yet).
+- **Packaging** — `dist-electron/atlas/codeBrainServer.js` runs via `node` (dev-verified). Packaged builds will
+  need `asarUnpack` of that file (or `process.execPath`+`ELECTRON_RUN_AS_NODE`, pending a check that Electron 42's
+  bundled Node ships `node:sqlite`). Dev dogfooding — the Phase-1 target — works now.
+- **Phases 2–6** not started.
 

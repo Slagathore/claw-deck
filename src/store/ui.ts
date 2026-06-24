@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-type Tab = 'chat' | 'library' | 'console' | 'skills' | 'history' | 'prompts' | 'settings' | 'upgrades' | 'self' | 'security';
+type Tab = 'chat' | 'library' | 'console' | 'brain' | 'skills' | 'history' | 'prompts' | 'settings' | 'upgrades' | 'self' | 'security';
 
 /** A prompt handed to the Chat tab, optionally requesting Agent (plan & execute) mode. */
 export interface PendingPrompt { prompt: string; agent: boolean; }

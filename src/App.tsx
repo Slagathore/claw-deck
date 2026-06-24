@@ -11,6 +11,7 @@ import SettingsTab from './tabs/SettingsTab';
 import UpgradesTab from './tabs/UpgradesTab';
 import SelfUpgradeTab from './tabs/SelfUpgradeTab';
 import SecurityTab from './tabs/SecurityTab';
+import ProjectBrainTab from './tabs/ProjectBrainTab';
 import CommandPalette from './components/CommandPalette';
 import StatusBar from './components/StatusBar';
 import OnboardingWizard, { shouldShowOnboarding } from './components/OnboardingWizard';
@@ -21,6 +22,7 @@ const TABS: readonly TabDef[] = [
   ['chat',      '💬', 'Chat',           'Talk to your local LLM. Auto-routes to chat / vision / reasoning. Flip on Agent mode to plan & execute multi-step tasks.'],
   ['library',   '📚', 'Library',        'One-click installs: popular Ollama models, real MCP servers, OpenClaw plugins, system tools.'],
   ['console',   '🐚', 'Console',        'Run OpenClaw / Claude Code or any shell (PowerShell / cmd / Git Bash / WSL / custom) with live streaming + UAC elevation.'],
+  ['brain',     '🧠', 'Project Brain',  'Atlas: a queryable map of a target codebase — symbols, call/reference edges, and active/orphaned/deprecated/superseded status tags. Powers the code-brain MCP server.'],
   ['skills',    '🧩', 'Skills',         'Create, organize, search, install, and publish OpenClaw SKILL.md skills via ClawHub.'],
   ['history',   '📜', 'History',        'Searchable log of every chat turn. Click ↳ to branch a prior prompt back into Chat.'],
   ['prompts',   '📋', 'Prompts',        'Reusable prompt templates with {{variable}} substitution.'],
@@ -102,6 +104,7 @@ export default function App() {
         {tab === 'chat' && <ChatTab />}
         {tab === 'library' && <LibraryTab />}
         {tab === 'console' && <ConsoleTab />}
+        {tab === 'brain' && <ProjectBrainTab />}
         {tab === 'skills' && <SkillsTab />}
         {tab === 'history' && <HistoryTab />}
         {tab === 'prompts' && <PromptVaultTab />}
