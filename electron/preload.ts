@@ -89,6 +89,12 @@ contextBridge.exposeInMainWorld('api', {
     startAll: () => invoke('mcp:startAll'),
     stopAll: () => invoke('mcp:stopAll')
   },
+  council: {
+    start: (opts: { repo?: string; protocolId: string; assignment: any; task: string }) => invoke('council:start', opts),
+    cancel: (runId: string) => invoke('council:cancel', { runId }),
+    list: () => invoke('council:list'),
+    onEvent: (cb: (e: any) => void) => on('council:event', cb)
+  },
   exec: {
     beginRun: (repo: string, mode?: 'delegate' | 'apply') => invoke('exec:beginRun', { repo, mode }),
     proposal: (runId: string, plan: string, diff?: string) => invoke('exec:proposal', { runId, plan, diff }),

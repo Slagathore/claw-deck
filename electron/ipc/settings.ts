@@ -11,7 +11,10 @@ const DEFAULTS = {
   embedModel: 'nomic-embed-text',          // Atlas embeddings (768-dim, locked)
   openclawPath: '',
   claudeCodePath: 'claude',
+  codexPath: 'codex',                          // Fusion QA-gate actor (Cole is installing the CLI)
   clawhubPath: 'clawhub',
+  ollamaCloudUrl: 'https://ollama.com/v1',     // Ollama Cloud (OpenAI-compatible)
+  ollamaCloudKey: '',                          // OLLAMA_API_KEY (falls back to env)
   skillsDir: '',
   scanBeforeInstall: true,     // fetch + security-scan skills/plugins before installing
   blockRiskyInstalls: true,    // hard-block installs with critical/high findings (else just warn)

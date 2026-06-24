@@ -82,6 +82,12 @@ declare global {
         startAll: () => Promise<{ name: string; ok: boolean; status?: string; pid?: number; reason?: string }[]>;
         stopAll: () => Promise<{ stopped: number }>;
       };
+      council: {
+        start: (opts: { repo?: string; protocolId: string; assignment: import('../electron/council/agents').SessionAssignment; task: string }) => Promise<{ ok: boolean; runId?: string; error?: string }>;
+        cancel: (runId: string) => Promise<{ ok: boolean }>;
+        list: () => Promise<{ ok: boolean; runs: { runId: string; repo: string | null; protocol: string; task: string; status: string; approved: number; started: number; finished: number | null }[] }>;
+        onEvent: (cb: (e: { runId: string; type: string; phase?: string; kind?: string; agentId?: string; content?: string; verdict?: string; round?: number; ok?: boolean; status?: string }) => void) => () => void;
+      };
       exec: {
         beginRun: (repo: string, mode?: 'delegate' | 'apply') => Promise<{ ok: boolean; runId?: string; wtDir?: string; branch?: string; error?: string }>;
         proposal: (runId: string, plan: string, diff?: string) => Promise<{ ok: boolean; plan?: string; diff?: string; planPath?: string; diffPath?: string; empty?: boolean; error?: string }>;

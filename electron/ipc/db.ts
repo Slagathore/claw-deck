@@ -57,6 +57,20 @@ export async function initDb() {
       updated_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_prompts_name ON prompts(name);
+    CREATE TABLE IF NOT EXISTS council_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      run_id TEXT NOT NULL,
+      repo TEXT,
+      protocol TEXT NOT NULL,
+      task TEXT,
+      assignment TEXT,
+      status TEXT NOT NULL,
+      approved INTEGER NOT NULL DEFAULT 0,
+      started INTEGER NOT NULL,
+      finished INTEGER,
+      result TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_council_started ON council_runs(started DESC);
   `);
   // additive migrations — safe to run on every boot
   migrate('upgrades', 'install_path', 'TEXT');

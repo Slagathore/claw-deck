@@ -396,6 +396,30 @@ orchestrator also auto-injects the target symbol's card + 1-hop neighbors into e
 ## 9. Build progress log (agent-maintained)
 > Running record of what's been built/touched, per phase. Newest at top. Keep honest — note partials.
 
+### 2026-06-24 — Phase 3 (Council Orchestrator engine) SHIPPED — branch `fusion/phase-1-atlas`
+Engine + tests complete (222/222 green, lint clean). No UI yet (Phase 4).
+- `electron/council/agents.ts`: Transport/Role/CostTier/RosterAgent/SessionAssignment/GateVerdict types +
+  role-ref resolution (`@panelists`/`@judge`/`@qa-gate`/`@scribe`, scribe→judge fallback) + `validateAssignment`.
+- `electron/council/protocol.ts`: all five protocols (COUNCIL, PCRSR, GCRJ, REDTEAM, PAIR) + `parseGateVerdict`
+  (safe-default major), `isConverged`, `extractDiff`.
+- `electron/council/run.ts`: the state machine — `runProtocol` over the phase graph with an **injected**
+  TransportFn + ExecutorHooks (so it's fully unit-tested with stubs). independent/debate(converge)/synthesize/
+  gate(bounce on major·veto)/relay/vote/propose/execute; advisors parallel + k-of-n tolerant; emits a
+  `CouncilEvent` stream.
+- `electron/council/transport.ts`: real transport — OpenAI-compat HTTP for ollama-cloud/local/openai-compat;
+  `runCaptured` one-shots for claude-code/codex/openclaw; vscode-lm throws (Phase 6).
+- `electron/ipc/council.ts`: `council:start|cancel|list`; runs in background, streams `council:event`, persists
+  `council_runs` (new table in db.ts). Execute phase drives a real worktree run (createWorktree→applyDiff→
+  capture→validate→approve onto live tree) with `appendAudit` at each step.
+- `settings`: `codexPath`, `ollamaCloudUrl`, `ollamaCloudKey` (falls back to `OLLAMA_API_KEY` env).
+- Tests: `council.run.test.ts` (5: phase order, major→bounce, advisor tolerance, convergence stop, PAIR→execute
+  lands an approved diff) + `council.agents.test.ts` (5). The §3 Phase-3 acceptance.
+- *Deferred:* interactive `council:approveGate` (gates auto-parse now; every verdict is streamed). Actor CLI
+  invocation flags (claude `--print` / codex `exec` / openclaw `run`) are best-effort one-shots — verify against
+  the real CLIs. The isQuotaError→nextActor fallback chain exists + is tested but isn't yet wired as automatic
+  mid-run actor swapping (a transport-wrapper refinement).
+
+
 ### 2026-06-24 — Phase 2 (Worktree Executor) SHIPPED — branch `fusion/phase-1-atlas`
 Engine + tests complete (211/211 green, lint clean). "Isolation before trust" + "two artifacts before write"
 are now structural.
