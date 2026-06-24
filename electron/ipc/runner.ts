@@ -17,6 +17,32 @@ type Session = PipeSession | PtySession;
 
 const sessions = new Map<string, Session>();
 
+/**
+ * Captured one-shot run (Phase 2 actor helper): spawn a backend, inject the
+ * active MCP env + Windows bare-name shell resolution (same as runner:start),
+ * collect stdout/stderr, resolve on exit. Used by the executor to drive
+ * apply-mode actors and detect quota/auth failures (see executor/fallback.ts).
+ */
+export function runCaptured(opts: {
+  binary: string; args?: string[]; cwd?: string; env?: Record<string, string>; input?: string; timeoutMs?: number;
+}): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    const env = { ...process.env, ...getActiveMcpEnv(), ...(opts.env ?? {}) };
+    const bareName = !/[\\/]/.test(opts.binary);
+    const useShell = process.platform === 'win32' && bareName;
+    const proc = spawn(opts.binary, opts.args ?? [], { cwd: opts.cwd, env, shell: useShell });
+    let out = '', err = '', done = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (code: number | null) => { if (done) return; done = true; if (timer) clearTimeout(timer); resolve({ code, stdout: out, stderr: err }); };
+    if (opts.timeoutMs) timer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* dead */ } err += '\n[killed: timeout]'; finish(null); }, opts.timeoutMs);
+    proc.stdout?.on('data', (d) => { out += d.toString(); });
+    proc.stderr?.on('data', (d) => { err += d.toString(); });
+    proc.on('error', (e) => { err += String(e); finish(null); });
+    proc.on('exit', (code) => finish(code));
+    if (opts.input != null) { try { proc.stdin?.write(opts.input); proc.stdin?.end(); } catch { /* no stdin */ } }
+  });
+}
+
 let ptyMod: any = null;
 let ptyTried = false;
 function loadPty(): any {
@@ -33,7 +59,7 @@ export function registerRunnerHandlers(getWindow: () => BrowserWindow | null) {
   }
 
   ipcMain.handle('runner:start', (_e, opts: {
-    backend: 'openclaw' | 'claude' | 'shell';
+    backend: 'openclaw' | 'claude' | 'codex' | 'shell';
     binary: string; args?: string[]; cwd?: string; env?: Record<string, string>;
     pty?: boolean; cols?: number; rows?: number;
   }) => {

@@ -15,6 +15,7 @@ import { registerAuditHandlers } from './ipc/audit';
 import { registerExtensionHandlers } from './ipc/extensions';
 import { registerSkillHandlers } from './ipc/skills';
 import { registerAtlasHandlers, closeAllAtlasWatchers } from './ipc/atlas';
+import { registerExecutorHandlers } from './ipc/executor';
 import { closeAllAtlas } from './atlas/db';
 import { registerSelfUpgradeHandlers } from './selfUpgrade/registry';
 import { executeProbeMode } from './selfUpgrade/probe';
@@ -190,6 +191,7 @@ app.whenReady().then(async () => {
   registerExtensionHandlers();
   registerSkillHandlers();
   registerAtlasHandlers(() => mainWindow);
+  registerExecutorHandlers();
   registerSelfUpgradeHandlers();
 
   ipcMain.handle('app:pickPath', async (_e, opts: { properties?: string[] }) => {

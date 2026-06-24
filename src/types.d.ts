@@ -82,6 +82,13 @@ declare global {
         startAll: () => Promise<{ name: string; ok: boolean; status?: string; pid?: number; reason?: string }[]>;
         stopAll: () => Promise<{ stopped: number }>;
       };
+      exec: {
+        beginRun: (repo: string, mode?: 'delegate' | 'apply') => Promise<{ ok: boolean; runId?: string; wtDir?: string; branch?: string; error?: string }>;
+        proposal: (runId: string, plan: string, diff?: string) => Promise<{ ok: boolean; plan?: string; diff?: string; planPath?: string; diffPath?: string; empty?: boolean; error?: string }>;
+        validate: (runId: string) => Promise<{ ok: boolean; result?: import('../electron/selfUpgrade/sandbox').SandboxResult; error?: string }>;
+        approve: (runId: string) => Promise<{ ok: boolean; error?: string }>;
+        reject: (runId: string) => Promise<{ ok: boolean; error?: string }>;
+      };
       atlas: {
         open: (workspace: string) => Promise<{ ok: boolean; dbPath?: string; mcpServer?: string; error?: string }>;
         index: (workspace: string) => Promise<{ ok: boolean; counts?: import('../electron/atlas/index').IndexCounts; error?: string }>;

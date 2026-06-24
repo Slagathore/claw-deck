@@ -396,6 +396,28 @@ orchestrator also auto-injects the target symbol's card + 1-hop neighbors into e
 ## 9. Build progress log (agent-maintained)
 > Running record of what's been built/touched, per phase. Newest at top. Keep honest — note partials.
 
+### 2026-06-24 — Phase 2 (Worktree Executor) SHIPPED — branch `fusion/phase-1-atlas`
+Engine + tests complete (211/211 green, lint clean). "Isolation before trust" + "two artifacts before write"
+are now structural.
+- `electron/ipc/runner.ts`: `'codex'` added to the backend union; `runCaptured()` one-shot helper (MCP env +
+  Windows bare-name shell, captured stdout/stderr) for driving apply-mode actors.
+- `electron/executor/`: `git.ts` (reuses `selfUpgrade/exec.run`), `worktree.ts` (create/capture/writeArtifacts/
+  applyToLiveTree/remove), `applyDiff.ts` (apply-mode), `validate.ts` (wraps `runInSandbox`), `fallback.ts`
+  (`isQuotaError` 401/403/429 + credit/quota/rate-limit; `nextActor`).
+- `electron/ipc/executor.ts`: `exec:beginRun|proposal|validate|approve|reject`. Worktree at `.fusion/wt/<runId>`,
+  branch `fusion/run-<runId>`; artifacts (CHANGE_PLAN.md + changes.diff) persist under `.fusion/runs/<runId>/`
+  (kept out of the wt so they don't pollute the captured diff). **Approve writes to `appendAudit` (the real
+  hash-chain in security.ts)** — the corrected ledger ref. Registered in `main.ts`; `window.api.exec.*` in
+  preload + types.
+- `src/components/DiffReview.tsx`: renders both artifacts (diff color-coded) + Validate → Approve/Reject.
+- Tests: `executor.fallback.test.ts` (4) + `executor.worktree.test.ts` (2, real-git temp-repo round-trip:
+  create→edit→capture→approve onto live tree; reject leaves `git status` clean). Diff round-trip ✅, reject
+  cleanup ✅, 429 detection ✅ — the §3 Phase-2 acceptance tests.
+- *Deferred:* the full delegate/apply actor-driving + fallback *orchestration* (chaining real CLIs with
+  `runCaptured` on quota errors) lands with Phase 3's council/transport; the executor primitives + DiffReview UI
+  are ready for it. DiffReview isn't mounted in a tab yet — Phase 4 wires it into the Council tab.
+
+
 ### 2026-06-24 — Phase 0 ✅ + Phase 1 (in progress) — branch `fusion/phase-1-atlas`
 **Phase 0 (done):** Recon complete → `docs/fusion/RECON.md`. Verified node 24 / git 2.53 / clawhub 0.23 /
 openclaw / claude all present. **`codex` CLI absent** (confirmed) → roster omits it; QA-gate runs apply-mode.
