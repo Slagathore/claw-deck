@@ -17,6 +17,8 @@ export default function CouncilSettings({ workspace }: { workspace: string }) {
   const [roster, setRoster] = useState<RosterAgent[]>([]);
   const [busy, setBusy] = useState('');
   const [err, setErr] = useState('');
+  const [loopGoal, setLoopGoal] = useState('');
+  const [loopMax, setLoopMax] = useState(5);
 
   useEffect(() => { window.api.settings.get().then((s) => setRoster(s.fusionRoster ?? [])); }, []);
   useEffect(() => { if (roster.length && !configs[workspace]) setConfig(workspace, defaultConfig(roster)); }, [roster, workspace, configs, setConfig]);
@@ -31,6 +33,14 @@ export default function CouncilSettings({ workspace }: { workspace: string }) {
     const r = await window.api.council.start({ repo: workspace, protocolId: cfg.protocolId, assignment: cfg.assignment, task: cfg.task });
     setBusy('');
     if (!r.ok || !r.runId) { setErr(r.error ?? 'failed to start'); return; }
+    startRun(workspace, r.runId);
+  }
+
+  async function startLoop() {
+    setErr(''); setBusy('Starting loop…');
+    const r = await window.api.council.startLoop({ repo: workspace, protocolId: cfg.protocolId, assignment: cfg.assignment, goal: loopGoal, maxIterations: loopMax });
+    setBusy('');
+    if (!r.ok || !r.runId) { setErr(r.error ?? 'failed to start loop'); return; }
     startRun(workspace, r.runId);
   }
 
@@ -66,6 +76,15 @@ export default function CouncilSettings({ workspace }: { workspace: string }) {
         <button onClick={start} disabled={!!busy || !cfg.task.trim() || !cfg.assignment.panelists.length}>▶ Start session</button>
         {busy && <span className="badge warn">{busy}</span>}
         <span style={{ color: 'var(--muted)', fontSize: 11 }}>Roster is edited in Settings → Agent Roster.</span>
+      </div>
+
+      <div className="col" style={{ gap: 6, borderTop: '1px solid var(--border)', paddingTop: 8 }}>
+        <label style={{ fontSize: 11, color: 'var(--muted)' }}>Autonomous goal loop — branch → run → checkpoint each iteration → goal-check → repeat (halts on success / cap / oscillation)</label>
+        <textarea placeholder="High-level goal to drive autonomously…" value={loopGoal} onChange={(e) => setLoopGoal(e.target.value)} rows={2} />
+        <div className="row">
+          <label style={{ fontSize: 12 }}>max iterations <input type="number" min={1} max={50} value={loopMax} onChange={(e) => setLoopMax(Math.max(1, Number(e.target.value) || 1))} style={{ width: 60 }} /></label>
+          <button onClick={startLoop} disabled={!!busy || !loopGoal.trim() || !cfg.assignment.panelists.length}>⟳ Start autonomous loop</button>
+        </div>
       </div>
     </div>
   );

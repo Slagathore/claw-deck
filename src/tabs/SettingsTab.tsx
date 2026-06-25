@@ -89,9 +89,10 @@ export default function SettingsTab() {
 
       <div className="card col">
         <h3 style={{ margin: 0 }}>Fusion Council</h3>
-        <label className="label">Ollama Cloud URL (OpenAI-compatible; <code>*:cloud</code> models)</label>
-        <input value={draft.ollamaCloudUrl ?? ''} onChange={e => set('ollamaCloudUrl', e.target.value)} placeholder="https://ollama.com/v1" />
-        <label className="label">Ollama Cloud API key (<code>OLLAMA_API_KEY</code>; falls back to env)</label>
+        <label className="label">Panelists run on your <strong>local Ollama</strong> (it serves <code>*:cloud</code> models itself — no key needed). The fields below are only for a genuinely remote OpenAI-compatible endpoint.</label>
+        <label className="label">Remote OpenAI-compat URL (optional; blank = use local Ollama)</label>
+        <input value={draft.ollamaCloudUrl ?? ''} onChange={e => set('ollamaCloudUrl', e.target.value)} placeholder="(blank — uses local Ollama)" />
+        <label className="label">Remote API key (optional; blank for local)</label>
         <input type="password" value={draft.ollamaCloudKey ?? ''} onChange={e => set('ollamaCloudKey', e.target.value)} />
         <label className="label">Embedding model (Atlas, 768-dim)</label>
         <input value={draft.embedModel ?? ''} onChange={e => set('embedModel', e.target.value)} placeholder="nomic-embed-text" />

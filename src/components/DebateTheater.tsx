@@ -17,6 +17,11 @@ export default function DebateTheater({ events, running }: { events: CouncilEvt[
       <div className="row"><strong>Debate theater</strong>{running && <span className="badge warn">running…</span>}</div>
       {events.map((e, i) => {
         switch (e.type) {
+          case 'loop:iteration': return <div key={i} style={{ borderTop: '2px solid var(--accent)', paddingTop: 8, marginTop: 8 }}><strong style={{ color: 'var(--accent)' }}>⟳ Iteration {e.round ?? (e as any).iter}</strong></div>;
+          case 'loop:checkpoint': return <div key={i} style={{ fontSize: 11, color: 'var(--muted)' }}>checkpoint {(e as any).signature?.slice?.(0, 10)}</div>;
+          case 'loop:goal-check': return <div key={i}><span className={`badge ${e.status === 'met' ? 'ok' : 'warn'}`}>goal {e.status}</span></div>;
+          case 'loop:halt': return <div key={i}><span className={`badge ${e.status === 'met' ? 'ok' : e.status === 'oscillation' || e.status === 'cost' || e.status === 'cap' ? 'warn' : 'bad'}`}>loop halted: {e.status}</span></div>;
+          case 'loop:done': return <div key={i}><span className={`badge ${e.ok ? 'ok' : 'warn'}`}>loop finished: {e.status}</span></div>;
           case 'phase': return <div key={i} style={{ borderTop: '1px solid var(--border)', paddingTop: 6, marginTop: 4 }}><strong style={{ color: 'var(--accent)' }}>▸ {e.phase}</strong> <span style={{ color: 'var(--muted)', fontSize: 11 }}>{e.kind}</span></div>;
           case 'debate-round': return <div key={i} style={{ fontSize: 11, color: 'var(--muted)' }}>round {e.round}</div>;
           case 'agent': return <div key={i} style={{ fontSize: 12 }}><span style={{ color: laneColor(e.agentId), fontWeight: 600 }}>{e.agentId}</span>: <span style={{ whiteSpace: 'pre-wrap' }}>{(e.content ?? '').slice(0, 600)}</span></div>;

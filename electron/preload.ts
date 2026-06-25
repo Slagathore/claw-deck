@@ -91,6 +91,7 @@ contextBridge.exposeInMainWorld('api', {
   },
   council: {
     start: (opts: { repo?: string; protocolId: string; assignment: any; task: string }) => invoke('council:start', opts),
+    startLoop: (opts: { repo: string; protocolId: string; assignment: any; goal: string; maxIterations?: number; costCeiling?: number }) => invoke('council:startLoop', opts),
     cancel: (runId: string) => invoke('council:cancel', { runId }),
     list: () => invoke('council:list'),
     onEvent: (cb: (e: any) => void) => on('council:event', cb)

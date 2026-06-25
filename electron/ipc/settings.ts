@@ -13,8 +13,8 @@ const DEFAULTS = {
   claudeCodePath: 'claude',
   codexPath: 'codex',                          // Fusion QA-gate actor (Cole is installing the CLI)
   clawhubPath: 'clawhub',
-  ollamaCloudUrl: 'https://ollama.com/v1',     // Ollama Cloud (OpenAI-compatible)
-  ollamaCloudKey: '',                          // OLLAMA_API_KEY (falls back to env)
+  ollamaCloudUrl: '',                          // blank = use local Ollama (it serves *:cloud models itself); set only for a remote OpenAI-compat endpoint
+  ollamaCloudKey: '',                          // usually blank — local Ollama needs no key
   skillsDir: '',
   scanBeforeInstall: true,     // fetch + security-scan skills/plugins before installing
   blockRiskyInstalls: true,    // hard-block installs with critical/high findings (else just warn)

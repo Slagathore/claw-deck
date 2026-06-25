@@ -351,8 +351,10 @@ orchestrator also auto-injects the target symbol's card + 1-hop neighbors into e
 ---
 
 ## 5. Config & secrets
-- **Ollama Cloud:** base `https://ollama.com/v1` (OpenAI-compatible), key from Settings/env `OLLAMA_API_KEY`;
-  cloud tags `*:cloud`. Reuse the existing OpenAI-compat client. **Embeddings:** `nomic-embed-text` (768-dim).
+- **Ollama (local serves cloud tags):** Cole runs Ollama locally and it serves `*:cloud` models itself — so the
+  council hits the **local** OpenAI-compat endpoint `http://localhost:11434/v1` with **no API key**. (The
+  `ollamaCloudUrl`/`ollamaCloudKey` settings are an optional override for a genuinely remote endpoint; blank =
+  local.) Reuse the existing OpenAI-compat client. **Embeddings:** `nomic-embed-text` (768-dim).
 - **Binary paths (Settings):** `claudeCodePath` (default `claude`), `codexPath` (add; verify a CLI exists),
   `openclawPath` (default `openclaw`). Bare names now resolve via the runner's shell fallback; absolute is safest.
 - Never log API keys. Key-bearing calls go through the main process, never the renderer.
@@ -395,6 +397,25 @@ orchestrator also auto-injects the target symbol's card + 1-hop neighbors into e
 
 ## 9. Build progress log (agent-maintained)
 > Running record of what's been built/touched, per phase. Newest at top. Keep honest — note partials.
+
+### 2026-06-24 — Phase 5 (Autonomous goal loop) SHIPPED + Ollama-local fix — branch `fusion/phase-1-atlas`
+228/228 tests green, lint clean, both builds clean.
+- **Ollama-local correction (Cole's setup):** panelists now hit the **local** Ollama OpenAI-compat endpoint
+  (`localhost:11434/v1`, no key) — it serves `*:cloud` models itself. `ollamaCloudUrl`/`Key` are optional remote
+  overrides (blank = local); transportConfig falls back to local; Settings + BOOTSTRAP §5 relabelled.
+- `electron/council/autoloop.ts`: pure, injected-deps state machine — iteration = runProtocol → checkpoint →
+  goal-check → derive next sub-task. Rails: max-iterations, cost ceiling, **oscillation detector** (A,B,A,B tree-
+  hash flip-flop), optional human checkpoint. Returns met/cap/oscillation/cost/halted/aborted.
+- `electron/ipc/council.ts`: `council:startLoop` — wires runIteration (real protocol run, per-iteration worktree),
+  checkpoint (`git commit --allow-empty` + tree-hash signature), checkGoal (judge agent, fail-by-default), emits
+  `loop:*` events, persists to council_runs.
+- UI: `CouncilSettings` autonomous-loop panel (goal + max-iterations + Start); `DebateTheater` renders loop:
+  iteration/checkpoint/goal-check/halt/done.
+- Tests: `council.autoloop.test.ts` (6: cap halt, met, oscillation trip, cost ceiling, human-checkpoint decline,
+  oscillates() unit). The §3 Phase-5 acceptance (halts on cap; oscillation trips on a stubbed flip-flop).
+- *Deferred:* interactive human-checkpoint UI round-trip (the core supports it; IPC runs fully autonomous for
+  now). Phase 6 (claw-bridge) still open.
+
 
 ### 2026-06-24 — Phase 4 (Council UI) SHIPPED — branch `fusion/phase-1-atlas`
 The visible council. 222/222 tests green, lint clean, both builds clean.
