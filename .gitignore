@@ -11,3 +11,9 @@ quarantine/
 certs/
 staging-source/
 .fusion/
+# JDK that the Oracle Java VS Code extension auto-installs (don't commit ~300MB of JDK)
+**/oracleJdk-*/
+docs/fusion/oracleJdk-*/
+# claw-bridge extension build output / installed deps
+claw-bridge/node_modules/
+claw-bridge/out/
