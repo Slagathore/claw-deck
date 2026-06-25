@@ -239,8 +239,8 @@ Implement: each method's end-prompt, on selection, builds the next method's `see
 - [ ] No `throw`/early-return ends any run; every phase returns via the fix-or-fallback helper.
 - [ ] Every cross-phase handoff passes artifacts by reference + asserts length/hash; no inline-truncation path remains.
 - [ ] Reviewers/judges emit the `REVIEWING:` echo and the orchestrator asserts it.
-- [ ] Role config rejects: Qwen-Coder as critic; Gemini@1.1 as builder/final-qa/judge; deepseek as whole-doc QA.
-- [ ] Trusted-budget guard asserts `claude <= 10 && codex <= 10` per run and downgrades optional trusted steps rather than erroring.
+- [x] Role config rejects: Qwen-Coder as critic; Gemini@1.1 as builder/final-qa/judge; deepseek as whole-doc QA. (`electron/council/roles.ts`, `tests/fusion.roles.test.ts`.)
+- [x] Trusted-budget guard asserts `claude <= 10 && codex <= 10` per run and downgrades optional trusted steps rather than erroring. (`makeBudget` in `roles.ts` — `charge` returns `'over'`, never throws.)
 - [ ] `crucible` consolidates to one artifact before QA, runs the lint gate, surfaces dropped advisors.
 - [ ] All four new methods registered; printed descriptions render on start.
 - [ ] `assay`/`prospect` query Atlas first and fall back to grep/AST when `.fusion/atlas.db` is absent.
