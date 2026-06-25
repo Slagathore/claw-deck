@@ -78,4 +78,34 @@ describe('runProtocol', () => {
     expect(res.approved).toBe(true);
     expect(evs.some((e) => e.type === 'execute' && e.ok)).toBe(true);
   });
+
+  it('checkpoints after each phase and resumes mid-protocol without re-running earlier phases', async () => {
+    const proto: Protocol = { id: 'R', name: 'r', phases: [
+      { kind: 'independent', agents: ['@panelists'], label: 'P1' },
+      { kind: 'synthesize', by: '@scribe', label: 'P2' },
+      { kind: 'gate', by: '@judge', label: 'P3' },
+    ] };
+    const checkpoints: { phaseIndex: number }[] = [];
+    const calls: string[] = [];
+    const transport = stub((id, system) => { calls.push(id); return /verdict word/.test(system) ? 'approve' : `take-${id}`; });
+
+    // first run: abort right after phase 0 (P1) checkpoints
+    const abort = { aborted: false };
+    const res1 = await runProtocol(proto, {
+      roster: ROSTER, assignment: ASSIGN, task: 't', transport, signal: abort,
+      onCheckpoint: (cp) => { checkpoints.push(cp); if (cp.phaseIndex === 1) abort.aborted = true; },
+    });
+    expect(res1.status).toBe('aborted');
+    const cp = checkpoints.at(-1)!;
+    expect(cp.phaseIndex).toBe(1);                       // resume point = phase index 1 (P2)
+    expect(calls.filter((c) => c === 'p1' || c === 'p2').length).toBe(2);   // panelists ran once
+
+    // resume from the checkpoint
+    calls.length = 0;
+    const res2 = await runProtocol(proto, { roster: ROSTER, assignment: ASSIGN, task: 't', transport, resumeFrom: cp as any });
+    expect(res2.status).toBe('completed');
+    expect(calls.includes('p1')).toBe(false);            // panelists (phase 0) NOT re-run
+    expect(calls.includes('p2')).toBe(false);
+    expect(calls.includes('j')).toBe(true);              // scribe + judge gate DID run
+  });
 });

@@ -105,6 +105,7 @@ contextBridge.exposeInMainWorld('api', {
   council: {
     start: (opts: { repo?: string; protocolId: string; assignment: any; task: string }) => invoke('council:start', opts),
     startLoop: (opts: { repo: string; protocolId: string; assignment: any; goal: string; maxIterations?: number; costCeiling?: number }) => invoke('council:startLoop', opts),
+    resume: (runId: string) => invoke('council:resume', { runId }),
     cancel: (runId: string) => invoke('council:cancel', { runId }),
     list: () => invoke('council:list'),
     probeAgent: (agent: any, repo?: string) => invoke('council:probeAgent', { agent, repo }),

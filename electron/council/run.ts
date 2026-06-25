@@ -19,6 +19,24 @@ export interface ExecutorHooks {
   approve: () => Promise<{ ok: boolean; error?: string }>;
 }
 
+export interface RunResult {
+  status: 'completed' | 'bounced' | 'aborted';
+  phasesRun: string[];
+  transcript: { phase: string; kind: string; agentId?: string; content: string }[];
+  artifact: string;
+  verdicts: GateVerdict[];
+  approved: boolean;
+}
+
+/** The resumable state of a run: everything needed to continue from `phaseIndex`. */
+export interface ResumeState {
+  phaseIndex: number;                       // index of the next phase to run
+  artifact: string;                         // accumulated working text passed between phases
+  transcript: RunResult['transcript'];
+  verdicts: GateVerdict[];
+  approved: boolean;
+}
+
 export interface RunDeps {
   roster: RosterAgent[];
   assignment: SessionAssignment;
@@ -28,15 +46,8 @@ export interface RunDeps {
   executor?: ExecutorHooks;
   minAdvisors?: number;
   signal?: { aborted: boolean };
-}
-
-export interface RunResult {
-  status: 'completed' | 'bounced' | 'aborted';
-  phasesRun: string[];
-  transcript: { phase: string; kind: string; agentId?: string; content: string }[];
-  artifact: string;
-  verdicts: GateVerdict[];
-  approved: boolean;
+  resumeFrom?: ResumeState;                 // continue a prior run from this checkpoint
+  onCheckpoint?: (cp: ResumeState) => void; // called after each phase completes (persist to resume later)
 }
 
 const SYS = {
@@ -62,19 +73,21 @@ async function ask(deps: RunDeps, agent: RosterAgent, system: string, user: stri
 
 export async function runProtocol(protocol: Protocol, deps: RunDeps): Promise<RunResult> {
   const emit = (ev: CouncilEvent) => { try { deps.emit?.(ev); } catch { /* ignore */ } };
-  const transcript: RunResult['transcript'] = [];
-  const verdicts: GateVerdict[] = [];
+  const transcript: RunResult['transcript'] = deps.resumeFrom ? [...deps.resumeFrom.transcript] : [];
+  const verdicts: GateVerdict[] = deps.resumeFrom ? [...deps.resumeFrom.verdicts] : [];
   const phasesRun: string[] = [];
   const minAdvisors = deps.minAdvisors ?? 1;
-  let artifact = '';
-  let approved = false;
+  let artifact = deps.resumeFrom?.artifact ?? '';
+  let approved = deps.resumeFrom?.approved ?? false;
+  const startIndex = deps.resumeFrom?.phaseIndex ?? 0;
 
   const record = (phase: string, kind: string, content: string, agentId?: string) => {
     transcript.push({ phase, kind, agentId, content });
     emit({ type: 'agent', phase, kind, agentId, content });
   };
 
-  for (const phase of protocol.phases) {
+  for (let pi = startIndex; pi < protocol.phases.length; pi++) {
+    const phase = protocol.phases[pi];
     if (deps.signal?.aborted) return { status: 'aborted', phasesRun, transcript, artifact, verdicts, approved };
     const label = phase.label ?? phase.kind;
     phasesRun.push(label);
@@ -175,6 +188,9 @@ export async function runProtocol(protocol: Protocol, deps: RunDeps): Promise<Ru
         record(label, phase.kind, `(no executor bound; ${phase.kind} skipped)`, actor.id);
       }
     }
+
+    // checkpoint after each completed phase → the run can be resumed from here
+    deps.onCheckpoint?.({ phaseIndex: pi + 1, artifact, transcript, verdicts, approved });
   }
 
   emit({ type: 'done', status: 'completed' });

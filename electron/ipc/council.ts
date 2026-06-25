@@ -12,8 +12,8 @@ import { randomUUID } from 'crypto';
 import { getDb } from './db';
 import { getSetting } from './settings';
 import { appendAudit } from './security';
-import { PROTOCOLS } from '../council/protocol';
-import { runProtocol, ExecutorHooks, CouncilEvent } from '../council/run';
+import { PROTOCOLS, Protocol } from '../council/protocol';
+import { runProtocol, ExecutorHooks, CouncilEvent, ResumeState } from '../council/run';
 import { runAutoloop } from '../council/autoloop';
 import { makeTransport, TransportConfig } from '../council/transport';
 import { RosterAgent, SessionAssignment, validateAssignment, resolveAgents } from '../council/agents';
@@ -256,6 +256,44 @@ function makeExecutorHooks(repo: string, runId: string, abortSignal?: AbortSigna
 export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
   const send = (runId: string, ev: CouncilEvent) => { try { getWindow()?.webContents.send('council:event', { runId, ...ev }); } catch { /* gone */ } };
 
+  // Shared launcher for a fresh start AND a resume (resumeFrom set). Persists a
+  // checkpoint after every phase so an aborted/errored run can be continued.
+  function launchCouncilRun(runId: string, opts: { repo?: string; protocol: Protocol; roster: RosterAgent[]; assignment: SessionAssignment; task: string; resumeFrom?: ResumeState }) {
+    const db = getDb();
+    const controller = new AbortController();
+    const signal = { aborted: false, controller };
+    signals.set(runId, signal);
+    const execId = opts.resumeFrom ? `${runId}-r${Date.now().toString(36)}` : runId; // fresh worktree per resume attempt
+    const transport = makeTransport(transportConfig(opts.repo, controller.signal));
+    const executor = opts.repo ? makeExecutorHooks(opts.repo, execId, controller.signal) : undefined;
+
+    void runProtocol(opts.protocol, {
+      roster: opts.roster, assignment: opts.assignment, task: opts.task, transport, executor, signal,
+      resumeFrom: opts.resumeFrom,
+      emit: (ev) => send(runId, ev),
+      onCheckpoint: (cp) => {
+        try {
+          db.prepare('UPDATE council_runs SET phase_index=?, artifact=?, transcript=?, verdicts=?, approved=?, resumable=1 WHERE run_id=?')
+            .run(cp.phaseIndex, cp.artifact, JSON.stringify(cp.transcript), JSON.stringify(cp.verdicts), cp.approved ? 1 : 0, runId);
+        } catch { /* checkpoint is best-effort */ }
+      },
+    })
+      .then((res) => {
+        const resumable = res.status === 'aborted' ? 1 : 0; // completed/bounced → not resumable
+        db.prepare('UPDATE council_runs SET status=?, approved=?, finished=?, result=?, resumable=? WHERE run_id=?')
+          .run(res.status, res.approved ? 1 : 0, Date.now(), JSON.stringify({ phasesRun: res.phasesRun, verdicts: res.verdicts, transcriptLen: res.transcript.length }), resumable, runId);
+        appendAudit('council:finish', { runId, status: res.status, approved: res.approved });
+        trace('council:finish', { runId, status: res.status, approved: res.approved, phasesRun: res.phasesRun });
+        send(runId, { type: 'finished', status: res.status, ok: res.approved });
+      })
+      .catch((err) => {
+        db.prepare('UPDATE council_runs SET status=?, finished=?, resumable=1 WHERE run_id=?').run('error', Date.now(), runId);
+        trace('council:error', { runId, error: String(err?.message ?? err), stack: err?.stack });
+        send(runId, { type: 'error', content: String(err?.message ?? err) });
+      })
+      .finally(() => signals.delete(runId));
+  }
+
   ipcMain.handle('council:start', (_e, opts: { repo?: string; protocolId: string; assignment: SessionAssignment; task: string }) => {
     const protocol = PROTOCOLS[opts.protocolId];
     if (!protocol) return { ok: false, error: `unknown protocol: ${opts.protocolId}` };
@@ -264,35 +302,12 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
     if (!va.ok) return { ok: false, error: `invalid assignment${va.missing.length ? ` (unknown ids: ${va.missing.join(', ')})` : ' (need ≥1 panelist + judge + qa-gate)'}` };
 
     const runId = `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
-    const controller = new AbortController();
-    const signal = { aborted: false, controller };
-    signals.set(runId, signal);
-
-    const db = getDb();
-    db.prepare('INSERT INTO council_runs(run_id, repo, protocol, task, assignment, status, started) VALUES(?,?,?,?,?,?,?)')
+    getDb().prepare('INSERT INTO council_runs(run_id, repo, protocol, task, assignment, status, started) VALUES(?,?,?,?,?,?,?)')
       .run(runId, opts.repo ?? null, protocol.id, opts.task, JSON.stringify(opts.assignment), 'running', Date.now());
     appendAudit('council:start', { runId, protocol: protocol.id, repo: opts.repo ?? null });
     trace('council:start', { runId, protocol: protocol.id, repo: opts.repo ?? null, assignment: opts.assignment, taskBytes: opts.task.length });
 
-    const transport = makeTransport(transportConfig(opts.repo, controller.signal));
-    const executor = opts.repo ? makeExecutorHooks(opts.repo, runId, controller.signal) : undefined;
-
-    // run in the background; resolve the handle immediately with the runId
-    void runProtocol(protocol, { roster, assignment: opts.assignment, task: opts.task, transport, executor, signal, emit: (ev) => send(runId, ev) })
-      .then((res) => {
-        db.prepare('UPDATE council_runs SET status=?, approved=?, finished=?, result=? WHERE run_id=?')
-          .run(res.status, res.approved ? 1 : 0, Date.now(), JSON.stringify({ phasesRun: res.phasesRun, verdicts: res.verdicts, transcriptLen: res.transcript.length }), runId);
-        appendAudit('council:finish', { runId, status: res.status, approved: res.approved });
-        trace('council:finish', { runId, status: res.status, approved: res.approved, phasesRun: res.phasesRun });
-        send(runId, { type: 'finished', status: res.status, ok: res.approved });
-      })
-      .catch((err) => {
-        db.prepare('UPDATE council_runs SET status=?, finished=? WHERE run_id=?').run('error', Date.now(), runId);
-        trace('council:error', { runId, error: String(err?.message ?? err), stack: err?.stack });
-        send(runId, { type: 'error', content: String(err?.message ?? err) });
-      })
-      .finally(() => signals.delete(runId));
-
+    launchCouncilRun(runId, { repo: opts.repo, protocol, roster, assignment: opts.assignment, task: opts.task });
     return { ok: true, runId };
   });
 
@@ -361,8 +376,39 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
     return { ok: !!s };
   });
 
+  // Continue an aborted/errored session from its last checkpointed phase (reuses
+  // the same runId so it stays one session). Mid-protocol resume — not re-run.
+  ipcMain.handle('council:resume', (_e, opts: { runId: string }) => {
+    const db = getDb();
+    const row = db.prepare('SELECT * FROM council_runs WHERE run_id=?').get(opts.runId) as any;
+    if (!row) return { ok: false, error: 'unknown run' };
+    if (!row.resumable || row.phase_index == null) return { ok: false, error: 'this session has no resume checkpoint' };
+    if (row.status === 'running') return { ok: false, error: 'session is already running' };
+    const protocol = PROTOCOLS[row.protocol];
+    if (!protocol) return { ok: false, error: `unknown protocol: ${row.protocol}` };
+    if (row.phase_index >= protocol.phases.length) return { ok: false, error: 'session already finished every phase' };
+    const roster = getSetting<RosterAgent[]>('fusionRoster', []);
+    let assignment: SessionAssignment;
+    try { assignment = JSON.parse(row.assignment); } catch { return { ok: false, error: 'corrupt assignment' }; }
+    const va = validateAssignment(roster, assignment);
+    if (!va.ok) return { ok: false, error: `invalid assignment${va.missing.length ? ` (unknown ids: ${va.missing.join(', ')})` : ''}` };
+
+    const resumeFrom: ResumeState = {
+      phaseIndex: row.phase_index,
+      artifact: row.artifact ?? '',
+      transcript: row.transcript ? JSON.parse(row.transcript) : [],
+      verdicts: row.verdicts ? JSON.parse(row.verdicts) : [],
+      approved: !!row.approved,
+    };
+    db.prepare('UPDATE council_runs SET status=?, finished=NULL WHERE run_id=?').run('running', opts.runId);
+    appendAudit('council:resume', { runId: opts.runId, fromPhase: row.phase_index });
+    trace('council:resume', { runId: opts.runId, fromPhase: row.phase_index, protocol: protocol.id });
+    launchCouncilRun(opts.runId, { repo: row.repo ?? undefined, protocol, roster, assignment, task: row.task, resumeFrom });
+    return { ok: true, runId: opts.runId, fromPhase: row.phase_index };
+  });
+
   ipcMain.handle('council:list', () => {
-    const rows = getDb().prepare('SELECT run_id AS runId, repo, protocol, task, assignment, status, approved, started, finished FROM council_runs ORDER BY started DESC LIMIT 50').all();
+    const rows = getDb().prepare('SELECT run_id AS runId, repo, protocol, task, assignment, status, approved, phase_index AS phaseIndex, resumable, started, finished FROM council_runs ORDER BY started DESC LIMIT 50').all();
     return { ok: true, runs: rows };
   });
 

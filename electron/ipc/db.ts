@@ -92,6 +92,12 @@ export async function initDb() {
   // additive migrations — safe to run on every boot
   migrate('upgrades', 'install_path', 'TEXT');
   migrate('upgrades', 'backup_path', 'TEXT');
+  // council run resume checkpoint (phase index + accumulated state)
+  migrate('council_runs', 'phase_index', 'INTEGER');
+  migrate('council_runs', 'artifact', 'TEXT');
+  migrate('council_runs', 'transcript', 'TEXT');
+  migrate('council_runs', 'verdicts', 'TEXT');
+  migrate('council_runs', 'resumable', 'INTEGER');
 }
 
 function migrate(table: string, col: string, type: string) {

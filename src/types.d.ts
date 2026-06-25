@@ -98,8 +98,9 @@ declare global {
       council: {
         start: (opts: { repo?: string; protocolId: string; assignment: import('../electron/council/agents').SessionAssignment; task: string }) => Promise<{ ok: boolean; runId?: string; error?: string }>;
         startLoop: (opts: { repo: string; protocolId: string; assignment: import('../electron/council/agents').SessionAssignment; goal: string; maxIterations?: number; costCeiling?: number }) => Promise<{ ok: boolean; runId?: string; error?: string }>;
+        resume: (runId: string) => Promise<{ ok: boolean; runId?: string; fromPhase?: number; error?: string }>;
         cancel: (runId: string) => Promise<{ ok: boolean }>;
-        list: () => Promise<{ ok: boolean; runs: { runId: string; repo: string | null; protocol: string; task: string; assignment: string; status: string; approved: number; started: number; finished: number | null }[] }>;
+        list: () => Promise<{ ok: boolean; runs: { runId: string; repo: string | null; protocol: string; task: string; assignment: string; status: string; approved: number; phaseIndex: number | null; resumable: number | null; started: number; finished: number | null }[] }>;
         probeAgent: (agent: import('../electron/council/agents').RosterAgent, repo?: string) => Promise<{ ok: boolean; detail: string }>;
         onEvent: (cb: (e: { runId: string; type: string; phase?: string; kind?: string; agentId?: string; content?: string; verdict?: string; round?: number; ok?: boolean; status?: string }) => void) => () => void;
       };

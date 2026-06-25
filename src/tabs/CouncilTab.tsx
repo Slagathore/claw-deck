@@ -134,6 +134,14 @@ function SessionHistory({ repo, onRerun }: { repo: string; onRerun: (runId: stri
     setBusy('');
     if (r.ok && r.runId) onRerun(r.runId);
   }
+  async function resume(row: any) {
+    setBusy(row.runId);
+    const r = await window.api.council.resume(row.runId);
+    setBusy('');
+    if (r.ok && r.runId) onRerun(r.runId);
+    else if (r.error) alert(r.error);
+  }
+  const canResume = (r: any) => r.resumable && r.status !== 'running' && r.status !== 'completed';
   return (
     <div className="card col" style={{ gap: 6 }}>
       <div className="row" style={{ justifyContent: 'space-between' }}><strong>Session history</strong><button onClick={refresh}>Refresh</button></div>
@@ -141,11 +149,14 @@ function SessionHistory({ repo, onRerun }: { repo: string; onRerun: (runId: stri
       {rows.slice(0, 15).map((r) => (
         <div key={r.runId} className="row" style={{ borderTop: '1px solid var(--border)', paddingTop: 6, alignItems: 'flex-start', gap: 6 }}>
           <div className="col" style={{ flex: 1, gap: 2, minWidth: 0 }}>
-            <div><span className={`badge ${r.approved || r.status === 'completed' || r.status === 'met' ? 'ok' : r.status === 'running' ? 'warn' : 'bad'}`}>{r.status}</span> <strong>{r.protocol}</strong>{String(r.runId).startsWith('loop-') && <span className="label"> · loop</span>}</div>
+            <div><span className={`badge ${r.approved || r.status === 'completed' || r.status === 'met' ? 'ok' : r.status === 'running' ? 'warn' : 'bad'}`}>{r.status}</span> <strong>{r.protocol}</strong>{String(r.runId).startsWith('loop-') && <span className="label"> · loop</span>}{canResume(r) && <span className="label" title={`checkpointed after phase ${r.phaseIndex}`}> · resumable</span>}</div>
             <div className="label" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.task}>{r.task}</div>
             <div className="label">{new Date(r.started).toLocaleString()}</div>
           </div>
-          <button disabled={!!busy || r.status === 'running'} onClick={() => rerun(r)} title="Restart this session with the same protocol, agents, and task">{busy === r.runId ? '…' : '↻ Re-run'}</button>
+          <div className="col" style={{ gap: 4 }}>
+            {canResume(r) && <button disabled={!!busy} onClick={() => resume(r)} title="Continue this session from the phase it stopped at (mid-protocol resume)" style={{ borderColor: 'var(--good)', color: 'var(--good)' }}>{busy === r.runId ? '…' : '▶ Resume'}</button>}
+            <button disabled={!!busy || r.status === 'running'} onClick={() => rerun(r)} title="Restart this session from scratch with the same protocol, agents, and task">{busy === r.runId ? '…' : '↻ Re-run'}</button>
+          </div>
         </div>
       ))}
     </div>
