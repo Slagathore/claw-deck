@@ -20,6 +20,7 @@ export interface TransportConfig {
   bridgePort?: number;       // claw-bridge (VS Code) localhost port for vscode-lm
   abortSignal?: AbortSignal; // cancels in-flight HTTP + kills CLI children on council:cancel
   claudeUnsetEnv?: string[]; // env vars to drop for claude-code (e.g. ANTHROPIC_API_KEY → use the subscription)
+  claudeExtraArgs?: string[];// extra claude flags (--mcp-config <file>, --add-dir <dir>…) → tool + fs access
   actorTimeoutMs?: number;   // per-call timeout for agentic CLI actors (default 10 min — they do full turns)
   cwd?: string;
 }
@@ -122,7 +123,7 @@ export function makeTransport(cfg: TransportConfig): (agent: RosterAgent, messag
       case 'ollama-cloud': return chatCompat(cfg.ollamaCloudUrl ?? 'https://ollama.com/v1', cfg.ollamaCloudKey, agent.model ?? '', messages, cfg.abortSignal, onDelta);
       case 'ollama-local': return chatCompat(cfg.ollamaLocalUrl ?? 'http://localhost:11434/v1', undefined, agent.model ?? '', messages, cfg.abortSignal, onDelta);
       case 'openai-compat': return chatCompat(cfg.openaiCompatUrl ?? 'http://localhost:11434/v1', cfg.openaiCompatKey, agent.model ?? '', messages, cfg.abortSignal, onDelta);
-      case 'claude-code': return cliPrompt(cfg.paths?.claude ?? agent.binary ?? 'claude', ['--print', '--input-format', 'text', '--permission-mode', 'bypassPermissions', '--no-session-persistence'], messages, cfg.cwd, cfg.abortSignal, onDelta, cfg.claudeUnsetEnv, cfg.actorTimeoutMs);
+      case 'claude-code': return cliPrompt(cfg.paths?.claude ?? agent.binary ?? 'claude', ['--print', '--input-format', 'text', '--permission-mode', 'bypassPermissions', '--no-session-persistence', ...(cfg.claudeExtraArgs ?? [])], messages, cfg.cwd, cfg.abortSignal, onDelta, cfg.claudeUnsetEnv, cfg.actorTimeoutMs);
       case 'codex': return cliPrompt(cfg.paths?.codex ?? agent.binary ?? 'codex', ['exec', '--sandbox', 'workspace-write', '--skip-git-repo-check', '--color', 'never', '-'], messages, cfg.cwd, cfg.abortSignal, onDelta, undefined, cfg.actorTimeoutMs);
       case 'openclaw': return openclawPrompt(cfg.paths?.openclaw ?? agent.binary ?? 'openclaw', agent.model, messages, cfg.cwd, cfg.abortSignal, onDelta, cfg.actorTimeoutMs);
       case 'vscode-lm': {

@@ -79,6 +79,30 @@ describe('runProtocol', () => {
     expect(evs.some((e) => e.type === 'execute' && e.ok)).toBe(true);
   });
 
+  it('gauntlet stops on NO_FURTHER_ISSUES; blind judge approves on LGTM', async () => {
+    const proto: Protocol = { id: 'G', name: 'g', phases: [
+      { kind: 'gauntlet', agents: ['@panelists'], maxTurns: 6, label: 'Gauntlet' },
+      { kind: 'gate', by: '@judge', blind: true, label: 'Blind' },
+    ] };
+    let turn = 0;
+    const transport = stub((_id, system) => {
+      if (/BLIND reviewer/.test(system)) return 'LGTM';
+      if (/ADVERSARIAL reviewer/.test(system)) { turn++; return turn >= 2 ? 'NO_FURTHER_ISSUES' : `concrete bug ${turn}`; }
+      return 'x';
+    });
+    const { evs, emit } = collect();
+    const res = await runProtocol(proto, { roster: ROSTER, assignment: ASSIGN, task: 't', transport, emit });
+    expect(res.status).toBe('completed');                       // blind LGTM → approve (no bounce)
+    expect(evs.some((e) => e.type === 'converged')).toBe(true); // gauntlet stopped early
+  });
+
+  it('blind judge bounces when it still finds problems', async () => {
+    const proto: Protocol = { id: 'B', name: 'b', phases: [{ kind: 'gate', by: '@judge', blind: true, label: 'Blind' }] };
+    const transport = stub(() => 'Still wrong: this uses an API removed in 4.3.');
+    const res = await runProtocol(proto, { roster: ROSTER, assignment: ASSIGN, task: 't', transport });
+    expect(res.status).toBe('bounced');
+  });
+
   it('checkpoints after each phase and resumes mid-protocol without re-running earlier phases', async () => {
     const proto: Protocol = { id: 'R', name: 'r', phases: [
       { kind: 'independent', agents: ['@panelists'], label: 'P1' },

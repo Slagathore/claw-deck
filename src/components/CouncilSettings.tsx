@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useCouncil, Assignment, SessionConfig } from '../store/council';
 
 interface RosterAgent { id: string; displayName: string; transport: string; model?: string; binary?: string; capabilities: { canEdit: boolean; canRunTools: boolean; costTier: string } }
-const PROTOCOLS = ['COUNCIL', 'PCRSR', 'GCRJ', 'REDTEAM', 'PAIR'];
+const PROTOCOLS = ['COUNCIL', 'GAUNTLET', 'REDTEAM', 'PCRSR', 'GCRJ', 'PAIR', 'SOLO'];
 
 /** What each session protocol does, how it works, and what it's best at (hover tooltips + inline). */
 const PROTOCOL_INFO: Record<string, { name: string; how: string; best: string }> = {
@@ -10,6 +10,16 @@ const PROTOCOL_INFO: Record<string, { name: string; how: string; best: string }>
     name: 'Full Council',
     how: 'Independent takes from every panelist → debate to consensus (≤3 rounds, stops early on convergence) → scribe synthesizes one proposal → QA gate → QA⇄judge relay → judge gate → execute.',
     best: 'Hard or ambiguous changes where you want maximum scrutiny and diverse perspectives before any code is touched. Most thorough — and most expensive.',
+  },
+  GAUNTLET: {
+    name: 'Adversarial Gauntlet',
+    how: 'Generate → adversarial gauntlet: agents take turns, each REQUIRED to find a NEW flaw the others missed (or say NO_FURTHER_ISSUES) → scribe hardens → BLIND judge (sees only task + patch, never the consensus, asked “what is STILL wrong?”) → execute.',
+    best: 'When you don’t trust agreement. Agents are incentivized to break the proposal, not rubber-stamp it. Best for correctness-critical work and catching deprecated/removed-API and edge-case misses.',
+  },
+  REDTEAM: {
+    name: 'Red Team (adversarial audit)',
+    how: 'Same adversarial gauntlet + blind judge as Gauntlet, but stops at sign-off — it audits, it does NOT edit your tree.',
+    best: 'Reviewing an existing proposal/design for flaws without applying any changes. A pure attack pass.',
   },
   PCRSR: {
     name: 'Propose · Critique · Revise · Synthesize · Ratify',
@@ -21,15 +31,15 @@ const PROTOCOL_INFO: Record<string, { name: string; how: string; best: string }>
     how: 'Panelists generate independently → cross-critique each other → one rebuttal round → judge decides.',
     best: '“Which approach?” design decisions, where adversarial cross-examination between models surfaces flaws fastest.',
   },
-  REDTEAM: {
-    name: 'Red Team',
-    how: 'Panelists propose → 2 attack rounds actively trying to break the proposal → scribe hardens it → judge sign-off.',
-    best: 'Security-sensitive or high-risk changes — you want the panel attacking the proposal before it’s approved.',
-  },
   PAIR: {
     name: 'Pair (quick fix)',
     how: 'Skips the swarm entirely: a QA⇄judge relay (≤4 turns) → execute. Just two actors, no panel.',
-    best: 'Small, well-understood fixes where a full council is overkill. Fastest and cheapest.',
+    best: 'Small, well-understood fixes where a full council is overkill. Fastest two-actor option.',
+  },
+  SOLO: {
+    name: 'Solo (judge only)',
+    how: 'One actor, no panel: the judge proposes a fix and executes it directly.',
+    best: 'Trivial/mechanical changes where you just want one capable agent to do it. Cheapest and fastest.',
   },
 };
 const protocolTitle = (p: string) => `${PROTOCOL_INFO[p]?.name}\n\nHow: ${PROTOCOL_INFO[p]?.how}\n\nBest for: ${PROTOCOL_INFO[p]?.best}`;
@@ -51,6 +61,7 @@ export default function CouncilSettings({ workspace }: { workspace: string }) {
   const [loopMax, setLoopMax] = useState(5);
   const [probe, setProbe] = useState<Record<string, { ok: boolean; detail: string }>>({});
   const [dryRun, setDryRun] = useState(false);
+  const [context, setContext] = useState('');
 
   useEffect(() => { window.api.settings.get().then((s) => setRoster(s.fusionRoster ?? [])); }, []);
   useEffect(() => { if (roster.length && !configs[workspace]) setConfig(workspace, defaultConfig(roster)); }, [roster, workspace, configs, setConfig]);
@@ -66,10 +77,17 @@ export default function CouncilSettings({ workspace }: { workspace: string }) {
     const ready = await preflight();
     if (!ready) return;
     setErr(''); setBusy('Starting…');
-    const r = await window.api.council.start({ repo: dryRun ? undefined : workspace, protocolId: cfg.protocolId, assignment: cfg.assignment, task: cfg.task });
+    const r = await window.api.council.start({ repo: dryRun ? undefined : workspace, protocolId: cfg.protocolId, assignment: cfg.assignment, task: cfg.task, context });
     setBusy('');
     if (!r.ok || !r.runId) { setErr(r.error ?? 'failed to start'); return; }
     startRun(workspace, r.runId);
+  }
+
+  async function detectEnv() {
+    setBusy('Detecting…');
+    const r = await window.api.council.detectEnv(workspace);
+    setBusy('');
+    if (r.ok) setContext((c) => (c.trim() ? c : r.facts));
   }
 
   async function preflight(): Promise<boolean> {
@@ -90,7 +108,7 @@ export default function CouncilSettings({ workspace }: { workspace: string }) {
 
   async function startLoop() {
     setErr(''); setBusy('Starting loop…');
-    const r = await window.api.council.startLoop({ repo: workspace, protocolId: cfg.protocolId, assignment: cfg.assignment, goal: loopGoal, maxIterations: loopMax });
+    const r = await window.api.council.startLoop({ repo: workspace, protocolId: cfg.protocolId, assignment: cfg.assignment, goal: loopGoal, maxIterations: loopMax, context });
     setBusy('');
     if (!r.ok || !r.runId) { setErr(r.error ?? 'failed to start loop'); return; }
     startRun(workspace, r.runId);
@@ -128,6 +146,14 @@ export default function CouncilSettings({ workspace }: { workspace: string }) {
         <label style={{ fontSize: 12 }}>Judge <select disabled={locked} value={cfg.assignment.judge} onChange={(e) => updateAssign({ judge: e.target.value })}>{roster.map(opt)}</select></label>
         <label style={{ fontSize: 12 }}>QA gate <select disabled={locked} value={cfg.assignment.qaGate} onChange={(e) => updateAssign({ qaGate: e.target.value })}>{roster.map(opt)}</select></label>
         <label style={{ fontSize: 12 }}>Scribe <select disabled={locked} value={cfg.assignment.scribe ?? ''} onChange={(e) => updateAssign({ scribe: e.target.value || undefined })}><option value="">(judge)</option>{roster.map(opt)}</select></label>
+      </div>
+
+      <div className="col" style={{ gap: 4 }}>
+        <div className="row" style={{ justifyContent: 'space-between' }}>
+          <label style={{ fontSize: 11, color: 'var(--muted)' }} title="Authoritative facts the models can't infer (engine/lib versions, plugins, OS). Injected as ground truth so they don't suggest deprecated/removed APIs.">Environment / ground truth</label>
+          <button onClick={detectEnv} disabled={!!busy} title="Probe the workspace (project.godot, package.json, …) to prefill version + plugin facts">Detect</button>
+        </div>
+        <textarea disabled={locked} placeholder="e.g. Godot 4.4, GDScript 2.0; addons: X, Y. Don't use APIs removed before 4.3." value={context} onChange={(e) => setContext(e.target.value)} rows={3} style={{ fontSize: 12 }} />
       </div>
 
       <textarea disabled={locked} placeholder="Task / goal for the council…" value={cfg.task} onChange={(e) => update({ task: e.target.value })} rows={3} />

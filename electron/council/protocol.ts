@@ -1,7 +1,7 @@
 // Protocols & phase primitives (BOOTSTRAP §4.3). Pure data + parsing helpers.
 import { GateVerdict } from './agents';
 
-export type PhaseKind = 'independent' | 'debate' | 'synthesize' | 'gate' | 'relay' | 'vote' | 'propose' | 'execute';
+export type PhaseKind = 'independent' | 'debate' | 'gauntlet' | 'synthesize' | 'gate' | 'relay' | 'vote' | 'propose' | 'execute';
 
 export interface Phase {
   kind: PhaseKind;
@@ -14,6 +14,7 @@ export interface Phase {
   maxTurns?: number;
   method?: 'majority' | 'judge-pick';
   editPolicy?: 'dry-run' | 'review-each' | 'auto-checkpoint';
+  blind?: boolean;            // gate: judge sees only (task + patch), not the consensus
   label?: string;
 }
 
@@ -56,13 +57,28 @@ const GCRJ: Protocol = {
   ],
 };
 
+// REDTEAM = adversarial audit (no edits): propose → adversarial gauntlet (each
+// agent must find a NEW flaw or say NO_FURTHER_ISSUES) → harden → blind judge.
 const REDTEAM: Protocol = {
-  id: 'REDTEAM', name: 'Red Team',
+  id: 'REDTEAM', name: 'Red Team (adversarial audit)',
   phases: [
     { kind: 'independent', agents: ['@panelists'], label: 'Proposal' },
-    { kind: 'debate', agents: ['@panelists'], rounds: 2, stopOn: 'cap', label: 'Attack' },
+    { kind: 'gauntlet', agents: ['@panelists'], maxTurns: 8, label: 'Adversarial gauntlet' },
     { kind: 'synthesize', by: '@scribe', label: 'Harden' },
-    { kind: 'gate', by: '@judge', onMinor: 'apply-forward', onMajor: 'bounce', label: 'Sign-off' },
+    { kind: 'gate', by: '@judge', blind: true, onMinor: 'apply-forward', onMajor: 'bounce', label: 'Blind sign-off' },
+  ],
+};
+
+// GAUNTLET = adversarial + executes. Generate → adversarial gauntlet → harden →
+// BLIND judge (sees only task + patch, never the consensus) → execute.
+const GAUNTLET: Protocol = {
+  id: 'GAUNTLET', name: 'Adversarial Gauntlet',
+  phases: [
+    { kind: 'independent', agents: ['@panelists'], label: 'Generate' },
+    { kind: 'gauntlet', agents: ['@panelists'], maxTurns: 8, label: 'Adversarial gauntlet' },
+    { kind: 'synthesize', by: '@scribe', label: 'Harden' },
+    { kind: 'gate', by: '@judge', blind: true, onMinor: 'apply-forward', onMajor: 'bounce', label: 'Blind judge' },
+    { kind: 'execute', by: '@judge', editPolicy: 'review-each', label: 'Execute' },
   ],
 };
 
@@ -75,7 +91,16 @@ const PAIR: Protocol = {
   ],
 };
 
-export const PROTOCOLS: Record<string, Protocol> = { COUNCIL, PCRSR, GCRJ, REDTEAM, PAIR };
+// SOLO = one actor, no panel. The judge proposes a fix and executes it directly.
+const SOLO: Protocol = {
+  id: 'SOLO', name: 'Solo (judge only)',
+  phases: [
+    { kind: 'relay', agents: ['@judge'], maxTurns: 1, label: 'Judge proposes' },
+    { kind: 'execute', by: '@judge', editPolicy: 'review-each', label: 'Execute' },
+  ],
+};
+
+export const PROTOCOLS: Record<string, Protocol> = { COUNCIL, GAUNTLET, REDTEAM, PCRSR, GCRJ, PAIR, SOLO };
 
 /** Parse a gate agent's free-text reply into a structured verdict. Default safe = 'major'. */
 export function parseGateVerdict(text: string): GateVerdict {
@@ -87,6 +112,17 @@ export function parseGateVerdict(text: string): GateVerdict {
   else if (/\bapprove(d)?\b|\blgtm\b|\bship it\b/.test(t)) verdict = 'approve';
   const patch = extractDiff(text);
   return { verdict, notes: (text || '').trim().slice(0, 4000), patch };
+}
+
+/** Blind-judge reply → verdict. Only an explicit "LGTM"/clean reply approves; a
+ *  judge shown only (task + patch) and asked "what's still wrong" that finds
+ *  issues yields `major` (the patch is not ratified on consensus it never saw). */
+export function parseBlindVerdict(text: string): GateVerdict {
+  const t = (text || '').trim();
+  const lower = t.toLowerCase();
+  const clean = /\blgtm\b|no (?:further |remaining )?issues|nothing (?:is )?(?:still |left )?(?:wrong|broken|missing)|looks correct|ship it/.test(lower);
+  if (clean && t.length < 400) return { verdict: 'approve', notes: t.slice(0, 4000) };
+  return { verdict: 'major', notes: t.slice(0, 4000), patch: extractDiff(t) };
 }
 
 /** A cheap convergence check on a debate-round checker's output. */

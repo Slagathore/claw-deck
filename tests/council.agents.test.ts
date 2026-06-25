@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { resolveRoleRef, resolveAgents, validateAssignment, RosterAgent, SessionAssignment } from '../electron/council/agents';
-import { PROTOCOLS, parseGateVerdict, isConverged, extractDiff } from '../electron/council/protocol';
+import { PROTOCOLS, parseGateVerdict, parseBlindVerdict, isConverged, extractDiff } from '../electron/council/protocol';
 
 const ROSTER: RosterAgent[] = [
   { id: 'p1', displayName: 'P1', transport: 'ollama-cloud', capabilities: { canEdit: false, canRunTools: false, costTier: 'cheap' } },
@@ -30,9 +30,17 @@ describe('agent resolution', () => {
 });
 
 describe('protocol helpers', () => {
-  it('ships all five protocols', () => {
-    expect(Object.keys(PROTOCOLS).sort()).toEqual(['COUNCIL', 'GCRJ', 'PAIR', 'PCRSR', 'REDTEAM']);
+  it('ships the protocol presets incl. adversarial ones', () => {
+    for (const id of ['COUNCIL', 'GAUNTLET', 'REDTEAM', 'PCRSR', 'GCRJ', 'PAIR', 'SOLO']) expect(PROTOCOLS[id]).toBeTruthy();
     expect(PROTOCOLS.PAIR.phases.map((p) => p.kind)).toEqual(['relay', 'execute']);
+    expect(PROTOCOLS.GAUNTLET.phases.some((p) => p.kind === 'gauntlet')).toBe(true);
+    expect(PROTOCOLS.GAUNTLET.phases.some((p) => p.kind === 'gate' && p.blind)).toBe(true);
+  });
+  it('parseBlindVerdict approves only on a clean LGTM, else major', () => {
+    expect(parseBlindVerdict('LGTM').verdict).toBe('approve');
+    expect(parseBlindVerdict('No remaining issues.').verdict).toBe('approve');
+    expect(parseBlindVerdict('Still wrong: this calls a method removed in 4.3.').verdict).toBe('major');
+    expect(parseBlindVerdict('The patch misses the null case.').verdict).toBe('major');
   });
   it('parseGateVerdict picks the verdict word (defaults safe to major)', () => {
     expect(parseGateVerdict('VETO: dangerous').verdict).toBe('veto');

@@ -96,8 +96,9 @@ declare global {
         mcp: () => Promise<{ name: string; command: string; args?: string[] }[]>;
       };
       council: {
-        start: (opts: { repo?: string; protocolId: string; assignment: import('../electron/council/agents').SessionAssignment; task: string }) => Promise<{ ok: boolean; runId?: string; error?: string }>;
-        startLoop: (opts: { repo: string; protocolId: string; assignment: import('../electron/council/agents').SessionAssignment; goal: string; maxIterations?: number; costCeiling?: number }) => Promise<{ ok: boolean; runId?: string; error?: string }>;
+        start: (opts: { repo?: string; protocolId: string; assignment: import('../electron/council/agents').SessionAssignment; task: string; context?: string }) => Promise<{ ok: boolean; runId?: string; error?: string }>;
+        startLoop: (opts: { repo: string; protocolId: string; assignment: import('../electron/council/agents').SessionAssignment; goal: string; maxIterations?: number; costCeiling?: number; context?: string }) => Promise<{ ok: boolean; runId?: string; error?: string }>;
+        detectEnv: (repo: string) => Promise<{ ok: boolean; facts: string; error?: string }>;
         resume: (runId: string) => Promise<{ ok: boolean; runId?: string; fromPhase?: number; error?: string }>;
         cancel: (runId: string) => Promise<{ ok: boolean }>;
         list: () => Promise<{ ok: boolean; runs: { runId: string; repo: string | null; protocol: string; task: string; assignment: string; status: string; approved: number; phaseIndex: number | null; resumable: number | null; started: number; finished: number | null }[] }>;

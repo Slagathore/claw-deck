@@ -6,7 +6,7 @@
 // verdict; major/veto bounces the run.
 
 import { RosterAgent, SessionAssignment, Msg, GateVerdict, resolveAgents } from './agents';
-import { Protocol, Phase, parseGateVerdict, isConverged, extractDiff } from './protocol';
+import { Protocol, Phase, parseGateVerdict, parseBlindVerdict, isConverged, extractDiff } from './protocol';
 
 export type TransportFn = (agent: RosterAgent, messages: Msg[], onDelta?: (chunk: string) => void) => Promise<string>;
 
@@ -56,6 +56,10 @@ const SYS = {
   gate: 'You are a QA/judge gate. Reply with exactly one verdict word first — approve, minor, major, or veto — then a one-paragraph rationale. Include a fenced ```diff if you have concrete edits.',
   converge: 'Reply with exactly one word: CONVERGED if the panel substantially agrees and no new points remain, else CONTINUE.',
   relay: 'You are pairing on a fix. Build on the other agent\'s last message; move toward a concrete, minimal change. Include a fenced ```diff when you have one.',
+  // Adversarial: each turn must find a NEW flaw the others missed, or explicitly stop.
+  adversary: 'You are an ADVERSARIAL reviewer — your job is to find what is WRONG, not to agree. Given the current proposal and the issues already raised, find ONE NEW, concrete problem the others got wrong, covered inadequately, or missed entirely: bugs, removed/deprecated APIs, wrong version assumptions, missing edge cases, security holes, things that won\'t actually run. Be specific. Do NOT restate prior issues or agree for the sake of agreeing. If, after genuine analysis, there is truly nothing further, reply with EXACTLY: NO_FURTHER_ISSUES',
+  // Blind judge: never shown the consensus — only the original task + the patch.
+  blindJudge: 'You are a BLIND reviewer. You are NOT shown any prior discussion, agreement, or consensus — only the original task and the proposed change. Do not assume the change is correct because someone proposed it. Answer ONE question: what is STILL wrong, missing, or risky AFTER this change is applied? List concrete problems (and a corrected ```diff if you have one). If, after careful review, there is genuinely nothing wrong, reply with EXACTLY: LGTM',
 };
 
 async function ask(deps: RunDeps, agent: RosterAgent, system: string, user: string, phase?: string): Promise<string | null> {
@@ -121,6 +125,28 @@ export async function runProtocol(protocol: Protocol, deps: RunDeps): Promise<Ru
       }
     }
 
+    else if (phase.kind === 'gauntlet') {
+      // adversarial: agents take turns trying to break the proposal; each must
+      // find a NEW issue or say NO_FURTHER_ISSUES. Stops when an agent finds
+      // nothing further (or maxTurns). Findings are appended for the synthesizer.
+      const agents = resolveAgents(deps.roster, phase.agents, deps.assignment);
+      const maxTurns = phase.maxTurns ?? Math.max(agents.length * 2, 4);
+      const issues: string[] = [];
+      let clears = 0;
+      for (let t = 0; t < maxTurns && agents.length; t++) {
+        if (deps.signal?.aborted) break;
+        const agent = agents[t % agents.length];
+        const prior = issues.length ? `Issues already raised (do NOT repeat these):\n${issues.join('\n')}` : '(no issues raised yet)';
+        const reply = await ask(deps, agent, SYS.adversary, `Task:\n${deps.task}\n\nCurrent proposal:\n${artifact}\n\n${prior}\n\nFind a NEW concrete problem, or reply NO_FURTHER_ISSUES.`, label);
+        if (!reply) continue;
+        record(label, phase.kind, reply, agent.id);
+        if (/NO_FURTHER_ISSUES/i.test(reply)) { if (++clears >= 1) { emit({ type: 'converged', phase: label, round: t + 1 }); break; } continue; }
+        clears = 0;
+        issues.push(`- (${agent.displayName}) ${reply.replace(/\s+/g, ' ').slice(0, 400)}`);
+      }
+      if (issues.length) artifact += `\n\n## Adversarial findings (must be addressed)\n${issues.join('\n')}`;
+    }
+
     else if (phase.kind === 'synthesize') {
       const scribe = resolveAgents(deps.roster, [phase.by ?? '@scribe'], deps.assignment)[0];
       if (scribe) { const out = await ask(deps, scribe, SYS.scribe, artifact, label); if (out) { artifact = out; record(label, phase.kind, out, scribe.id); } }
@@ -129,7 +155,12 @@ export async function runProtocol(protocol: Protocol, deps: RunDeps): Promise<Ru
     else if (phase.kind === 'gate') {
       const gate = resolveAgents(deps.roster, [phase.by ?? '@qa-gate'], deps.assignment)[0];
       if (!gate) continue;
-      const reply = await ask(deps, gate, SYS.gate, `Proposal to review:\n${artifact}`, label);
+      // blind: judge sees ONLY (task + the patch), never the discussion/consensus.
+      const diff = extractDiff(artifact);
+      const reviewBody = phase.blind
+        ? `Original task:\n${deps.task}\n\nProposed change:\n${diff ?? `(no diff fenced; proposal text follows)\n${artifact.slice(0, 6000)}`}`
+        : `Proposal to review:\n${artifact}`;
+      const reply = await ask(deps, gate, phase.blind ? SYS.blindJudge : SYS.gate, reviewBody, label);
       if (!reply) {
         const verdict: GateVerdict = { verdict: 'major', notes: `${gate.displayName} failed to respond; see agent-error event above.` };
         verdicts.push(verdict);
@@ -137,7 +168,7 @@ export async function runProtocol(protocol: Protocol, deps: RunDeps): Promise<Ru
         emit({ type: 'bounce', phase: label, verdict: verdict.verdict });
         return { status: 'bounced', phasesRun, transcript, artifact, verdicts, approved };
       }
-      const verdict = parseGateVerdict(reply);
+      const verdict = phase.blind ? parseBlindVerdict(reply) : parseGateVerdict(reply);
       verdicts.push(verdict);
       record(label, phase.kind, reply, gate.id);
       emit({ type: 'verdict', phase: label, agentId: gate.id, verdict: verdict.verdict });

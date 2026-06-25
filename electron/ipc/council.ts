@@ -8,7 +8,10 @@
 // refinement (the event stream already surfaces every verdict).
 
 import { ipcMain, BrowserWindow } from 'electron';
-import { randomUUID } from 'crypto';
+import { randomUUID, createHash } from 'crypto';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { getDb } from './db';
 import { getSetting } from './settings';
 import { appendAudit } from './security';
@@ -27,6 +30,67 @@ import { trace } from './trace';
 
 const signals = new Map<string, { aborted: boolean; controller: AbortController }>();
 
+interface McpServerCfg { name: string; command: string; args?: string[]; env?: Record<string, string>; enabled?: boolean }
+
+/** Write claw-deck's configured MCP servers to a temp file claude can consume
+ *  (--mcp-config). This is how an actor gets tools: code-brain (Atlas) + anything
+ *  the user adds in Settings → MCP Servers (e.g. a Blender MCP). Returns null if none. */
+function writeClaudeMcpConfig(): string | null {
+  try {
+    const servers = getSetting<McpServerCfg[]>('mcpServers', []).filter((s) => s && s.command && s.enabled !== false);
+    if (!servers.length) return null;
+    const cfg = { mcpServers: Object.fromEntries(servers.map((s) => [s.name, { command: s.command, args: s.args ?? [], env: s.env ?? {} }])) };
+    const p = path.join(os.tmpdir(), `claw-mcp-${randomUUID().slice(0, 8)}.json`);
+    fs.writeFileSync(p, JSON.stringify(cfg), 'utf8');
+    return p;
+  } catch { return null; }
+}
+
+/** Extra claude flags granting tool + filesystem reach: configured MCP servers,
+ *  the repo root, and any user-listed extra dirs (e.g. a Blender project folder). */
+function claudeExtraArgs(repo?: string): string[] {
+  const args: string[] = [];
+  const mcp = writeClaudeMcpConfig();
+  if (mcp) args.push('--mcp-config', mcp);
+  if (repo) args.push('--add-dir', repo);
+  for (const d of getSetting<string[]>('actorExtraDirs', [])) if (d) args.push('--add-dir', d);
+  return args;
+}
+
+/** Probe a repo for environment ground-truth (engine versions, plugins, stack)
+ *  so the council is TOLD the facts it can't infer — e.g. "Godot 4.3+, don't use
+ *  APIs removed before it." User edits the result before starting. */
+function detectEnv(repo: string): string {
+  const facts: string[] = [];
+  const read = (rel: string) => { try { return fs.readFileSync(path.join(repo, rel), 'utf8'); } catch { return ''; } };
+  const lsdir = (rel: string) => { try { return fs.readdirSync(path.join(repo, rel)); } catch { return [] as string[]; } };
+
+  const projGodot = read('project.godot');
+  if (projGodot) {
+    const feat = projGodot.match(/config\/features\s*=\s*PackedStringArray\(([^)]*)\)/);
+    const ver = feat?.[1].match(/"(\d+\.\d+)"/)?.[1];
+    facts.push(ver
+      ? `Engine: Godot ${ver}. Use ONLY GDScript/Godot APIs that exist in ${ver}; do NOT use APIs deprecated or removed before ${ver} (e.g. methods dropped after 4.0–4.2). Assume GDScript 2.0.`
+      : 'Engine: Godot (project.godot present).');
+    const addons = lsdir('addons');
+    if (addons.length) facts.push(`Godot addons/plugins installed: ${addons.join(', ')}.`);
+  }
+  const pkg = read('package.json');
+  if (pkg) { try { const j = JSON.parse(pkg); facts.push(`Node project. ${j.engines?.node ? `node ${j.engines.node}. ` : ''}Key deps: ${Object.keys(j.dependencies ?? {}).slice(0, 12).join(', ') || '(none)'}.`); } catch { /* ignore */ } }
+  if (read('pyproject.toml') || read('requirements.txt')) facts.push('Python project (pyproject.toml / requirements.txt present).');
+  if (read('Cargo.toml')) facts.push('Rust project (Cargo.toml).');
+  if (read('go.mod')) facts.push('Go project (go.mod).');
+  facts.push(`Host OS: ${process.platform} (${process.arch}).`);
+  return facts.join('\n');
+}
+
+/** Prepend authoritative environment facts to the task so agents can't drift onto stale APIs. */
+function withContext(task: string, context?: string): string {
+  return context && context.trim()
+    ? `[ENVIRONMENT — authoritative ground truth; do NOT contradict or assume otherwise]\n${context.trim()}\n\n---\n${task}`
+    : task;
+}
+
 function transportConfig(repo?: string, abortSignal?: AbortSignal): TransportConfig {
   // Local Ollama serves *:cloud models itself (no key). ollamaCloudUrl is an
   // OPTIONAL override for a genuinely remote OpenAI-compat endpoint; blank → local.
@@ -42,6 +106,7 @@ function transportConfig(repo?: string, abortSignal?: AbortSignal): TransportCon
     abortSignal,
     // default: use the claude-login subscription, not API credits → drop ANTHROPIC_API_KEY for claude spawns
     claudeUnsetEnv: getSetting('claudeUseApiKey', false) ? undefined : ['ANTHROPIC_API_KEY'],
+    claudeExtraArgs: claudeExtraArgs(repo),
     actorTimeoutMs: getSetting('actorTimeoutMs', 600000),
     cwd: repo,
   };
@@ -124,7 +189,7 @@ async function runEditingDelegate(agent: RosterAgent, prompt: string, wt: Worktr
     const binary = cfg.paths?.claude ?? agent.binary ?? 'claude';
     const r = await runCaptured({
       binary,
-      args: ['--print', '--input-format', 'text', '--permission-mode', 'bypassPermissions', '--no-session-persistence'],
+      args: ['--print', '--input-format', 'text', '--permission-mode', 'bypassPermissions', '--no-session-persistence', ...(cfg.claudeExtraArgs ?? [])],
       input: prompt,
       cwd: wt.dir,
       timeoutMs: cfg.actorTimeoutMs ?? 600000,
@@ -203,6 +268,16 @@ function makeExecutorHooks(repo: string, runId: string, abortSignal?: AbortSigna
       error: extra.error ?? null,
     });
   };
+  // Hash the captured diff + re-read the written artifact to confirm the transfer
+  // round-tripped (no truncation) before any verdict trusts it. Writes a .sha256
+  // sidecar next to changes.diff.
+  const sealArtifact = (diffPath: string, diff: string): { sha: string; bytes: number; roundTrip: boolean } => {
+    const sha = createHash('sha256').update(diff, 'utf8').digest('hex');
+    let roundTrip = false;
+    try { roundTrip = createHash('sha256').update(fs.readFileSync(diffPath, 'utf8'), 'utf8').digest('hex') === sha; } catch { roundTrip = false; }
+    try { fs.writeFileSync(`${diffPath}.sha256`, `sha256=${sha}\nbytes=${diff.length}\nroundTrip=${roundTrip}\n`); } catch { /* best-effort */ }
+    return { sha, bytes: diff.length, roundTrip };
+  };
   return {
     propose: async (plan, diff) => {
       if (!diff || !diff.trim()) return { ok: false, error: 'no diff to apply' };
@@ -212,8 +287,10 @@ function makeExecutorHooks(repo: string, runId: string, abortSignal?: AbortSigna
       if (!a.ok) return { ok: false, error: a.error };
       lastDiff = await captureDiff(c.wt);
       const paths = writeArtifacts(c.wt, plan, lastDiff);
+      const seal = sealArtifact(paths.diffPath, lastDiff);
       persist('proposed', paths);
-      appendAudit('council:proposal', { runId, diffBytes: lastDiff.length });
+      appendAudit('council:proposal', { runId, diffBytes: seal.bytes, diffSha: seal.sha, roundTrip: seal.roundTrip });
+      if (!seal.roundTrip) return { ok: false, error: `diff failed integrity round-trip (sha ${seal.sha.slice(0, 12)}, ${seal.bytes} bytes) — refusing to trust a truncated transfer` };
       return { ok: true, diff: lastDiff };
     },
     delegate: async (agent, prompt) => {
@@ -232,8 +309,10 @@ function makeExecutorHooks(repo: string, runId: string, abortSignal?: AbortSigna
         return { ok: false, error: `${agent.displayName} completed without modifying files` };
       }
       const paths = writeArtifacts(c.wt, `${prompt}\n\n## Delegate output\n\n${r.output ?? ''}`, lastDiff);
+      const seal = sealArtifact(paths.diffPath, lastDiff);
       persist('proposed', paths);
-      appendAudit('council:delegate', { runId, agentId: agent.id, diffBytes: lastDiff.length });
+      appendAudit('council:delegate', { runId, agentId: agent.id, diffBytes: seal.bytes, diffSha: seal.sha, roundTrip: seal.roundTrip });
+      if (!seal.roundTrip) return { ok: false, error: `delegate diff failed integrity round-trip (sha ${seal.sha.slice(0, 12)}, ${seal.bytes} bytes) — refusing to trust a truncated transfer` };
       return { ok: true, diff: lastDiff };
     },
     validate: async () => {
@@ -294,7 +373,12 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
       .finally(() => signals.delete(runId));
   }
 
-  ipcMain.handle('council:start', (_e, opts: { repo?: string; protocolId: string; assignment: SessionAssignment; task: string }) => {
+  ipcMain.handle('council:detectEnv', (_e, opts: { repo: string }) => {
+    if (!opts?.repo) return { ok: false, facts: '' };
+    try { return { ok: true, facts: detectEnv(opts.repo) }; } catch (e: any) { return { ok: false, facts: '', error: e?.message }; }
+  });
+
+  ipcMain.handle('council:start', (_e, opts: { repo?: string; protocolId: string; assignment: SessionAssignment; task: string; context?: string }) => {
     const protocol = PROTOCOLS[opts.protocolId];
     if (!protocol) return { ok: false, error: `unknown protocol: ${opts.protocolId}` };
     const roster = getSetting<RosterAgent[]>('fusionRoster', []);
@@ -302,17 +386,18 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
     if (!va.ok) return { ok: false, error: `invalid assignment${va.missing.length ? ` (unknown ids: ${va.missing.join(', ')})` : ' (need ≥1 panelist + judge + qa-gate)'}` };
 
     const runId = `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
+    const task = withContext(opts.task, opts.context);
     getDb().prepare('INSERT INTO council_runs(run_id, repo, protocol, task, assignment, status, started) VALUES(?,?,?,?,?,?,?)')
-      .run(runId, opts.repo ?? null, protocol.id, opts.task, JSON.stringify(opts.assignment), 'running', Date.now());
+      .run(runId, opts.repo ?? null, protocol.id, task, JSON.stringify(opts.assignment), 'running', Date.now());
     appendAudit('council:start', { runId, protocol: protocol.id, repo: opts.repo ?? null });
-    trace('council:start', { runId, protocol: protocol.id, repo: opts.repo ?? null, assignment: opts.assignment, taskBytes: opts.task.length });
+    trace('council:start', { runId, protocol: protocol.id, repo: opts.repo ?? null, assignment: opts.assignment, taskBytes: task.length });
 
-    launchCouncilRun(runId, { repo: opts.repo, protocol, roster, assignment: opts.assignment, task: opts.task });
+    launchCouncilRun(runId, { repo: opts.repo, protocol, roster, assignment: opts.assignment, task });
     return { ok: true, runId };
   });
 
   // Autonomous goal loop (Phase 5): branch → run protocol → checkpoint → goal-check → repeat.
-  ipcMain.handle('council:startLoop', (_e, opts: { repo: string; protocolId: string; assignment: SessionAssignment; goal: string; maxIterations?: number; costCeiling?: number }) => {
+  ipcMain.handle('council:startLoop', (_e, opts: { repo: string; protocolId: string; assignment: SessionAssignment; goal: string; maxIterations?: number; costCeiling?: number; context?: string }) => {
     if (!opts?.repo) return { ok: false, error: 'autonomous loop needs a workspace (for checkpoints)' };
     const protocol = PROTOCOLS[opts.protocolId];
     if (!protocol) return { ok: false, error: `unknown protocol: ${opts.protocolId}` };
@@ -321,6 +406,7 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
     if (!va.ok) return { ok: false, error: `invalid assignment${va.missing.length ? ` (unknown ids: ${va.missing.join(', ')})` : ''}` };
 
     const runId = `loop-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
+    const goal = withContext(opts.goal, opts.context);
     const controller = new AbortController();
     const signal = { aborted: false, controller };
     signals.set(runId, signal);
@@ -328,13 +414,13 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
     const checker = resolveAgents(roster, ['@judge'], opts.assignment)[0];
     const db = getDb();
     db.prepare('INSERT INTO council_runs(run_id, repo, protocol, task, assignment, status, started) VALUES(?,?,?,?,?,?,?)')
-      .run(runId, opts.repo, protocol.id, opts.goal, JSON.stringify(opts.assignment), 'running', Date.now());
+      .run(runId, opts.repo, protocol.id, goal, JSON.stringify(opts.assignment), 'running', Date.now());
     appendAudit('council:loopStart', { runId, protocol: protocol.id, repo: opts.repo, maxIterations: opts.maxIterations ?? 5 });
 
     const CHECKER_SYS = 'You verify whether a coding goal is satisfied. Reply MET only with concrete evidence; otherwise reply NOT MET and the single most useful next step. Default to NOT MET when uncertain.';
 
     void runAutoloop({
-      goal: opts.goal,
+      goal,
       maxIterations: opts.maxIterations ?? 5,
       costCeiling: opts.costCeiling,
       signal,
