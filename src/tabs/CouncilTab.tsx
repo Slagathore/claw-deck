@@ -55,6 +55,7 @@ export default function CouncilTab() {
             </div>
             {runId && (questions[runId]?.length ?? 0) > 0 && <ProloguePanel key={runId} runId={runId} questions={questions[runId]} onSubmitted={() => { clearQuestions(runId); markRunning(runId); }} />}
             {runId && !running[runId] && lastFinishedStatus(events[runId]) === 'bounced' && <BounceRecovery runId={runId} onSent={() => markRunning(runId)} />}
+            {runId && !running[runId] && isTerminated(events[runId]) && <MethodResultPanel runId={runId} repo={active} />}
             {runId && !running[runId] && isTerminated(events[runId]) && <PostRunPanel runId={runId} roster={roster} />}
             <DebateTheater events={runId ? (events[runId] ?? []) : []} live={runId ? live[runId] : undefined} running={runId ? running[runId] : false} nameOf={nameOf} />
           </div>
@@ -132,7 +133,10 @@ function FusionMethods({ repo }: { repo: string }) {
   const [focus, setFocus] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [showElig, setShowElig] = useState(false);
+  const [elig, setElig] = useState<{ id: string; displayName: string; key: string; eligible: string[]; notEligible: string[]; maxCalls?: number; optional: boolean }[]>([]);
   useEffect(() => { window.api.council.methods().then((r) => { if (r.ok) setMethods(r.methods); }); }, []);
+  useEffect(() => { if (showElig && !elig.length) window.api.council.roleEligibility().then((r) => { if (r.ok) setElig(r.rows); }); }, [showElig, elig.length]);
   const sel = methods.find((m) => m.id === methodId);
   const needsFocus = methodId === 'assay' || methodId === 'prospect';
   async function run() {
@@ -156,6 +160,51 @@ function FusionMethods({ repo }: { repo: string }) {
         <button onClick={run} disabled={busy} style={{ borderColor: 'var(--good)', color: 'var(--good)' }}>{busy ? 'Starting…' : '▶ Run method'}</button>
       </div>
       {err && <div className="label" style={{ color: 'var(--bad)' }}>{err}</div>}
+      <div className="row" style={{ cursor: 'pointer', justifyContent: 'space-between' }} onClick={() => setShowElig((x) => !x)} title="Methods auto-assign advisors from your roster by strength using this table. It does NOT affect the manual Session config above.">
+        <span className="label">🧬 Role eligibility (who methods auto-assign to)</span><span className="label">{showElig ? '▾' : '▸'}</span>
+      </div>
+      {showElig && (
+        <div className="col" style={{ gap: 4, paddingLeft: 6 }}>
+          {elig.map((r) => (
+            <div key={r.id} style={{ fontSize: 11, ...WRAP }}>
+              <strong>{r.displayName}</strong> <span style={{ color: 'var(--muted)' }}>({r.key}{r.maxCalls ? `, ≤${r.maxCalls} calls` : ''}{r.optional ? ', optional' : ''})</span>: {r.eligible.join(', ') || '—'}
+              {r.notEligible.length ? <span style={{ color: 'var(--bad)' }}> · never: {r.notEligible.join(', ')}</span> : null}
+            </div>
+          ))}
+          <div className="label">Existing Session protocols (Council/Crucible/…) ignore this — they use your manual assignment.</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** §5 — a finished method run: its report + scores + the end-prompt, with a chain-to-Foundry
+ *  button that pre-seeds Foundry's P0 from this run (no re-ingest). */
+function MethodResultPanel({ runId, repo }: { runId: string; repo: string }) {
+  const { startRun } = useCouncil();
+  const [data, setData] = useState<{ isMethod: boolean; methodId?: string; result?: { report?: string; scores?: { agentId: string; verdict: string }[]; endPrompt?: string; seed?: { task: string; focus?: string; contract: string; artifacts: string[] } } | null } | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { window.api.council.methodResult(runId).then((r) => setData(r.ok ? r : null)); }, [runId]);
+  if (!data?.isMethod) return null;
+  const res = data.result ?? {};
+  const canChain = ['assay', 'prospect', 'foundry-design'].includes(data.methodId ?? '');
+  async function chain() {
+    setBusy(true);
+    const r = await window.api.council.runMethod({ repo, methodId: 'foundry', task: `Build from the ${data!.methodId} result (seed attached).`, seed: res.seed });
+    setBusy(false);
+    if (r.ok && r.runId) startRun(repo, r.runId);
+  }
+  return (
+    <div className="card col" style={{ gap: 6 }}>
+      <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'wrap' }}><strong>⚗ Method result — {data.methodId}</strong>{res.scores?.length ? <span className="label">{res.scores.map((s) => s.verdict).join(' · ')}</span> : null}</div>
+      {res.report && <pre style={{ margin: 0, fontSize: 12, maxHeight: 360, overflow: 'auto', ...WRAP }}>{res.report}</pre>}
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+        <span className="label">{res.endPrompt}</span>
+        <div className="row" style={{ gap: 6 }}>
+          {res.report && <button onClick={() => navigator.clipboard.writeText(res.report ?? '')}>Copy report</button>}
+          {canChain && <button onClick={chain} disabled={busy} style={{ borderColor: 'var(--good)', color: 'var(--good)' }}>{busy ? 'Starting…' : '→ Foundry (seeded)'}</button>}
+        </div>
+      </div>
     </div>
   );
 }

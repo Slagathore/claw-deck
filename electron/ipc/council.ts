@@ -21,7 +21,9 @@ import { METHODS, runMethod, printMethodCard } from '../council/methods';
 import { runAutoloop } from '../council/autoloop';
 import { makeTransport, TransportConfig } from '../council/transport';
 import { buildToolSet, ToolSet, McpServerSpec } from '../council/mcpClient';
-import { atlasDbPath } from '../atlas/db';
+import { atlasDbPath, openAtlas, asQueryable } from '../atlas/db';
+import { locate } from '../atlas/query';
+import { advisorKey, ADVISOR_ELIGIBILITY } from '../council/roles';
 import { RosterAgent, SessionAssignment, validateAssignment, resolveAgents } from '../council/agents';
 import { createWorktree, captureDiff, writeArtifacts, applyToLiveTree, removeWorktree, Worktree } from '../executor/worktree';
 import { applyDiffToWorktree } from '../executor/applyDiff';
@@ -711,8 +713,28 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
     methods: Object.values(METHODS).map((m) => ({ id: m.id, name: m.name, use: m.use, endPrompt: m.endPrompt, budget: m.budget, card: printMethodCard(m) })),
   }));
 
+  // The stored result of a finished method run (report / scores / seed / end-prompt) + whether
+  // it was a method (for the chaining panel). Returns isMethod=false for plain council runs.
+  ipcMain.handle('council:methodResult', (_e, opts: { runId: string }) => {
+    const row = getDb().prepare('SELECT protocol, status, result FROM council_runs WHERE run_id=?').get(opts.runId) as { protocol?: string; status?: string; result?: string } | undefined;
+    if (!row) return { ok: false, isMethod: false };
+    const isMethod = !!row.protocol && row.protocol in METHODS;
+    let result: any = null;
+    try { result = row.result ? JSON.parse(row.result) : null; } catch { /* none */ }
+    return { ok: true, isMethod, methodId: row.protocol, status: row.status, result };
+  });
+
+  // §1.1 — read-only view of the role-eligibility table for the CURRENT roster (the GUI).
+  ipcMain.handle('council:roleEligibility', () => {
+    const roster = getSetting<RosterAgent[]>('fusionRoster', []);
+    return {
+      ok: true,
+      rows: roster.map((a) => { const e = ADVISOR_ELIGIBILITY[advisorKey(a)]; return { id: a.id, displayName: a.displayName, key: advisorKey(a), eligible: e.eligible, notEligible: e.notEligible, context: e.context, maxCalls: e.maxCalls, optional: !!e.optional }; }),
+    };
+  });
+
   // §3 — run a fusion method (foundry / foundry-design / assay / prospect / relay / scatter).
-  ipcMain.handle('council:runMethod', (_e, opts: { repo?: string; methodId: string; task: string; focus?: string; context?: string }) => {
+  ipcMain.handle('council:runMethod', (_e, opts: { repo?: string; methodId: string; task: string; focus?: string; context?: string; seed?: { contract?: string; artifacts?: string[]; focus?: string } }) => {
     const method = METHODS[opts.methodId];
     if (!method) return { ok: false, error: `unknown method: ${opts.methodId}` };
     const roster = getSetting<RosterAgent[]>('fusionRoster', []);
@@ -721,8 +743,8 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
     const db = getDb();
     db.prepare('INSERT INTO council_runs(run_id, repo, protocol, task, assignment, status, started) VALUES(?,?,?,?,?,?,?)')
       .run(runId, opts.repo ?? null, method.id, task, '{}', 'running', Date.now());
-    appendAudit('council:runMethod', { runId, method: method.id, repo: opts.repo ?? null });
-    trace('council:runMethod', { runId, method: method.id, repo: opts.repo ?? null, focus: opts.focus });
+    appendAudit('council:runMethod', { runId, method: method.id, repo: opts.repo ?? null, seeded: !!opts.seed });
+    trace('council:runMethod', { runId, method: method.id, repo: opts.repo ?? null, focus: opts.focus, seeded: !!opts.seed });
 
     const controller = new AbortController();
     const signal = { aborted: false, controller };
@@ -732,19 +754,30 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
       send(runId, { type: 'phase', phase: method.name, kind: 'method' });
       send(runId, { type: 'agent', phase: method.name, content: printMethodCard(method) });
       const transport = makeTransport(transportConfig(opts.repo, controller.signal));
+      // §3.3/§3.4 — Atlas-first ingest: query the code-brain DB if it exists, else null
+      // (the engine logs a WARN and falls back to its doc/grep walk).
+      const atlasQuery = opts.repo && fs.existsSync(atlasDbPath(opts.repo))
+        ? async (q: string) => {
+            try {
+              const hits = locate(asQueryable(openAtlas(opts.repo!)), q, 15);
+              return hits.length ? hits.map((h) => `${h.location} — ${h.name} (${h.kind}, ${h.status})`).join('\n') : null;
+            } catch { return null; }
+          }
+        : undefined;
       // build capability: delegate to an editing actor in a worktree (degrades if the
-      // assigned builder can't edit, or there's no repo).
+      // assigned builder can't edit, or there's no repo). Asks for a CHANGE_PLAN.md first.
       const build = opts.repo
         ? async (artifact: string, builder: RosterAgent) => {
             if (!builder.capabilities?.canEdit) return { ok: false, error: `${builder.displayName} cannot edit files` };
             const ex = makeExecutorHooks(opts.repo!, `method-${runId}`, controller.signal);
             if (!ex.delegate) return { ok: false, error: 'no delegate capability' };
-            const r = await ex.delegate(builder, `Implement the following into the working tree directly. Keep changes focused; when done, summarize what changed.\n\n${artifact}`);
+            const r = await ex.delegate(builder, `Implement the following into the working tree directly.\nFIRST write a CHANGE_PLAN.md mapping what you will change and why. THEN make the changes, keeping them focused. When done, summarize what changed.\n\n${artifact}`);
             return { ok: r.ok, diff: r.diff, error: r.error };
           }
         : undefined;
+      const runDir = opts.repo ? path.join(opts.repo, '.fusion', `method-${runId}`) : undefined;
       try {
-        const res = await runMethod(method, { task, focus: opts.focus, roster, transport, signal, emit: (ev) => send(runId, ev), build });
+        const res = await runMethod(method, { task, focus: opts.focus ?? opts.seed?.focus, roster, transport, signal, emit: (ev) => send(runId, ev), build, atlasQuery, runDir, seed: opts.seed });
         const status = res.degraded ? 'completed-degraded' : 'completed';
         db.prepare('UPDATE council_runs SET status=?, finished=?, artifact=?, result=? WHERE run_id=?')
           .run(status, Date.now(), res.artifact, JSON.stringify({ report: res.report, scores: res.scores, warnings: res.warnings, findings: res.findings, seed: res.seed, endPrompt: method.endPrompt }), runId);

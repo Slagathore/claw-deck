@@ -10,7 +10,7 @@ import { RosterAgent, Msg } from './agents';
 import { TransportFn, CouncilEvent } from './run';
 import { FusionRole, pickAdvisors, Budget, makeBudget } from './roles';
 import { lintArtifact, formatFindings } from './fusionLint';
-import { boundedRepair, runPhase } from './fusionInfra';
+import { boundedRepair, runPhase, sha12, echoMatches, artifactStore } from './fusionInfra';
 
 // ----------------------------- declarative method spec -----------------------------
 
@@ -63,6 +63,8 @@ export interface MethodDeps {
   emit?: (ev: CouncilEvent) => void;
   signal?: { aborted: boolean };
   budget?: Budget;
+  runDir?: string;                      // §1.3 — write each phase artifact here (pass-by-reference)
+  seed?: { contract?: string; artifacts?: string[]; focus?: string }; // §5 chaining — pre-seed P0, skip re-ingest
   // Optional capabilities — degrade gracefully when absent (§1.2 no-abort).
   compileCheck?: (artifact: string) => Promise<{ ok: boolean; output: string }>;
   goldenTests?: (artifact: string, contract: string) => Promise<{ ok: boolean; output: string }>;
@@ -127,6 +129,20 @@ function assign(deps: MethodDeps, role: FusionRole, count: number, exclude: stri
   return picks;
 }
 
+/** §1.3.3 — ask a reviewer/judge that MUST echo `REVIEWING: <sha12>` so we can detect a
+ *  truncated handoff. On a mismatch (or a missing header) we re-feed the full artifact ONCE
+ *  and log it as a plumbing warning, never as a content verdict. */
+async function askVerified(deps: MethodDeps, budget: Budget, agent: RosterAgent, system: string, artifact: string, base: string, phase: string): Promise<string | null> {
+  const sha = sha12(artifact);
+  const hdr = `You MUST begin your reply with exactly "REVIEWING: ${sha}" (then a newline) to confirm you received the COMPLETE artifact.`;
+  let reply = await call(deps, budget, agent, system, `${base}\n\n${hdr}`, phase);
+  if (reply && !echoMatches(reply, artifact)) {
+    deps.emit?.({ type: 'warn', phase, content: `${agent.displayName} did not echo REVIEWING:${sha} — possible truncated handoff; re-feeding the full artifact once`, ok: true });
+    reply = await call(deps, budget, agent, system, `${base}\n\n${hdr}\nYour previous reply omitted the header — you may have seen a truncated copy. Here is the full artifact again; start with the header.`, `${phase} · re-feed`);
+  }
+  return reply;
+}
+
 export async function runMethod(method: Method, deps: MethodDeps): Promise<MethodResult> {
   const budget = deps.budget ?? makeBudget();
   const warnings: string[] = [];
@@ -134,19 +150,24 @@ export async function runMethod(method: Method, deps: MethodDeps): Promise<Metho
   // capture downgrade/coverage warnings emitted by call()/assign() into the result
   const emit = (ev: CouncilEvent) => { if (ev.type === 'warn' && ev.content) warnings.push(ev.content); deps.emit?.(ev); };
   const ldeps: MethodDeps = { ...deps, emit };
+  const store = deps.runDir ? artifactStore(deps.runDir) : undefined;
   let degraded = false;
-  let contract = '';
-  let artifact = '';
+  // §5 chaining — a seed pre-loads the contract + prior artifacts so we don't re-ingest.
+  let contract = deps.seed?.contract ?? '';
+  let artifact = deps.seed?.artifacts?.length ? deps.seed.artifacts.join('\n\n') : '';
   let map = '';
   let findings: string[] = [];
   const scores: { agentId: string; verdict: string }[] = [];
   let lastAuthors: string[] = [];
+  let lastWritten = '';
   let diff: string | undefined;
+  if (deps.seed) emit({ type: 'agent', phase: method.name, kind: 'seed', content: `Seeded from a prior run — skipping re-ingest. ${deps.seed.contract ? 'Contract carried forward.' : ''}` });
 
   deps.emit?.({ type: 'phase', phase: method.name, kind: 'method' });
 
   for (const step of method.phases) {
     if (aborted(deps)) break;
+    if (deps.seed && step.kind === 'ingest') { emit({ type: 'agent', phase: step.label, kind: 'skip', content: '(skipped — seeded from prior run)' }); continue; }
     deps.emit?.({ type: 'phase', phase: step.label, kind: step.kind });
 
     const outcome = await runPhase<void>(step.label, async () => {
@@ -235,7 +256,7 @@ export async function runMethod(method: Method, deps: MethodDeps): Promise<Metho
           const code = assign(ldeps, 'qa-code', 1, [], warnings, step.label);
           const base = `Task:\n${deps.task}\n\nArtifact:\n${artifact}`;
           const reviewers = [...whole, ...code];
-          const replies = await Promise.all(reviewers.map((a, i) => call(ldeps, budget, a, i < whole.length ? SYS.qaWhole : SYS.qaCode, base, step.label)));
+          const replies = await Promise.all(reviewers.map((a, i) => askVerified(ldeps, budget, a, i < whole.length ? SYS.qaWhole : SYS.qaCode, artifact, base, step.label)));
           const blocking = replies.map((r, i) => r && !/NO_BLOCKING_ISSUES/i.test(r) ? `- (${reviewers[i].displayName}) ${r.replace(/\s+/g, ' ').slice(0, 400)}` : '').filter(Boolean);
           if (blocking.length) { findings.push(...blocking); artifact += `\n\n## QA blocking (one bounce-fix)\n${blocking.join('\n')}`; }
           return;
@@ -252,7 +273,7 @@ export async function runMethod(method: Method, deps: MethodDeps): Promise<Metho
           const n = step.judges ?? 1;
           const judges = assign(ldeps, n >= 3 ? 'judge' : 'judge-primary', n, [], warnings, step.label);
           const base = `Task/contract:\n${contract || deps.task}\n\nArtifact:\n${artifact}`;
-          const replies = await Promise.all(judges.map((a) => call(ldeps, budget, a, SYS.judge, base, step.label)));
+          const replies = await Promise.all(judges.map((a) => askVerified(ldeps, budget, a, SYS.judge, artifact, base, step.label)));
           replies.forEach((r, i) => { if (r) { const m = r.match(/SCORE:\s*(\d+)/i); const verdict = m ? `score ${m[1]}` : 'unscored'; scores.push({ agentId: judges[i].id, verdict }); deps.emit?.({ type: 'verdict', phase: step.label, agentId: judges[i].id, verdict }); } });
           const nums = scores.map((s) => Number(s.verdict.replace(/\D/g, ''))).filter((x) => !Number.isNaN(x));
           const variance = nums.length > 1 ? Math.max(...nums) - Math.min(...nums) : 0;
@@ -279,6 +300,8 @@ export async function runMethod(method: Method, deps: MethodDeps): Promise<Metho
     }, { fallback: undefined, retries: 1, onWarn });
 
     if (outcome.degraded) degraded = true;
+    // §1.3 — persist each phase's artifact by reference (path + sha), don't inline-truncate.
+    if (store && artifact && artifact !== lastWritten) { try { await store.write(step.label, 'artifact', artifact); lastWritten = artifact; } catch { /* best-effort */ } }
     deps.emit?.({ type: step.kind === 'lint-gate' ? 'lint' : 'agent', phase: `${step.label} ✓`, kind: step.kind, content: '' });
   }
 

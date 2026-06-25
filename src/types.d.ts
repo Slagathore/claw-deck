@@ -98,7 +98,9 @@ declare global {
       council: {
         start: (opts: { repo?: string; protocolId: string; assignment: import('../electron/council/agents').SessionAssignment; task: string; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number }; prologue?: boolean; personas?: Record<string, string>; forceBlind?: boolean }) => Promise<{ ok: boolean; runId?: string; awaiting?: boolean; error?: string }>;
         methods: () => Promise<{ ok: boolean; methods: { id: string; name: string; use: string; endPrompt: string; budget: string; card: string }[] }>;
-        runMethod: (opts: { repo?: string; methodId: string; task: string; focus?: string; context?: string }) => Promise<{ ok: boolean; runId?: string; error?: string }>;
+        runMethod: (opts: { repo?: string; methodId: string; task: string; focus?: string; context?: string; seed?: { contract?: string; artifacts?: string[]; focus?: string } }) => Promise<{ ok: boolean; runId?: string; error?: string }>;
+        methodResult: (runId: string) => Promise<{ ok: boolean; isMethod: boolean; methodId?: string; status?: string; result?: { report?: string; scores?: { agentId: string; verdict: string }[]; warnings?: string[]; findings?: string[]; seed?: { task: string; focus?: string; contract: string; artifacts: string[] }; endPrompt?: string } | null }>;
+        roleEligibility: () => Promise<{ ok: boolean; rows: { id: string; displayName: string; key: string; eligible: string[]; notEligible: string[]; context: string; maxCalls?: number; optional: boolean }[] }>;
         startLoop: (opts: { repo: string; protocolId: string; assignment: import('../electron/council/agents').SessionAssignment; goal: string; maxIterations?: number; costCeiling?: number; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number } }) => Promise<{ ok: boolean; runId?: string; error?: string }>;
         answerQuestions: (runId: string, answers: string[]) => Promise<{ ok: boolean; runId?: string; error?: string }>;
         detectEnv: (repo: string) => Promise<{ ok: boolean; facts: string; error?: string }>;

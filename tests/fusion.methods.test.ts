@@ -88,6 +88,24 @@ describe('§3 runMethod engine', () => {
     expect(r.report).toBeTruthy();
   });
 
+  it('§5 chaining: a seed pre-loads the contract and skips re-ingest', async () => {
+    const seenPhases: string[] = [];
+    const r = await runMethod(METHODS.assay, deps({
+      seed: { contract: 'CARRIED CONTRACT from a prior run', artifacts: ['prior artifact body'] },
+      emit: (ev) => { if (ev.type === 'phase') seenPhases.push(ev.phase ?? ''); },
+    }));
+    expect(r.contract).toContain('CARRIED CONTRACT');           // contract carried forward
+    expect(r.report).toContain('CARRIED CONTRACT');
+    expect(seenPhases).not.toContain('Ingest');                  // ingest step skipped
+  });
+
+  it('§1.3 REVIEWING echo: a judge that omits the header triggers a re-feed warning (not a verdict)', async () => {
+    // `happy` never echoes REVIEWING → the orchestrator re-feeds once and logs a plumbing warn.
+    const r = await runMethod(METHODS.foundry, deps());
+    expect(r.warnings.some((w) => /did not echo REVIEWING/.test(w))).toBe(true);
+    expect(r.scores.length).toBeGreaterThanOrEqual(1);          // still scored after the re-feed
+  });
+
   it('respects the trusted-call budget: an exhausted Claude budget downgrades the consolidate step', async () => {
     // pre-exhaust Claude so the consolidator (Claude) is skipped, not errored
     const { makeBudget } = await import('../electron/council/roles');
