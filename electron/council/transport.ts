@@ -26,6 +26,7 @@ export interface TransportConfig {
   agentOptions?: Record<string, { temperature?: number; top_p?: number }>; // per-agent sampling dials (e.g. run hot)
   tools?: ToolDef[];         // read-only MCP tools offered to cloud agents (Atlas + Context7)
   callTool?: (name: string, args: any) => Promise<string>;
+  toolCallCap?: number;      // max tool-call iterations before forcing a final answer
   cwd?: string;
 }
 
@@ -101,19 +102,24 @@ async function chatCompat(baseUrl: string, key: string | undefined, model: strin
 /** Tool-calling agent loop for cloud models (non-streaming per turn). Sends the
  *  read-only tools, executes any tool_calls against the MCP servers, feeds results
  *  back, and loops until the model answers (or the iteration cap). */
-async function chatCompatTools(baseUrl: string, key: string | undefined, model: string, messages: Msg[], signal: AbortSignal | undefined, onDelta: OnDelta | undefined, sample: SampleOpts | undefined, tools: ToolDef[], callTool: (n: string, a: any) => Promise<string>, maxIters = 6): Promise<string> {
+async function chatCompatTools(baseUrl: string, key: string | undefined, model: string, messages: Msg[], signal: AbortSignal | undefined, onDelta: OnDelta | undefined, sample: SampleOpts | undefined, tools: ToolDef[], callTool: (n: string, a: any) => Promise<string>, maxIters = 12): Promise<string> {
   const url = `${baseUrl.replace(/\/$/, '')}/chat/completions`;
   const auth = localAuth(baseUrl, key);
   const msgs: any[] = [...messages];
   for (let iter = 0; iter < maxIters; iter++) {
-    const body: Record<string, unknown> = { model, messages: msgs, stream: false, tools, tool_choice: 'auto' };
+    // On the final allowed iteration, withhold tools + tell the model to answer now
+    // ("do your best from here, friend") rather than dead-ending at the cap.
+    const last = iter === maxIters - 1;
+    if (last) { onDelta?.('\n  ⚠️ tool-call limit reached — wrapping up with what we have\n'); msgs.push({ role: 'user', content: 'You have reached the tool-call limit. Do NOT call any more tools. Using everything you have gathered, give your best, COMPLETE answer now.' }); }
+    const body: Record<string, unknown> = { model, messages: msgs, stream: false };
+    if (!last) { body.tools = tools; body.tool_choice = 'auto'; }
     if (sample?.temperature != null) body.temperature = sample.temperature;
     if (sample?.top_p != null) body.top_p = sample.top_p;
     const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(auth ? { Authorization: `Bearer ${auth}` } : {}) }, body: JSON.stringify(body), signal });
     if (!r.ok) throw new Error(`HTTP ${r.status} ${(await r.text().catch(() => '')).slice(0, 200)}`);
     const j: any = await r.json();
     const m = j.choices?.[0]?.message ?? {};
-    const calls = Array.isArray(m.tool_calls) ? m.tool_calls : [];
+    const calls = !last && Array.isArray(m.tool_calls) ? m.tool_calls : [];
     if (calls.length) {
       msgs.push({ role: 'assistant', content: m.content ?? '', tool_calls: calls });
       for (const tc of calls) {
@@ -130,7 +136,7 @@ async function chatCompatTools(baseUrl: string, key: string | undefined, model: 
     if (onDelta && content) onDelta(content);
     return content;
   }
-  return '(tool loop hit the iteration cap)';
+  return '(no answer produced)';
 }
 
 function renderPrompt(messages: Msg[]): string {
@@ -166,7 +172,7 @@ async function openclawPrompt(binary: string, model: string | undefined, message
 export function makeTransport(cfg: TransportConfig): (agent: RosterAgent, messages: Msg[], onDelta?: OnDelta) => Promise<string> {
   const tooled = !!(cfg.tools && cfg.tools.length && cfg.callTool);
   const cloud = (baseUrl: string, key: string | undefined, model: string, messages: Msg[], onDelta?: OnDelta, sample?: SampleOpts) =>
-    tooled ? chatCompatTools(baseUrl, key, model, messages, cfg.abortSignal, onDelta, sample, cfg.tools!, cfg.callTool!) : chatCompat(baseUrl, key, model, messages, cfg.abortSignal, onDelta, sample);
+    tooled ? chatCompatTools(baseUrl, key, model, messages, cfg.abortSignal, onDelta, sample, cfg.tools!, cfg.callTool!, cfg.toolCallCap ?? 12) : chatCompat(baseUrl, key, model, messages, cfg.abortSignal, onDelta, sample);
   return async (agent, messages, onDelta) => {
     const sample = cfg.agentOptions?.[agent.id];
     switch (agent.transport) {

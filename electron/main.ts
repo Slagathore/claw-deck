@@ -17,7 +17,7 @@ import { registerExtensionHandlers } from './ipc/extensions';
 import { registerSkillHandlers } from './ipc/skills';
 import { registerAtlasHandlers, closeAllAtlasWatchers } from './ipc/atlas';
 import { registerExecutorHandlers } from './ipc/executor';
-import { registerCouncilHandlers } from './ipc/council';
+import { registerCouncilHandlers, cancelAllCouncils } from './ipc/council';
 import { registerBridgeHandlers } from './ipc/bridge';
 import { resolveCliBinary } from './ipc/cliResolve';
 import { ensureTraceFile, tracePath } from './ipc/trace';
@@ -92,9 +92,8 @@ function createWindow() {
   if (isDev) {
     // `npm run dev` runs the Vite server; `npm start` builds to dist/ with no
     // server. Try the dev server and fall back to the built file when it isn't up.
-    mainWindow.loadURL(devServerUrl)
-      .then(() => mainWindow?.webContents.openDevTools({ mode: 'detach' }))
-      .catch(() => mainWindow?.loadFile(indexFile));
+    // DevTools no longer auto-opens — toggle it with Ctrl+Shift+I / F12 when needed.
+    mainWindow.loadURL(devServerUrl).catch(() => mainWindow?.loadFile(indexFile));
   } else {
     mainWindow.loadFile(indexFile);
   }
@@ -272,10 +271,11 @@ if (!gotLock) {
   app.on('second-instance', () => showWindow());
 }
 
-app.on('before-quit', () => { quitting = true; });
+app.on('before-quit', () => { quitting = true; cancelAllCouncils(); });
 
 app.on('window-all-closed', () => {
   // With close-to-tray we generally never reach here. Only fires if tray creation failed.
+  cancelAllCouncils();
   stopAllMcp();
   closeAllAtlasWatchers();
   closeAllAtlas();

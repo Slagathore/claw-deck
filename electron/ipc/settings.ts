@@ -16,6 +16,7 @@ export const DEFAULTS = {
   actorTimeoutMs: 600000,                      // per-call timeout for agentic CLI actors (claude/codex/openclaw); they do full turns and can take minutes
   actorExtraDirs: [] as string[],              // extra dirs granted to claude via --add-dir (e.g. a Blender project folder)
   panelistTools: true,                         // give cloud panelists READ-ONLY MCP tools (Atlas code-brain + Context7) so they can look up real APIs
+  toolCallCap: 12,                             // max tool-call rounds before a cloud agent is told to answer with what it has
   councilEnvByWorkspace: {} as Record<string, string>, // persisted "environment / ground truth" facts per workspace
   clawhubPath: 'clawhub',
   ollamaCloudUrl: '',                          // blank = use local Ollama (it serves *:cloud models itself); set only for a remote OpenAI-compat endpoint

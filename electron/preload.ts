@@ -108,6 +108,7 @@ contextBridge.exposeInMainWorld('api', {
     answerQuestions: (runId: string, answers: string[]) => invoke('council:answerQuestions', { runId, answers }),
     detectEnv: (repo: string) => invoke('council:detectEnv', { repo }),
     resume: (runId: string) => invoke('council:resume', { runId }),
+    continueBounced: (runId: string, target: 'group' | 'qa', note?: string) => invoke('council:continueBounced', { runId, target, note }),
     cancel: (runId: string) => invoke('council:cancel', { runId }),
     list: () => invoke('council:list'),
     probeAgent: (agent: any, repo?: string) => invoke('council:probeAgent', { agent, repo }),

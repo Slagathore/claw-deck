@@ -32,6 +32,12 @@ import { trace } from './trace';
 
 const signals = new Map<string, { aborted: boolean; controller: AbortController }>();
 
+/** Abort every in-flight council (kills CLI children + disposes tool clients + aborts HTTP). Called on quit. */
+export function cancelAllCouncils(): void {
+  for (const s of signals.values()) { s.aborted = true; try { s.controller.abort(); } catch { /* already aborted */ } }
+  signals.clear();
+}
+
 interface McpServerCfg { name: string; command: string; args?: string[]; env?: Record<string, string>; enabled?: boolean }
 
 /** Write claw-deck's configured MCP servers to a temp file claude can consume
@@ -151,6 +157,7 @@ function transportConfig(repo?: string, abortSignal?: AbortSignal, agentOptions?
     agentOptions,
     tools: toolset?.tools,
     callTool: toolset?.call,
+    toolCallCap: getSetting('toolCallCap', 12),
     cwd: repo,
   };
 }
@@ -564,6 +571,40 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
     }).finally(() => signals.delete(runId));
 
     return { ok: true, runId };
+  });
+
+  // A bounced final is not a dead end: send it back to the group (re-debate) or
+  // the QA/judge (re-evaluate), optionally with an open-ended user clarification.
+  ipcMain.handle('council:continueBounced', (_e, opts: { runId: string; target: 'group' | 'qa'; note?: string }) => {
+    const db = getDb();
+    const row = db.prepare('SELECT * FROM council_runs WHERE run_id=?').get(opts.runId) as any;
+    if (!row) return { ok: false, error: 'unknown run' };
+    if (row.status === 'running') return { ok: false, error: 'session is already running' };
+    const protocol = PROTOCOLS[row.protocol];
+    if (!protocol) return { ok: false, error: `unknown protocol: ${row.protocol}` };
+    const roster = getSetting<RosterAgent[]>('fusionRoster', []);
+    let assignment: SessionAssignment;
+    try { assignment = JSON.parse(row.assignment); } catch { return { ok: false, error: 'corrupt assignment' }; }
+    const gateIndex = Math.min(row.phase_index ?? protocol.phases.length, protocol.phases.length);
+    let resumeIndex = gateIndex; // 'qa' → re-run the gate that bounced
+    if (opts.target === 'group') {
+      const divergent = new Set(['independent', 'debate', 'gauntlet', 'steelman']);
+      for (let i = gateIndex - 1; i >= 0; i--) if (divergent.has(protocol.phases[i].kind)) { resumeIndex = i; break; }
+    }
+    const note = opts.note?.trim();
+    const task = note ? `${row.task}\n\n[USER FOLLOW-UP after the previous bounce — address this directly]:\n${note}` : row.task;
+    const resumeFrom: ResumeState = {
+      phaseIndex: resumeIndex,
+      artifact: row.artifact ?? '',
+      transcript: row.transcript ? JSON.parse(row.transcript) : [],
+      verdicts: [],        // fresh evaluation
+      approved: false,
+    };
+    db.prepare('UPDATE council_runs SET status=?, task=?, finished=NULL WHERE run_id=?').run('running', task, opts.runId);
+    appendAudit('council:continueBounced', { runId: opts.runId, target: opts.target, fromPhase: resumeIndex, hasNote: !!note });
+    trace('council:continueBounced', { runId: opts.runId, target: opts.target, fromPhase: resumeIndex });
+    launchCouncilRun(opts.runId, { repo: row.repo ?? undefined, protocol, roster, assignment, task, resumeFrom });
+    return { ok: true, runId: opts.runId, fromPhase: resumeIndex };
   });
 
   ipcMain.handle('council:cancel', (_e, opts: { runId: string }) => {

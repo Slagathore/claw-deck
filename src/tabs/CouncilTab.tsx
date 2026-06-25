@@ -8,7 +8,9 @@ import { useCouncil } from '../store/council';
 
 export default function CouncilTab() {
   const { active } = useWorkspaces();
-  const { runByWs, events, live, questions, running, startRun, appendEvent, clearQuestions, markRunning, finishRun } = useCouncil();
+  const { runByWs, events, live, questions, running, startRun, appendEvent, clearQuestions, markRunning, newSession, finishRun } = useCouncil();
+  const [roster, setRoster] = useState<{ id: string; displayName: string }[]>([]);
+  const [expanded, setExpanded] = useState(false);
 
   // single subscription to the council event stream
   useEffect(() => {
@@ -18,6 +20,10 @@ export default function CouncilTab() {
     });
     return off;
   }, [appendEvent, finishRun]);
+
+  // roster for id → display name (so the theater shows your configured names)
+  useEffect(() => { window.api.settings.get().then((s) => setRoster(s.fusionRoster ?? [])); }, []);
+  const nameOf = (id?: string) => roster.find((a) => a.id === id)?.displayName ?? id ?? '';
 
   const runId = active ? runByWs[active] : undefined;
 
@@ -31,21 +37,24 @@ export default function CouncilTab() {
         <div className="card" style={{ color: 'var(--muted)' }}>Open a folder to start a multi-agent council session on it.</div>
       ) : (
         <div className="row" style={{ flex: 1, alignItems: 'stretch', minHeight: 0, gap: 10 }}>
-          <div className="col" style={{ width: 400, minHeight: 0, overflow: 'auto' }}>
-            <CouncilSettings workspace={active} key={active} />
-            <SessionHistory repo={active} onRerun={(id) => startRun(active, id)} />
-            <ManualExecutor repo={active} />
-            <RunLedger repo={active} />
-          </div>
+          {!expanded && (
+            <div className="col" style={{ width: 400, minHeight: 0, overflow: 'auto' }}>
+              <CouncilSettings workspace={active} key={active} />
+              <SessionHistory repo={active} onRerun={(id) => startRun(active, id)} />
+              <ManualExecutor repo={active} />
+              <RunLedger repo={active} />
+            </div>
+          )}
           <div className="col" style={{ flex: 1, minHeight: 0 }}>
-            {runId && running[runId] && (
-              <div className="row" style={{ alignSelf: 'flex-end', gap: 8, alignItems: 'center' }}>
-                <span style={{ color: 'var(--muted)', fontSize: 12 }}><Spinner /> session running…</span>
-                <button onClick={() => window.api.council.cancel(runId)} style={{ borderColor: 'var(--bad)', color: 'var(--bad)' }}>Cancel run</button>
-              </div>
-            )}
+            <div className="row" style={{ justifyContent: 'flex-end', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              {runId && running[runId] && <span style={{ color: 'var(--muted)', fontSize: 12 }}><Spinner /> running…</span>}
+              {runId && running[runId] && <button onClick={() => window.api.council.cancel(runId)} style={{ borderColor: 'var(--bad)', color: 'var(--bad)' }}>Cancel</button>}
+              <button onClick={() => newSession(active)} title="Clear this view and configure a fresh session (past runs stay in Session history)">＋ New session</button>
+              <button onClick={() => setExpanded((x) => !x)} title="Toggle full-width theater">{expanded ? '◧ Show controls' : '⛶ Expand'}</button>
+            </div>
             {runId && (questions[runId]?.length ?? 0) > 0 && <ProloguePanel key={runId} runId={runId} questions={questions[runId]} onSubmitted={() => { clearQuestions(runId); markRunning(runId); }} />}
-            <DebateTheater events={runId ? (events[runId] ?? []) : []} live={runId ? live[runId] : undefined} running={runId ? running[runId] : false} />
+            {runId && !running[runId] && lastFinishedStatus(events[runId]) === 'bounced' && <BounceRecovery runId={runId} onSent={() => markRunning(runId)} />}
+            <DebateTheater events={runId ? (events[runId] ?? []) : []} live={runId ? live[runId] : undefined} running={runId ? running[runId] : false} nameOf={nameOf} />
           </div>
         </div>
       )}
@@ -108,6 +117,35 @@ function BridgeBadge() {
   return connected
     ? <span className="badge ok" title={`${folders} folder(s)`}>VS Code bridge · {lm} lm · {diag} problems</span>
     : <span className="badge" style={{ color: 'var(--muted)' }} title="Open VS Code with the claw-bridge extension for live diagnostics + vscode.lm models">bridge offline</span>;
+}
+
+/** Status of the most recent 'finished' event for a run (e.g. 'bounced'). */
+function lastFinishedStatus(evs?: { type: string; status?: string }[]): string | undefined {
+  if (!evs) return undefined;
+  for (let i = evs.length - 1; i >= 0; i--) if (evs[i].type === 'finished') return evs[i].status;
+  return undefined;
+}
+
+/** A bounced final → send it back to the group or QA, optionally with a note. */
+function BounceRecovery({ runId, onSent }: { runId: string; onSent: () => void }) {
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  async function send(target: 'group' | 'qa') {
+    setBusy(true);
+    const r = await window.api.council.continueBounced(runId, target, note);
+    setBusy(false);
+    if (r.ok) onSent();
+  }
+  return (
+    <div className="card col" style={{ gap: 8, border: '1px solid var(--bad)' }}>
+      <strong style={{ color: 'var(--bad)' }}>Bounced — not a dead end. Send it back:</strong>
+      <textarea placeholder="Optional: clarify, add a constraint, or ask them something — injected as a user follow-up for everyone…" value={note} onChange={(e) => setNote(e.target.value)} rows={2} style={{ fontSize: 12 }} />
+      <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+        <button disabled={busy} onClick={() => send('group')} title="Re-run the debate/gauntlet with your note, then re-synthesize and re-judge">↩ Back to the group</button>
+        <button disabled={busy} onClick={() => send('qa')} title="Re-run just the QA / judge gate on the same proposal with your note">↩ Back to QA / judge</button>
+      </div>
+    </div>
+  );
 }
 
 /** Prologue: the panel's clarifying questions, paused for the user's answers. */

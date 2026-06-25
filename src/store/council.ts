@@ -17,6 +17,7 @@ interface CouncilState {
   appendEvent: (ev: CouncilEvt) => void;
   clearQuestions: (runId: string) => void;
   markRunning: (runId: string) => void;
+  newSession: (ws: string) => void;
   finishRun: (runId: string) => void;
 }
 
@@ -31,6 +32,7 @@ export const useCouncil = create<CouncilState>((set) => ({
   startRun: (ws, runId) => set((s) => ({ runByWs: { ...s.runByWs, [ws]: runId }, events: { ...s.events, [runId]: [] }, live: { ...s.live, [runId]: {} }, questions: { ...s.questions, [runId]: [] }, running: { ...s.running, [runId]: true } })),
   clearQuestions: (runId) => set((s) => ({ questions: { ...s.questions, [runId]: [] } })),
   markRunning: (runId) => set((s) => ({ running: { ...s.running, [runId]: true } })),
+  newSession: (ws) => set((s) => { const runByWs = { ...s.runByWs }; delete runByWs[ws]; return { runByWs }; }),
   appendEvent: (ev) => set((s) => {
     const runId = ev.runId;
     // prologue questions arrived → pause (not "running") and stash them for the answer panel
