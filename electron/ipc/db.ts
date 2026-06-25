@@ -98,6 +98,7 @@ export async function initDb() {
   migrate('council_runs', 'transcript', 'TEXT');
   migrate('council_runs', 'verdicts', 'TEXT');
   migrate('council_runs', 'resumable', 'INTEGER');
+  migrate('council_runs', 'snapshots', 'TEXT');   // per-phase artifact snapshots for the replay timeline
 }
 
 function migrate(table: string, col: string, type: string) {

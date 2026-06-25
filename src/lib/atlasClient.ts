@@ -20,6 +20,7 @@ export const atlas = {
   status: (ws: string) => window.api.atlas.status(ws),
   query: (ws: string, tool: string, arg: string) => window.api.atlas.query(ws, tool, arg),
   graph: (ws: string, statuses?: string[], file?: string, search?: string, limit?: number) => window.api.atlas.graph(ws, statuses, file, search, limit),
+  metrics: (ws: string) => window.api.atlas.metrics(ws),
   card: (ws: string, ref: string) => window.api.atlas.card(ws, ref),
   enrich: (ws: string, kind: 'embed' | 'summarize') => window.api.atlas.enrich(ws, kind),
   close: (ws: string) => window.api.atlas.close(ws),

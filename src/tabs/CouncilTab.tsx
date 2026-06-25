@@ -54,6 +54,7 @@ export default function CouncilTab() {
             </div>
             {runId && (questions[runId]?.length ?? 0) > 0 && <ProloguePanel key={runId} runId={runId} questions={questions[runId]} onSubmitted={() => { clearQuestions(runId); markRunning(runId); }} />}
             {runId && !running[runId] && lastFinishedStatus(events[runId]) === 'bounced' && <BounceRecovery runId={runId} onSent={() => markRunning(runId)} />}
+            {runId && !running[runId] && !!lastFinishedStatus(events[runId]) && <PostRunPanel runId={runId} roster={roster} />}
             <DebateTheater events={runId ? (events[runId] ?? []) : []} live={runId ? live[runId] : undefined} running={runId ? running[runId] : false} nameOf={nameOf} />
           </div>
         </div>
@@ -117,6 +118,64 @@ function BridgeBadge() {
   return connected
     ? <span className="badge ok" title={`${folders} folder(s)`}>VS Code bridge · {lm} lm · {diag} problems</span>
     : <span className="badge" style={{ color: 'var(--muted)' }} title="Open VS Code with the claw-bridge extension for live diagnostics + vscode.lm models">bridge offline</span>;
+}
+
+const WRAP: React.CSSProperties = { whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere' };
+
+/** Post-run tools: ask an agent a follow-up, generate a PR description, or replay
+ *  the proposal's evolution across phases. */
+function PostRunPanel({ runId, roster }: { runId: string; roster: { id: string; displayName: string }[] }) {
+  const [tab, setTab] = useState<'ask' | 'pr' | 'replay' | null>(null);
+  const [agentId, setAgentId] = useState(roster[0]?.id ?? '');
+  const [q, setQ] = useState('');
+  const [answer, setAnswer] = useState('');
+  const [pr, setPr] = useState('');
+  const [snaps, setSnaps] = useState<{ phaseIndex: number; label: string; artifact: string }[]>([]);
+  const [snapIdx, setSnapIdx] = useState(0);
+  const [busy, setBusy] = useState('');
+
+  useEffect(() => { if (!agentId && roster[0]) setAgentId(roster[0].id); }, [roster, agentId]);
+  async function ask() { if (!q.trim()) return; setBusy('ask'); setAnswer(''); const r = await window.api.council.ask(runId, agentId, q); setBusy(''); setAnswer(r.ok ? (r.answer ?? '') : `error: ${r.error}`); }
+  async function genPr() { setBusy('pr'); setPr(''); const r = await window.api.council.prDescription(runId); setBusy(''); setPr(r.ok ? (r.markdown ?? '') : `error: ${r.error}`); }
+  async function loadReplay() { setBusy('replay'); const r = await window.api.council.snapshots(runId); setBusy(''); setSnaps(r.snapshots ?? []); setSnapIdx(Math.max(0, (r.snapshots?.length ?? 1) - 1)); setTab('replay'); }
+
+  return (
+    <div className="card col" style={{ gap: 8 }}>
+      <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+        <strong>Post-run</strong>
+        <button onClick={() => setTab(tab === 'ask' ? null : 'ask')}>💬 Ask an agent</button>
+        <button onClick={() => { setTab('pr'); if (!pr && busy !== 'pr') genPr(); }}>📝 PR description</button>
+        <button onClick={loadReplay}>⏮ Replay timeline</button>
+      </div>
+
+      {tab === 'ask' && (
+        <div className="col" style={{ gap: 6 }}>
+          <div className="row" style={{ gap: 6 }}>
+            <select value={agentId} onChange={(e) => setAgentId(e.target.value)}>{roster.map((a) => <option key={a.id} value={a.id}>{a.displayName}</option>)}</select>
+            <input style={{ flex: 1 }} placeholder="Ask this agent about its statement…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && ask()} />
+            <button onClick={ask} disabled={busy === 'ask'}>{busy === 'ask' ? '…' : 'Ask'}</button>
+          </div>
+          {answer && <pre style={{ margin: 0, fontSize: 12, maxHeight: 300, overflow: 'auto', ...WRAP }}>{answer}</pre>}
+        </div>
+      )}
+
+      {tab === 'pr' && (
+        <div className="col" style={{ gap: 4 }}>
+          <div className="row" style={{ gap: 6 }}><button onClick={genPr} disabled={busy === 'pr'}>{busy === 'pr' ? 'Generating…' : 'Regenerate'}</button>{pr && <button onClick={() => navigator.clipboard.writeText(pr)}>Copy</button>}</div>
+          {pr && <pre style={{ margin: 0, fontSize: 12, maxHeight: 360, overflow: 'auto', ...WRAP }}>{pr}</pre>}
+        </div>
+      )}
+
+      {tab === 'replay' && (snaps.length > 0 ? (
+        <div className="col" style={{ gap: 6 }}>
+          <input type="range" min={0} max={snaps.length - 1} value={snapIdx} onChange={(e) => setSnapIdx(Number(e.target.value))} />
+          <div className="row" style={{ flexWrap: 'wrap', gap: 4 }}>{snaps.map((s, i) => <button key={i} onClick={() => setSnapIdx(i)} style={{ opacity: i === snapIdx ? 1 : 0.5, fontSize: 11 }}>{s.label}</button>)}</div>
+          <div className="label">After <strong>{snaps[snapIdx]?.label}</strong>:</div>
+          <pre style={{ margin: 0, fontSize: 12, maxHeight: 320, overflow: 'auto', ...WRAP }}>{snaps[snapIdx]?.artifact}</pre>
+        </div>
+      ) : <div className="label">No phase snapshots for this run.</div>)}
+    </div>
+  );
 }
 
 /** Status of the most recent 'finished' event for a run (e.g. 'bounced'). */

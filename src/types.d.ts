@@ -96,12 +96,15 @@ declare global {
         mcp: () => Promise<{ name: string; command: string; args?: string[] }[]>;
       };
       council: {
-        start: (opts: { repo?: string; protocolId: string; assignment: import('../electron/council/agents').SessionAssignment; task: string; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number }; prologue?: boolean }) => Promise<{ ok: boolean; runId?: string; awaiting?: boolean; error?: string }>;
+        start: (opts: { repo?: string; protocolId: string; assignment: import('../electron/council/agents').SessionAssignment; task: string; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number }; prologue?: boolean; personas?: Record<string, string> }) => Promise<{ ok: boolean; runId?: string; awaiting?: boolean; error?: string }>;
         startLoop: (opts: { repo: string; protocolId: string; assignment: import('../electron/council/agents').SessionAssignment; goal: string; maxIterations?: number; costCeiling?: number; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number } }) => Promise<{ ok: boolean; runId?: string; error?: string }>;
         answerQuestions: (runId: string, answers: string[]) => Promise<{ ok: boolean; runId?: string; error?: string }>;
         detectEnv: (repo: string) => Promise<{ ok: boolean; facts: string; error?: string }>;
         resume: (runId: string) => Promise<{ ok: boolean; runId?: string; fromPhase?: number; error?: string }>;
         continueBounced: (runId: string, target: 'group' | 'qa', note?: string) => Promise<{ ok: boolean; runId?: string; fromPhase?: number; error?: string }>;
+        ask: (runId: string, agentId: string, question: string) => Promise<{ ok: boolean; answer?: string; error?: string }>;
+        prDescription: (runId: string) => Promise<{ ok: boolean; markdown?: string; error?: string }>;
+        snapshots: (runId: string) => Promise<{ ok: boolean; snapshots: { phaseIndex: number; label: string; artifact: string }[] }>;
         cancel: (runId: string) => Promise<{ ok: boolean }>;
         list: () => Promise<{ ok: boolean; runs: { runId: string; repo: string | null; protocol: string; task: string; assignment: string; status: string; approved: number; phaseIndex: number | null; resumable: number | null; started: number; finished: number | null }[] }>;
         probeAgent: (agent: import('../electron/council/agents').RosterAgent, repo?: string) => Promise<{ ok: boolean; detail: string }>;
@@ -122,6 +125,7 @@ declare global {
         status: (workspace: string) => Promise<{ ok: boolean; counts?: ReturnType<typeof import('../electron/atlas/query').statusCounts>; lastRun?: { started: number; finished: number; files: number; symbols: number; mode: string } | null; vecAvailable?: boolean; error?: string }>;
         query: (workspace: string, tool: string, arg: string) => Promise<{ ok: boolean; result?: any; error?: string }>;
         graph: (workspace: string, statuses?: string[], file?: string, search?: string, limit?: number) => Promise<{ ok: boolean; graph?: { nodes: import('../electron/atlas/query').GraphNode[]; edges: import('../electron/atlas/query').GraphEdge[] }; error?: string }>;
+        metrics: (workspace: string) => Promise<{ ok: boolean; churn: Record<string, number>; owner: Record<string, string>; error?: string }>;
         card: (workspace: string, ref: string) => Promise<{ ok: boolean; card?: import('../electron/atlas/types').SymbolCard | null; error?: string }>;
         enrich: (workspace: string, kind: 'embed' | 'summarize') => Promise<{ ok: boolean; embedded?: number; summarized?: number; remaining?: number; superseded?: number; reason?: string }>;
         close: (workspace: string) => Promise<{ ok: boolean }>;

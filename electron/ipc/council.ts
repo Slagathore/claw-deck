@@ -102,7 +102,7 @@ function withContext(task: string, context?: string): string {
 // Prologue: a run that is paused after generating clarifying questions, waiting
 // for the user's answers before the real protocol launches. Held in memory until
 // answered (the prologue is interactive and resolved within the session).
-interface ProloguePending { repo?: string; protocol: Protocol; roster: RosterAgent[]; assignment: SessionAssignment; task: string; agentOptions?: Record<string, { temperature?: number; top_p?: number }>; questions: string[] }
+interface ProloguePending { repo?: string; protocol: Protocol; roster: RosterAgent[]; assignment: SessionAssignment; task: string; agentOptions?: Record<string, { temperature?: number; top_p?: number }>; agentPersonas?: Record<string, string>; questions: string[] }
 const pendingPrologue = new Map<string, ProloguePending>();
 
 /** Parse a consolidated questions reply into ≤6 clean question strings. */
@@ -137,7 +137,7 @@ function scopedReadOnlyServers(repo?: string): McpServerSpec[] {
   return out;
 }
 
-function transportConfig(repo?: string, abortSignal?: AbortSignal, agentOptions?: Record<string, { temperature?: number; top_p?: number }>, toolset?: ToolSet): TransportConfig {
+function transportConfig(repo?: string, abortSignal?: AbortSignal, agentOptions?: Record<string, { temperature?: number; top_p?: number }>, toolset?: ToolSet, agentPersonas?: Record<string, string>): TransportConfig {
   // Local Ollama serves *:cloud models itself (no key). ollamaCloudUrl is an
   // OPTIONAL override for a genuinely remote OpenAI-compat endpoint; blank → local.
   const localV1 = getSetting('ollamaUrl', 'http://localhost:11434').replace(/\/$/, '') + '/v1';
@@ -155,11 +155,22 @@ function transportConfig(repo?: string, abortSignal?: AbortSignal, agentOptions?
     claudeExtraArgs: claudeExtraArgs(repo),
     actorTimeoutMs: getSetting('actorTimeoutMs', 600000),
     agentOptions,
+    agentPersonas,
     tools: toolset?.tools,
     callTool: toolset?.call,
     toolCallCap: getSetting('toolCallCap', 12),
     cwd: repo,
   };
+}
+
+/** Map { agentId → personaId } to { agentId → persona prompt } using fusionPersonas. */
+function buildAgentPersonas(personas?: Record<string, string>): Record<string, string> | undefined {
+  if (!personas || !Object.keys(personas).length) return undefined;
+  const defs = getSetting<{ id: string; name: string; prompt: string }[]>('fusionPersonas', []);
+  const byId = new Map(defs.map((p) => [p.id, p]));
+  const out: Record<string, string> = {};
+  for (const [agentId, personaId] of Object.entries(personas)) { const p = byId.get(personaId); if (p) out[agentId] = `${p.name} — ${p.prompt}`; }
+  return Object.keys(out).length ? out : undefined;
 }
 
 async function probeAgent(agent: RosterAgent, repo?: string): Promise<{ ok: boolean; detail: string }> {
@@ -387,13 +398,14 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
 
   // Shared launcher for a fresh start AND a resume (resumeFrom set). Persists a
   // checkpoint after every phase so an aborted/errored run can be continued.
-  function launchCouncilRun(runId: string, opts: { repo?: string; protocol: Protocol; roster: RosterAgent[]; assignment: SessionAssignment; task: string; resumeFrom?: ResumeState; agentOptions?: Record<string, { temperature?: number; top_p?: number }> }) {
+  function launchCouncilRun(runId: string, opts: { repo?: string; protocol: Protocol; roster: RosterAgent[]; assignment: SessionAssignment; task: string; resumeFrom?: ResumeState; agentOptions?: Record<string, { temperature?: number; top_p?: number }>; agentPersonas?: Record<string, string> }) {
     const db = getDb();
     const controller = new AbortController();
     const signal = { aborted: false, controller };
     signals.set(runId, signal);
     const execId = opts.resumeFrom ? `${runId}-r${Date.now().toString(36)}` : runId; // fresh worktree per resume attempt
     const executor = opts.repo ? makeExecutorHooks(opts.repo, execId, controller.signal) : undefined;
+    const snaps: { phaseIndex: number; label: string; artifact: string }[] = []; // replay timeline
 
     void (async () => {
       // scoped read-only toolset (Atlas code-brain + Context7) for cloud panelists
@@ -404,7 +416,7 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
           if (servers.length) { toolset = await buildToolSet(servers, controller.signal); if (toolset.tools.length) send(runId, { type: 'tools', content: toolset.tools.map((t) => t.function.name).join(', ') } as any); }
         }
       } catch { /* run without tools */ }
-      const transport = makeTransport(transportConfig(opts.repo, controller.signal, opts.agentOptions, toolset));
+      const transport = makeTransport(transportConfig(opts.repo, controller.signal, opts.agentOptions, toolset, opts.agentPersonas));
       try {
         const res = await runProtocol(opts.protocol, {
           roster: opts.roster, assignment: opts.assignment, task: opts.task, transport, executor, signal,
@@ -412,8 +424,9 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
           emit: (ev) => send(runId, ev),
           onCheckpoint: (cp) => {
             try {
-              db.prepare('UPDATE council_runs SET phase_index=?, artifact=?, transcript=?, verdicts=?, approved=?, resumable=1 WHERE run_id=?')
-                .run(cp.phaseIndex, cp.artifact, JSON.stringify(cp.transcript), JSON.stringify(cp.verdicts), cp.approved ? 1 : 0, runId);
+              snaps.push({ phaseIndex: cp.phaseIndex, label: opts.protocol.phases[cp.phaseIndex - 1]?.label ?? `phase ${cp.phaseIndex}`, artifact: cp.artifact.slice(0, 20000) });
+              db.prepare('UPDATE council_runs SET phase_index=?, artifact=?, transcript=?, verdicts=?, approved=?, snapshots=?, resumable=1 WHERE run_id=?')
+                .run(cp.phaseIndex, cp.artifact, JSON.stringify(cp.transcript), JSON.stringify(cp.verdicts), cp.approved ? 1 : 0, JSON.stringify(snaps), runId);
             } catch { /* checkpoint is best-effort */ }
           },
         });
@@ -441,7 +454,7 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
     const controller = new AbortController();
     const signal = { aborted: false, controller };
     signals.set(runId, signal);
-    const transport = makeTransport(transportConfig(ctx.repo, controller.signal, ctx.agentOptions));
+    const transport = makeTransport(transportConfig(ctx.repo, controller.signal, ctx.agentOptions, undefined, ctx.agentPersonas));
     send(runId, { type: 'phase', phase: 'Prologue — clarifying questions', kind: 'prologue' });
     const askEmit = async (agent: RosterAgent, system: string, user: string): Promise<string | null> => {
       try {
@@ -486,7 +499,7 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
     getDb().prepare('UPDATE council_runs SET status=?, task=? WHERE run_id=?').run('running', task, opts.runId);
     appendAudit('council:answers', { runId: opts.runId, answered: (opts.answers ?? []).filter(Boolean).length });
     trace('council:answers', { runId: opts.runId, questions: p.questions.length });
-    launchCouncilRun(opts.runId, { repo: p.repo, protocol: p.protocol, roster: p.roster, assignment: p.assignment, task, agentOptions: p.agentOptions });
+    launchCouncilRun(opts.runId, { repo: p.repo, protocol: p.protocol, roster: p.roster, assignment: p.assignment, task, agentOptions: p.agentOptions, agentPersonas: p.agentPersonas });
     return { ok: true, runId: opts.runId };
   });
 
@@ -495,7 +508,7 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
     try { return { ok: true, facts: detectEnv(opts.repo) }; } catch (e: any) { return { ok: false, facts: '', error: e?.message }; }
   });
 
-  ipcMain.handle('council:start', (_e, opts: { repo?: string; protocolId: string; assignment: SessionAssignment; task: string; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number }; prologue?: boolean }) => {
+  ipcMain.handle('council:start', (_e, opts: { repo?: string; protocolId: string; assignment: SessionAssignment; task: string; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number }; prologue?: boolean; personas?: Record<string, string> }) => {
     const protocol = PROTOCOLS[opts.protocolId];
     if (!protocol) return { ok: false, error: `unknown protocol: ${opts.protocolId}` };
     const roster = getSetting<RosterAgent[]>('fusionRoster', []);
@@ -505,16 +518,17 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
     const runId = `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
     const task = withContext(opts.task, opts.context);
     const agentOptions = buildAgentOptions(opts.hot);
+    const agentPersonas = buildAgentPersonas(opts.personas);
     getDb().prepare('INSERT INTO council_runs(run_id, repo, protocol, task, assignment, status, started) VALUES(?,?,?,?,?,?,?)')
       .run(runId, opts.repo ?? null, protocol.id, task, JSON.stringify(opts.assignment), opts.prologue ? 'prologue' : 'running', Date.now());
     appendAudit('council:start', { runId, protocol: protocol.id, repo: opts.repo ?? null, prologue: !!opts.prologue });
     trace('council:start', { runId, protocol: protocol.id, repo: opts.repo ?? null, assignment: opts.assignment, taskBytes: task.length, hot: opts.hot?.agents, prologue: !!opts.prologue });
 
     if (opts.prologue) {
-      startPrologue(runId, { repo: opts.repo, protocol, roster, assignment: opts.assignment, task, agentOptions });
+      startPrologue(runId, { repo: opts.repo, protocol, roster, assignment: opts.assignment, task, agentOptions, agentPersonas });
       return { ok: true, runId, awaiting: true };
     }
-    launchCouncilRun(runId, { repo: opts.repo, protocol, roster, assignment: opts.assignment, task, agentOptions });
+    launchCouncilRun(runId, { repo: opts.repo, protocol, roster, assignment: opts.assignment, task, agentOptions, agentPersonas });
     return { ok: true, runId };
   });
 
@@ -652,6 +666,49 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
   ipcMain.handle('council:list', () => {
     const rows = getDb().prepare('SELECT run_id AS runId, repo, protocol, task, assignment, status, approved, phase_index AS phaseIndex, resumable, started, finished FROM council_runs ORDER BY started DESC LIMIT 50').all();
     return { ok: true, runs: rows };
+  });
+
+  // Ask a specific agent a follow-up question about the session it took part in.
+  ipcMain.handle('council:ask', async (_e, opts: { runId: string; agentId: string; question: string }) => {
+    const row = getDb().prepare('SELECT * FROM council_runs WHERE run_id=?').get(opts.runId) as any;
+    if (!row) return { ok: false, error: 'unknown run' };
+    const agent = getSetting<RosterAgent[]>('fusionRoster', []).find((a) => a.id === opts.agentId);
+    if (!agent) return { ok: false, error: 'agent not in roster' };
+    let transcript: { agentId?: string; content: string }[] = [];
+    try { transcript = row.transcript ? JSON.parse(row.transcript) : []; } catch { /* none */ }
+    const mine = transcript.filter((t) => t.agentId === opts.agentId).map((t) => t.content).join('\n\n---\n\n').slice(0, 7000);
+    const others = transcript.map((t) => `${t.agentId}: ${String(t.content).slice(0, 600)}`).join('\n').slice(0, 6000);
+    const transport = makeTransport(transportConfig(row.repo ?? undefined));
+    const sys = `You are ${agent.displayName}, a member of a code-review council. The user is asking a follow-up question about the session you took part in. Answer directly and specifically, grounded in what was actually discussed.`;
+    const user = `Council discussion (abridged):\n${others}\n\nYour own statements in that session:\n${mine || '(you did not speak)'}\n\nFinal proposal:\n${(row.artifact ?? '').slice(0, 4000)}\n\nThe user's question for you:\n${opts.question}`;
+    try { const answer = await transport(agent, [{ role: 'system', content: sys }, { role: 'user', content: user }]); appendAudit('council:ask', { runId: opts.runId, agentId: opts.agentId }); return { ok: true, answer }; }
+    catch (e: any) { return { ok: false, error: String(e?.message ?? e) }; }
+  });
+
+  // PR-mode: generate a PR title/body/test-evidence/risk/checklist from the run + executor ledger.
+  ipcMain.handle('council:prDescription', async (_e, opts: { runId: string }) => {
+    const db = getDb();
+    const row = db.prepare('SELECT * FROM council_runs WHERE run_id=?').get(opts.runId) as any;
+    if (!row) return { ok: false, error: 'unknown run' };
+    const roster = getSetting<RosterAgent[]>('fusionRoster', []);
+    let assignment: SessionAssignment; try { assignment = JSON.parse(row.assignment); } catch { return { ok: false, error: 'corrupt assignment' }; }
+    const author = resolveAgents(roster, ['@judge'], assignment)[0] ?? roster[0];
+    if (!author) return { ok: false, error: 'no agent available to author the PR' };
+    const ex = db.prepare('SELECT * FROM executor_runs WHERE run_id=? ORDER BY updated DESC LIMIT 1').get(`council-${opts.runId}`) as any;
+    let diff = '';
+    try { if (ex?.diff_path && fs.existsSync(ex.diff_path)) diff = fs.readFileSync(ex.diff_path, 'utf8').slice(0, 12000); } catch { /* no diff */ }
+    const transport = makeTransport(transportConfig(row.repo ?? undefined));
+    const sys = 'You write excellent pull-request descriptions. Output GitHub-flavored markdown with EXACTLY these sections: a first line "# <title>", then ## Summary, ## Changes, ## Test evidence, ## Risk, ## Reviewer checklist (a markdown "- [ ]" task list). Be concrete and grounded ONLY in what is provided; do not invent.';
+    const user = `Task:\n${row.task}\n\nOutcome / final proposal:\n${(row.artifact ?? '').slice(0, 8000)}\n\nValidation: ${ex ? (ex.validation_ok == null ? 'not validated' : ex.validation_ok ? 'tests passed' : 'tests FAILED') : 'not run'}\n\nDiff:\n${diff || '(no diff captured)'}`;
+    try { const markdown = await transport(author, [{ role: 'system', content: sys }, { role: 'user', content: user }]); appendAudit('council:prDescription', { runId: opts.runId }); return { ok: true, markdown }; }
+    catch (e: any) { return { ok: false, error: String(e?.message ?? e) }; }
+  });
+
+  // Per-phase artifact snapshots for the replay timeline.
+  ipcMain.handle('council:snapshots', (_e, opts: { runId: string }) => {
+    const row = getDb().prepare('SELECT snapshots FROM council_runs WHERE run_id=?').get(opts.runId) as { snapshots?: string } | undefined;
+    if (!row) return { ok: false, snapshots: [] };
+    try { return { ok: true, snapshots: row.snapshots ? JSON.parse(row.snapshots) : [] }; } catch { return { ok: true, snapshots: [] }; }
   });
 
   ipcMain.handle('council:probeAgent', async (_e, opts: { agent: RosterAgent; repo?: string }) => {

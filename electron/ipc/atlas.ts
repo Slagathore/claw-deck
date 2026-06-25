@@ -13,6 +13,7 @@ import { scanWorkspace, writeIndex } from '../atlas/index';
 import { watchWorkspace, Watcher } from '../atlas/watch';
 import { embedPending, applySupersededFromEmbeddings } from '../atlas/embed';
 import { summarizePending } from '../atlas/summarize';
+import { run } from '../selfUpgrade/exec';
 import * as q from '../atlas/query';
 import { SymbolStatus } from '../atlas/types';
 
@@ -121,6 +122,26 @@ export function registerAtlasHandlers(getWindow: () => BrowserWindow | null) {
     const h = getOpenAtlas(opts.workspace);
     if (!h) return { ok: false, error: 'workspace not open' };
     return { ok: true, graph: q.graph(asQueryable(h), { statuses: opts.statuses, file: opts.file, search: opts.search, limit: opts.limit }) };
+  });
+
+  // Semantic-heatmap metrics: git churn (commit count) + last/top author per file.
+  ipcMain.handle('atlas:metrics', async (_e, opts: { workspace: string }) => {
+    try {
+      const r = await run('git', ['-C', opts.workspace, 'log', '--no-merges', '--format=%x00%an', '--name-only'], { timeoutMs: 30000 });
+      const churn: Record<string, number> = {};
+      const owners: Record<string, Record<string, number>> = {};
+      let author = '';
+      for (const line of r.stdout.split('\n')) {
+        if (line.startsWith('\x00')) { author = line.slice(1).trim(); continue; }
+        const f = line.trim().replace(/\\/g, '/');
+        if (!f) continue;
+        churn[f] = (churn[f] ?? 0) + 1;
+        (owners[f] ??= {})[author] = (owners[f][author] ?? 0) + 1;
+      }
+      const owner: Record<string, string> = {};
+      for (const f in owners) owner[f] = Object.entries(owners[f]).sort((a, b) => b[1] - a[1])[0]?.[0] ?? '';
+      return { ok: true, churn, owner };
+    } catch (e: any) { return { ok: false, error: e?.message ?? String(e), churn: {}, owner: {} }; }
   });
 
   ipcMain.handle('atlas:card', (_e, opts: { workspace: string; ref: string }) => {

@@ -24,6 +24,7 @@ export interface TransportConfig {
   claudeExtraArgs?: string[];// extra claude flags (--mcp-config <file>, --add-dir <dir>…) → tool + fs access
   actorTimeoutMs?: number;   // per-call timeout for agentic CLI actors (default 10 min — they do full turns)
   agentOptions?: Record<string, { temperature?: number; top_p?: number }>; // per-agent sampling dials (e.g. run hot)
+  agentPersonas?: Record<string, string>; // per-agent persona text appended to the system prompt
   tools?: ToolDef[];         // read-only MCP tools offered to cloud agents (Atlas + Context7)
   callTool?: (name: string, args: any) => Promise<string>;
   toolCallCap?: number;      // max tool-call iterations before forcing a final answer
@@ -173,8 +174,13 @@ export function makeTransport(cfg: TransportConfig): (agent: RosterAgent, messag
   const tooled = !!(cfg.tools && cfg.tools.length && cfg.callTool);
   const cloud = (baseUrl: string, key: string | undefined, model: string, messages: Msg[], onDelta?: OnDelta, sample?: SampleOpts) =>
     tooled ? chatCompatTools(baseUrl, key, model, messages, cfg.abortSignal, onDelta, sample, cfg.tools!, cfg.callTool!, cfg.toolCallCap ?? 12) : chatCompat(baseUrl, key, model, messages, cfg.abortSignal, onDelta, sample);
-  return async (agent, messages, onDelta) => {
+  return async (agent, rawMessages, onDelta) => {
     const sample = cfg.agentOptions?.[agent.id];
+    const persona = cfg.agentPersonas?.[agent.id];
+    // give the agent its assigned personality by extending the system message
+    const messages = persona && rawMessages[0]?.role === 'system'
+      ? [{ role: 'system' as const, content: `${rawMessages[0].content}\n\nADOPT THIS PERSONA: ${persona}` }, ...rawMessages.slice(1)]
+      : rawMessages;
     switch (agent.transport) {
       case 'ollama-cloud': return cloud(cfg.ollamaCloudUrl ?? 'https://ollama.com/v1', cfg.ollamaCloudKey, agent.model ?? '', messages, onDelta, sample);
       case 'ollama-local': return cloud(cfg.ollamaLocalUrl ?? 'http://localhost:11434/v1', undefined, agent.model ?? '', messages, onDelta, sample);

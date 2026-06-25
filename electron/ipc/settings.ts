@@ -17,6 +17,19 @@ export const DEFAULTS = {
   actorExtraDirs: [] as string[],              // extra dirs granted to claude via --add-dir (e.g. a Blender project folder)
   panelistTools: true,                         // give cloud panelists READ-ONLY MCP tools (Atlas code-brain + Context7) so they can look up real APIs
   toolCallCap: 12,                             // max tool-call rounds before a cloud agent is told to answer with what it has
+  // Council personalities — system-prompt flavors assignable per panelist (editable; grows).
+  fusionPersonas: [
+    { id: 'pragmatist', name: 'The Pragmatist', prompt: 'Favor the simplest thing that ships and works. Push back on gold-plating, premature abstraction, and scope creep.' },
+    { id: 'security', name: 'The Security Hawk', prompt: 'Hunt for security holes above all: unsafe input handling, injection, secrets, unsafe defaults, auth gaps.' },
+    { id: 'perf', name: 'The Performance Engineer', prompt: 'Scrutinize hot paths, allocations, N+1s, and complexity. Call out anything that will not scale.' },
+    { id: 'minimalist', name: 'The Minimalist', prompt: 'Delete code. Prefer fewer moving parts, fewer dependencies, less surface area. Question every addition.' },
+    { id: 'architect', name: 'The Architect', prompt: 'Think about boundaries, coupling, and long-term maintainability. Flag designs that will rot.' },
+    { id: 'tester', name: 'The Tester', prompt: 'Demand test coverage and concrete repro/verification. Distrust any claim that is not demonstrated.' },
+    { id: 'ux', name: 'The UX Advocate', prompt: 'Champion the end-user experience, clarity, and error handling. Flag confusing or fragile UX.' },
+    { id: 'skeptic', name: 'The Skeptic', prompt: 'Assume it is wrong until proven. Stress assumptions, edge cases, and "works on my machine".' },
+    { id: 'shipper', name: 'The Shipper', prompt: 'Bias to action. Find the fastest correct path to done; call out blockers and bikeshedding.' },
+    { id: 'historian', name: 'The Codebase Historian', prompt: 'Ground every claim in what the codebase actually does today; distrust greenfield rewrites and deprecated APIs.' },
+  ] as { id: string; name: string; prompt: string }[],
   councilEnvByWorkspace: {} as Record<string, string>, // persisted "environment / ground truth" facts per workspace
   clawhubPath: 'clawhub',
   ollamaCloudUrl: '',                          // blank = use local Ollama (it serves *:cloud models itself); set only for a remote OpenAI-compat endpoint

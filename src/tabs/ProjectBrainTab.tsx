@@ -5,6 +5,19 @@ import { atlas, AtlasStatus, STATUS_COLOR, STATUS_BADGE } from '../lib/atlasClie
 const ALL_STATUSES: AtlasStatus[] = ['active', 'orphaned', 'deprecated', 'superseded'];
 
 type Card = import('../../electron/atlas/types').SymbolCard;
+type Metric = 'status' | 'churn' | 'owner';
+
+/** cool blue (low) → hot red (high) for the churn heatmap. */
+function heatColor(t: number): string {
+  const c = Math.max(0, Math.min(1, t));
+  return `rgb(${Math.round(74 + (248 - 74) * c)},${Math.round(144 + (113 - 144) * c)},${Math.round(226 + (113 - 226) * c)})`;
+}
+/** stable categorical color per author. */
+function ownerColor(name?: string): string {
+  if (!name) return '#8a93a6';
+  let h = 0; for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;
+  return `hsl(${h},60%,60%)`;
+}
 
 export default function ProjectBrainTab() {
   const [workspace, setWorkspace] = useState<string | null>(null);
@@ -21,6 +34,9 @@ export default function ProjectBrainTab() {
   const [layoutName, setLayoutName] = useState<'cose' | 'grid' | 'circle'>('cose');
   const [mcpStatus, setMcpStatus] = useState<{ status: string; lastError?: string } | null>(null);
   const [openedServer, setOpenedServer] = useState<string>('');
+  const [metric, setMetric] = useState<Metric>('status');
+  const metricsRef = useRef<{ churn: Record<string, number>; owner: Record<string, string> } | null>(null);
+  const recolorRef = useRef<(m: Metric) => void>(() => { /* set in render */ });
 
   const cyHost = useRef<HTMLDivElement>(null);
   const cy = useRef<cytoscape.Core | null>(null);
@@ -66,14 +82,40 @@ export default function ProjectBrainTab() {
     const maxRef = Math.max(1, ...r.graph.nodes.map((n) => n.refCount));
     inst.elements().remove();
     inst.add([
-      ...r.graph.nodes.map((n) => ({ data: { id: n.id, label: n.label, color: STATUS_COLOR[n.status as AtlasStatus] ?? '#8a93a6', size: 14 + Math.round(26 * (n.refCount / maxRef)), ref: `${n.file}:${n.line}` } })),
+      ...r.graph.nodes.map((n) => { const sc = STATUS_COLOR[n.status as AtlasStatus] ?? '#8a93a6'; return { data: { id: n.id, label: n.label, color: sc, statusColor: sc, status: n.status, file: n.file, size: 14 + Math.round(26 * (n.refCount / maxRef)), ref: `${n.file}:${n.line}` } }; }),
       ...r.graph.edges.map((e) => ({ data: { id: `${e.source}-${e.target}-${e.kind}`, source: e.source, target: e.target } })),
     ]);
     const layoutOpts = layout === 'cose'
       ? { name: 'cose', animate: false, nodeRepulsion: () => 8000, idealEdgeLength: () => 60 }
       : { name: layout, animate: false };
     inst.layout(layoutOpts as any).run();
-  }, [fileFilter, graphLimit, graphSearch, layoutName]);
+    recolorRef.current(metric);   // re-apply the active heatmap metric after a graph refresh
+  }, [fileFilter, graphLimit, graphSearch, layoutName, metric]);
+
+  // Heatmap recolor — status (default), git churn (commit count), or owner (top author).
+  recolorRef.current = (m: Metric) => {
+    const inst = cy.current;
+    if (!inst) return;
+    if (m === 'status') { inst.nodes().forEach((n: any) => n.data('color', n.data('statusColor'))); return; }
+    const mx = metricsRef.current;
+    if (!mx) return;
+    if (m === 'churn') {
+      const max = Math.max(1, ...inst.nodes().map((n: any) => mx.churn[n.data('file')] ?? 0));
+      inst.nodes().forEach((n: any) => n.data('color', heatColor((mx.churn[n.data('file')] ?? 0) / max)));
+    } else {
+      inst.nodes().forEach((n: any) => n.data('color', ownerColor(mx.owner[n.data('file')])));
+    }
+  };
+  async function changeMetric(m: Metric) {
+    setMetric(m);
+    if (m !== 'status' && !metricsRef.current && workspace) {
+      setBusy('Loading git metrics…');
+      const r = await atlas.metrics(workspace);
+      setBusy('');
+      if (r.ok) metricsRef.current = { churn: r.churn, owner: r.owner };
+    }
+    recolorRef.current(m);
+  }
 
   const refreshStatus = useCallback(async (ws: string) => {
     const r = await atlas.status(ws);
@@ -217,6 +259,13 @@ export default function ProjectBrainTab() {
             <option value="grid">grid</option>
             <option value="circle">circle</option>
           </select>
+          <label className="label" title="Color nodes by: status (active/orphaned…), git churn (commit count → blue→red heat), or top author">heatmap
+            <select value={metric} onChange={e => changeMetric(e.target.value as Metric)} style={{ marginLeft: 4 }}>
+              <option value="status">status</option>
+              <option value="churn">git churn</option>
+              <option value="owner">owner</option>
+            </select>
+          </label>
           <button onClick={() => refreshGraph(workspace, filters)}>Apply graph filters</button>
         </div>
       )}

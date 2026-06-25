@@ -81,8 +81,11 @@ export default function CouncilSettings({ workspace }: { workspace: string }) {
   const [hotAgents, setHotAgents] = useState<string[]>([]);
   const [hotTemp, setHotTemp] = useState(1.15);
   const [prologue, setPrologue] = useState(false);
+  const [personaDefs, setPersonaDefs] = useState<{ id: string; name: string; prompt: string }[]>([]);
+  const [personas, setPersonas] = useState<Record<string, string>>({});
+  const [showPersonas, setShowPersonas] = useState(false);
 
-  useEffect(() => { window.api.settings.get().then((s) => { setRoster(s.fusionRoster ?? []); const saved = s.councilEnvByWorkspace?.[workspace]; if (saved) setContext(saved); }); }, [workspace]);
+  useEffect(() => { window.api.settings.get().then((s) => { setRoster(s.fusionRoster ?? []); setPersonaDefs(s.fusionPersonas ?? []); const saved = s.councilEnvByWorkspace?.[workspace]; if (saved) setContext(saved); }); }, [workspace]);
   useEffect(() => { if (roster.length && !configs[workspace]) setConfig(workspace, defaultConfig(roster)); }, [roster, workspace, configs, setConfig]);
 
   const cfg = configs[workspace] ?? defaultConfig(roster);
@@ -105,7 +108,7 @@ export default function CouncilSettings({ workspace }: { workspace: string }) {
     const ready = await preflight();
     if (!ready) return;
     setErr(''); setBusy('Starting…');
-    const r = await window.api.council.start({ repo: dryRun ? undefined : workspace, protocolId: cfg.protocolId, assignment: cfg.assignment, task: cfg.task, context, hot: hotConfig, prologue });
+    const r = await window.api.council.start({ repo: dryRun ? undefined : workspace, protocolId: cfg.protocolId, assignment: cfg.assignment, task: cfg.task, context, hot: hotConfig, prologue, personas });
     setBusy('');
     if (!r.ok || !r.runId) { setErr(r.error ?? 'failed to start'); return; }
     startRun(workspace, r.runId);
@@ -174,6 +177,27 @@ export default function CouncilSettings({ workspace }: { workspace: string }) {
         <label style={{ fontSize: 12 }}>Judge <select disabled={locked} value={cfg.assignment.judge} onChange={(e) => updateAssign({ judge: e.target.value })}>{roster.map(opt)}</select></label>
         <label style={{ fontSize: 12 }}>QA gate <select disabled={locked} value={cfg.assignment.qaGate} onChange={(e) => updateAssign({ qaGate: e.target.value })}>{roster.map(opt)}</select></label>
         <label style={{ fontSize: 12 }}>Scribe <select disabled={locked} value={cfg.assignment.scribe ?? ''} onChange={(e) => updateAssign({ scribe: e.target.value || undefined })}><option value="">(judge)</option>{roster.map(opt)}</select></label>
+      </div>
+
+      <div className="col" style={{ gap: 4 }}>
+        <div className="row" style={{ cursor: 'pointer', justifyContent: 'space-between' }} onClick={() => setShowPersonas((x) => !x)} title="Give each agent a stance (system-prompt flavor) so the panel argues from genuinely different angles.">
+          <label style={{ fontSize: 11, color: 'var(--muted)', cursor: 'pointer' }}>🎭 Personalities{Object.values(personas).filter(Boolean).length ? ` (${Object.values(personas).filter(Boolean).length})` : ''}</label>
+          <span style={{ color: 'var(--muted)' }}>{showPersonas ? '▾' : '▸'}</span>
+        </div>
+        {showPersonas && (
+          <div className="col" style={{ gap: 4, paddingLeft: 6 }}>
+            {assignedIds.map((id) => (
+              <div key={id} className="row" style={{ justifyContent: 'space-between', gap: 6 }}>
+                <span style={{ fontSize: 12 }}>{nameOf(id)}</span>
+                <select value={personas[id] ?? ''} disabled={locked} onChange={(e) => setPersonas((p) => ({ ...p, [id]: e.target.value }))}>
+                  <option value="">(default)</option>
+                  {personaDefs.map((pd) => <option key={pd.id} value={pd.id} title={pd.prompt}>{pd.name}</option>)}
+                </select>
+              </div>
+            ))}
+            <div className="label">Edit or add personas in Settings → Fusion Council.</div>
+          </div>
+        )}
       </div>
 
       <div className="col" style={{ gap: 4 }}>
