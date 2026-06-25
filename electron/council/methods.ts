@@ -207,7 +207,11 @@ export async function runMethod(method: Method, deps: MethodDeps): Promise<Metho
         case 'gauntlet': {
           const n = step.count ?? 3;
           const critics = assign(ldeps, step.role ?? 'critic', n, step.rotated ? lastAuthors : [], warnings, step.label);
-          const base = `Task:\n${deps.task}\n\nArtifact under attack:\n${artifact}`;
+          // Review the draft artifact when there is one (foundry/relay/prospect); for an
+          // audit sweep with no draft (assay) review the ingested repo map instead so the
+          // critics have real material, not an empty body.
+          const subject = artifact || map || '(no draft — audit the repository from the task/focus and your knowledge)';
+          const base = `Task:\n${deps.task}${deps.focus ? `\nFocus: ${deps.focus}` : ''}\n\nMaterial to review:\n${subject}`;
           const replies = await Promise.all(critics.map((a) => call(ldeps, budget, a, step.label.toLowerCase().includes('feasib') ? SYS.feasibility : SYS.critic, base, step.label)));
           const fresh = replies.map((r, i) => r && !/NO_FURTHER_ISSUES/i.test(r) ? `- (${critics[i].displayName}) ${r.replace(/\s+/g, ' ').slice(0, 500)}` : '').filter(Boolean);
           findings.push(...fresh);
