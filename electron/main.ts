@@ -17,6 +17,7 @@ import { registerSkillHandlers } from './ipc/skills';
 import { registerAtlasHandlers, closeAllAtlasWatchers } from './ipc/atlas';
 import { registerExecutorHandlers } from './ipc/executor';
 import { registerCouncilHandlers } from './ipc/council';
+import { registerBridgeHandlers } from './ipc/bridge';
 import { closeAllAtlas } from './atlas/db';
 import { registerSelfUpgradeHandlers } from './selfUpgrade/registry';
 import { executeProbeMode } from './selfUpgrade/probe';
@@ -194,6 +195,7 @@ app.whenReady().then(async () => {
   registerAtlasHandlers(() => mainWindow);
   registerExecutorHandlers();
   registerCouncilHandlers(() => mainWindow);
+  registerBridgeHandlers();
   registerSelfUpgradeHandlers();
 
   ipcMain.handle('app:pickPath', async (_e, opts: { properties?: string[] }) => {

@@ -7,6 +7,7 @@
 
 import { RosterAgent, Msg } from './agents';
 import { runCaptured } from '../ipc/runner';
+import { bridgeLmInvoke } from '../bridge/client';
 
 export interface TransportConfig {
   ollamaCloudUrl?: string;   // default https://ollama.com/v1
@@ -15,6 +16,7 @@ export interface TransportConfig {
   openaiCompatUrl?: string;
   openaiCompatKey?: string;
   paths?: { claude?: string; codex?: string; openclaw?: string };
+  bridgePort?: number;       // claw-bridge (VS Code) localhost port for vscode-lm
   cwd?: string;
 }
 
@@ -46,7 +48,11 @@ export function makeTransport(cfg: TransportConfig): (agent: RosterAgent, messag
       case 'claude-code': return cliPrompt(cfg.paths?.claude ?? agent.binary ?? 'claude', ['--print'], messages, cfg.cwd);
       case 'codex': return cliPrompt(cfg.paths?.codex ?? agent.binary ?? 'codex', ['exec'], messages, cfg.cwd);
       case 'openclaw': return cliPrompt(cfg.paths?.openclaw ?? agent.binary ?? 'openclaw', ['run'], messages, cfg.cwd);
-      case 'vscode-lm': throw new Error('vscode-lm transport requires the claw-bridge VS Code extension (Phase 6)');
+      case 'vscode-lm': {
+        const out = await bridgeLmInvoke(cfg.bridgePort ?? 39217, agent.model ?? '', messages);
+        if (out == null) throw new Error('vscode-lm unavailable — is VS Code open with the claw-bridge extension running?');
+        return out;
+      }
       default: throw new Error(`unknown transport: ${(agent as RosterAgent).transport}`);
     }
   };

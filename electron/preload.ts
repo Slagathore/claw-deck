@@ -89,6 +89,14 @@ contextBridge.exposeInMainWorld('api', {
     startAll: () => invoke('mcp:startAll'),
     stopAll: () => invoke('mcp:stopAll')
   },
+  bridge: {
+    status: () => invoke('bridge:status'),
+    diagnostics: (file?: string) => invoke('bridge:diagnostics', { file }),
+    selection: () => invoke('bridge:selection'),
+    lmModels: () => invoke('bridge:lmModels'),
+    invoke: (model: string, messages: { role: string; content: string }[]) => invoke('bridge:invoke', { model, messages }),
+    mcp: () => invoke('bridge:mcp')
+  },
   council: {
     start: (opts: { repo?: string; protocolId: string; assignment: any; task: string }) => invoke('council:start', opts),
     startLoop: (opts: { repo: string; protocolId: string; assignment: any; goal: string; maxIterations?: number; costCeiling?: number }) => invoke('council:startLoop', opts),

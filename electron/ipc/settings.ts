@@ -15,6 +15,7 @@ const DEFAULTS = {
   clawhubPath: 'clawhub',
   ollamaCloudUrl: '',                          // blank = use local Ollama (it serves *:cloud models itself); set only for a remote OpenAI-compat endpoint
   ollamaCloudKey: '',                          // usually blank — local Ollama needs no key
+  clawBridgePort: 39217,                       // localhost port the claw-bridge VS Code extension listens on
   skillsDir: '',
   scanBeforeInstall: true,     // fetch + security-scan skills/plugins before installing
   blockRiskyInstalls: true,    // hard-block installs with critical/high findings (else just warn)

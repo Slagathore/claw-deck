@@ -1,0 +1,31 @@
+{
+  "name": "claw-bridge",
+  "displayName": "Claw Bridge",
+  "description": "Publishes editor-only signals (workspace, selection, diagnostics, symbols, vscode.lm models, MCP config) to Claw Deck over localhost. Claw Deck connects when present and degrades to filesystem+git when absent.",
+  "version": "0.1.0",
+  "publisher": "cole",
+  "private": true,
+  "engines": { "vscode": "^1.90.0" },
+  "categories": ["Other"],
+  "main": "./out/extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {
+    "commands": [{ "command": "clawBridge.status", "title": "Claw Bridge: Show Status" }],
+    "configuration": {
+      "title": "Claw Bridge",
+      "properties": {
+        "clawBridge.port": { "type": "number", "default": 39217, "description": "Localhost port the bridge listens on (must match Claw Deck's clawBridgePort setting)." }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.90.0",
+    "@types/node": "^20.14.10",
+    "typescript": "^5.5.4"
+  }
+}

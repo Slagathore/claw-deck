@@ -398,6 +398,29 @@ orchestrator also auto-injects the target symbol's card + 1-hop neighbors into e
 ## 9. Build progress log (agent-maintained)
 > Running record of what's been built/touched, per phase. Newest at top. Keep honest — note partials.
 
+### 2026-06-24 — Phase 6 (claw-bridge) SHIPPED — **all six phases now built** — branch `fusion/phase-1-atlas`
+228/228 tests green, lint clean, both builds clean.
+- `claw-bridge/` — a self-contained VS Code extension (own package.json/tsconfig/README): a localhost HTTP
+  server exposing `/status`, `/selection`, `/diagnostics`, `/symbols`, `/lm/models`, `POST /lm/invoke`, `/mcp`
+  (workspace folders, live Problems, document symbols, `vscode.lm` models + invoke proxy, `.vscode/mcp.json`).
+  Observational only — never edits. Build with `cd claw-bridge && npm i && npm run compile` (needs `@types/vscode`;
+  intentionally NOT compiled by claw-deck's tsconfigs, so it doesn't touch claw-deck lint/deps).
+- claw-deck client: `electron/bridge/client.ts` (graceful-degradation fetch wrappers) + `electron/ipc/bridge.ts`
+  (`bridge:status|diagnostics|selection|lmModels|invoke|mcp`) + `window.api.bridge.*`. `clawBridgePort` setting
+  (default 39217). The `vscode-lm` transport now proxies through the bridge (was a throw); CouncilTab shows a live
+  bridge badge (connected · N lm · N problems, else "offline").
+- *Acceptance:* with VS Code + the extension open, Council can use `vscode-lm` agents and read live diagnostics;
+  with it closed, everything still runs (bridge calls return empty/disconnected). Verified by construction — the
+  extension can't be compiled/run headless here (no VS Code), so Cole should build it once and smoke-test live.
+
+### Fusion build status — phases 0–6 complete on `fusion/phase-1-atlas`
+0 recon ✅ · 1 Atlas (+polyglot, auto-enrich, sqlite-vec probe) ✅ · 2 Worktree Executor ✅ · 3 Council engine ✅ ·
+4 Council UI ✅ · 5 Autonomous loop ✅ · 6 claw-bridge ✅. **228 tests, lint + both builds clean.** Remaining
+polish (not blocking): interactive mid-run gate approve/reject, automatic actor fallback-swap on quota errors,
+human-checkpoint UI round-trip, tree-sitter precision upgrade for python/bash, incremental (per-file) re-index,
+and live end-to-end runs against the real CLIs/models (needs codex installed + a council started).
+
+
 ### 2026-06-24 — Phase 5 (Autonomous goal loop) SHIPPED + Ollama-local fix — branch `fusion/phase-1-atlas`
 228/228 tests green, lint clean, both builds clean.
 - **Ollama-local correction (Cole's setup):** panelists now hit the **local** Ollama OpenAI-compat endpoint

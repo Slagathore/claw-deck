@@ -23,7 +23,10 @@ export default function CouncilTab() {
 
   return (
     <div className="col" style={{ height: '100%' }}>
-      <WorkspaceTabs />
+      <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'wrap' }}>
+        <WorkspaceTabs />
+        <BridgeBadge />
+      </div>
       {!active ? (
         <div className="card" style={{ color: 'var(--muted)' }}>Open a folder to start a multi-agent council session on it.</div>
       ) : (
@@ -39,6 +42,28 @@ export default function CouncilTab() {
       )}
     </div>
   );
+}
+
+/** claw-bridge status (Phase 6): live when VS Code + the extension are running. */
+function BridgeBadge() {
+  const [connected, setConnected] = useState(false);
+  const [lm, setLm] = useState(0);
+  const [diag, setDiag] = useState(0);
+  const [folders, setFolders] = useState(0);
+  useEffect(() => {
+    let on = true;
+    const tick = async () => {
+      const st = await window.api.bridge.status();
+      if (!on) return;
+      setConnected(st.connected); setFolders(st.folders?.length ?? 0);
+      if (st.connected) { const m = await window.api.bridge.lmModels(); const d = await window.api.bridge.diagnostics(); if (on) { setLm(m.length); setDiag(d.length); } }
+    };
+    tick(); const t = setInterval(tick, 5000);
+    return () => { on = false; clearInterval(t); };
+  }, []);
+  return connected
+    ? <span className="badge ok" title={`${folders} folder(s)`}>VS Code bridge · {lm} lm · {diag} problems</span>
+    : <span className="badge" style={{ color: 'var(--muted)' }} title="Open VS Code with the claw-bridge extension for live diagnostics + vscode.lm models">bridge offline</span>;
 }
 
 /**

@@ -39,6 +39,7 @@ function transportConfig(repo?: string): TransportConfig {
     openaiCompatUrl: getSetting('openaiCompatUrl', 'http://localhost:11434/v1'),
     openaiCompatKey: getSetting('openaiCompatKey', '') || undefined,
     paths: { claude: getSetting('claudeCodePath', 'claude'), codex: getSetting('codexPath', 'codex'), openclaw: getSetting('openclawPath', 'openclaw') || 'openclaw' },
+    bridgePort: getSetting('clawBridgePort', 39217),
     cwd: repo,
   };
 }
