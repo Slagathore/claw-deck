@@ -20,7 +20,7 @@ import { runProtocol, ExecutorHooks, CouncilEvent, ResumeState } from '../counci
 import { METHODS, runMethod, printMethodCard } from '../council/methods';
 import { runAutoloop } from '../council/autoloop';
 import { makeTransport, TransportConfig } from '../council/transport';
-import { buildToolSet, ToolSet, McpServerSpec } from '../council/mcpClient';
+import { buildToolSet, ToolSet, McpServerSpec, ToolDef } from '../council/mcpClient';
 import { atlasDbPath, openAtlas, asQueryable } from '../atlas/db';
 import { locate } from '../atlas/query';
 import { advisorKey, ADVISOR_ELIGIBILITY } from '../council/roles';
@@ -290,9 +290,59 @@ async function runEditingDelegate(agent: RosterAgent, prompt: string, wt: Worktr
     return out;
   }
 
-  const out = { ok: false, error: `${agent.displayName} uses ${agent.transport}; direct file editing requires Claude Code, Codex, or OpenClaw.` };
+  // Ollama / OpenAI-compatible cloud models: give them real file tools (scoped to the
+  // worktree) and run an agentic write loop, so a tool-capable cloud model (e.g. Kimi)
+  // can author/overwrite files directly — no Claude/Codex required.
+  if (agent.transport === 'ollama-cloud' || agent.transport === 'ollama-local' || agent.transport === 'openai-compat') {
+    if (!agent.capabilities?.canEdit) {
+      const out = { ok: false, error: `${agent.displayName} is not marked as an editor — enable "edits" for it in the Agent Roster to let it write files.` };
+      trace('council:delegate:finish', { agentId: agent.id, transport: agent.transport, ok: false, error: out.error });
+      return out;
+    }
+    return runCloudEditingDelegate(agent, prompt, wt, cfg);
+  }
+
+  const out = { ok: false, error: `${agent.displayName} uses ${agent.transport}; direct file editing requires an editing-capable model.` };
   trace('council:delegate:finish', { agentId: agent.id, transport: agent.transport, ok: false, error: out.error });
   return out;
+}
+
+/** File tools scoped to a single worktree dir — given to a cloud model so it can write
+ *  real files. Every path is resolved inside `root`; escapes are refused. */
+function worktreeFileTools(root: string): { tools: ToolDef[]; call: (name: string, args: any) => Promise<string> } {
+  const rootAbs = path.resolve(root);
+  const safe = (p: string) => { const abs = path.resolve(rootAbs, p ?? '.'); if (abs !== rootAbs && !abs.startsWith(rootAbs + path.sep)) throw new Error('path escapes the worktree'); return abs; };
+  const tools: ToolDef[] = [
+    { type: 'function', function: { name: 'write_file', description: 'Create or OVERWRITE a file with full content (parent dirs auto-created). Call once per file you author or change.', parameters: { type: 'object', properties: { path: { type: 'string', description: 'repo-relative path' }, content: { type: 'string', description: 'the COMPLETE file contents' } }, required: ['path', 'content'] } } },
+    { type: 'function', function: { name: 'read_file', description: 'Read a file (repo-relative).', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } } },
+    { type: 'function', function: { name: 'list_dir', description: 'List a directory (repo-relative; "" or "." = repo root).', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: [] } } },
+  ];
+  const call = async (name: string, args: any): Promise<string> => {
+    try {
+      if (name === 'write_file') { const abs = safe(args?.path); fs.mkdirSync(path.dirname(abs), { recursive: true }); fs.writeFileSync(abs, String(args?.content ?? '')); return `wrote ${args?.path} (${String(args?.content ?? '').length} bytes)`; }
+      if (name === 'read_file') { return fs.readFileSync(safe(args?.path), 'utf8').slice(0, 20000); }
+      if (name === 'list_dir') { const abs = safe(args?.path ?? '.'); return fs.readdirSync(abs, { withFileTypes: true }).map((d) => (d.isDirectory() ? `${d.name}/` : d.name)).join('\n') || '(empty)'; }
+      return `unknown tool: ${name}`;
+    } catch (e: any) { return `error: ${String(e?.message ?? e)}`; }
+  };
+  return { tools, call };
+}
+
+async function runCloudEditingDelegate(agent: RosterAgent, prompt: string, wt: Worktree, cfg: TransportConfig): Promise<{ ok: boolean; output?: string; error?: string }> {
+  const { tools, call } = worktreeFileTools(wt.dir);
+  // reuse the caller's transport routing (same endpoint the panelists use) + add file tools
+  const editTransport = makeTransport({ ...cfg, tools, callTool: call, toolCallCap: Math.max(cfg.toolCallCap ?? 12, 40), cwd: wt.dir });
+  const sys = 'You are an autonomous coding agent in a real git worktree. You have file tools — write_file (create/OVERWRITE a complete file), read_file, list_dir. Implement the request by WRITING REAL, COMPLETE, RUNNABLE FILES via write_file (one call per file); inspect existing code with list_dir/read_file first. Do NOT paste code in chat — put it in files. Keep going until the task is fully implemented, then reply "DONE" with a one-paragraph summary of the files you wrote.';
+  trace('council:delegate:start', { agentId: agent.id, transport: agent.transport, worktree: wt.dir, promptBytes: prompt.length, tooled: true });
+  try {
+    const out = await editTransport(agent, [{ role: 'system', content: sys }, { role: 'user', content: prompt }]);
+    trace('council:delegate:finish', { agentId: agent.id, transport: agent.transport, ok: true, tooled: true, outputBytes: (out ?? '').length });
+    return { ok: true, output: out };
+  } catch (e: any) {
+    const err = String(e?.message ?? e);
+    trace('council:delegate:finish', { agentId: agent.id, transport: agent.transport, ok: false, tooled: true, error: err.slice(0, 300) });
+    return { ok: false, error: err };
+  }
 }
 
 /** Executor hooks for the execute phase: a lazily-created worktree run on `repo`. */

@@ -61,12 +61,24 @@ async function runEnrichment(workspace: string, emit: (p: unknown) => void): Pro
     const baseUrl = getSetting<string>('ollamaUrl', 'http://localhost:11434');
     const embedModel = getSetting<string>('embedModel', 'nomic-embed-text');
     const chatModel = getSetting<string>('chatModel', 'llama3.2');
-    const e = await embedPending(db, { baseUrl, model: embedModel });
-    let superseded = 0;
-    if (e.ok && e.embedded > 0) superseded = applySupersededFromEmbeddings(db);
-    emit({ kind: 'enriched', workspace, pass: 'embed', ...e, superseded });
-    const s = await summarizePending(db, { baseUrl, model: chatModel });
-    emit({ kind: 'enriched', workspace, pass: 'summarize', ...s });
+    // Drain embeddings in efficient batches (each call embeds up to `max` with internal
+    // batching + concurrency), then run the near-duplicate pass ONCE — not per batch.
+    let embedded = 0;
+    for (let pass = 0; pass < 1000; pass++) {
+      const e = await embedPending(db, { baseUrl, model: embedModel });
+      embedded += e.embedded;
+      emit({ kind: 'enriched', workspace, pass: 'embed', ...e, embeddedTotal: embedded });
+      if (!e.ok || e.remaining === 0) break;
+    }
+    if (embedded > 0) { const superseded = applySupersededFromEmbeddings(db); emit({ kind: 'enriched', workspace, pass: 'superseded', superseded }); }
+    // Drain summaries (concurrent within each call).
+    let summarized = 0;
+    for (let pass = 0; pass < 1000; pass++) {
+      const s = await summarizePending(db, { baseUrl, model: chatModel });
+      summarized += s.summarized;
+      emit({ kind: 'enriched', workspace, pass: 'summarize', ...s, summarizedTotal: summarized });
+      if (!s.ok || s.remaining === 0) break;
+    }
   } catch { /* gated — enrichment never breaks indexing */ } finally { enriching.delete(k); }
 }
 
@@ -156,7 +168,7 @@ export function registerAtlasHandlers(getWindow: () => BrowserWindow | null) {
     const db = asQueryable(h);
     const baseUrl = getSetting<string>('ollamaUrl', 'http://localhost:11434');
     if (opts.kind === 'embed') {
-      const r = await embedPending(db, { baseUrl });
+      const r = await embedPending(db, { baseUrl, model: getSetting<string>('embedModel', 'nomic-embed-text') });
       let superseded = 0;
       if (r.ok && r.embedded > 0) superseded = applySupersededFromEmbeddings(db);
       emit({ kind: 'enriched', workspace: opts.workspace, pass: 'embed', ...r, superseded });

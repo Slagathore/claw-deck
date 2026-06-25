@@ -226,7 +226,7 @@ export async function runMethod(method: Method, deps: MethodDeps): Promise<Metho
           const subject = artifact || [codeContext && `Actual source:\n${codeContext}`, map && `Repo map:\n${map}`].filter(Boolean).join('\n\n---\n\n') || '(no draft — audit the repository from the task/focus and your knowledge)';
           const base = `Task:\n${deps.task}${deps.focus ? `\nFocus: ${deps.focus}` : ''}\n\nMaterial to review:\n${subject}`;
           const replies = await Promise.all(critics.map((a) => call(ldeps, budget, a, step.label.toLowerCase().includes('feasib') ? SYS.feasibility : SYS.critic, base, step.label)));
-          const fresh = replies.map((r, i) => r && !/NO_FURTHER_ISSUES/i.test(r) ? `- (${critics[i].displayName}) ${r.replace(/\s+/g, ' ').slice(0, 500)}` : '').filter(Boolean);
+          const fresh = replies.map((r, i) => r && !/NO_FURTHER_ISSUES/i.test(r) ? `- (${critics[i].displayName}) ${r.trim().slice(0, 10000)}` : '').filter(Boolean);
           findings.push(...fresh);
           if (fresh.length) artifact += `\n\n## Findings (round: ${step.label})\n${fresh.join('\n')}`;
           return;
@@ -276,7 +276,7 @@ export async function runMethod(method: Method, deps: MethodDeps): Promise<Metho
           const base = `Task:\n${deps.task}\n\nArtifact:\n${artifact}`;
           const reviewers = [...whole, ...code];
           const replies = await Promise.all(reviewers.map((a, i) => askVerified(ldeps, budget, a, i < whole.length ? SYS.qaWhole : SYS.qaCode, artifact, base, step.label)));
-          const blocking = replies.map((r, i) => r && !/NO_BLOCKING_ISSUES/i.test(r) ? `- (${reviewers[i].displayName}) ${r.replace(/\s+/g, ' ').slice(0, 400)}` : '').filter(Boolean);
+          const blocking = replies.map((r, i) => r && !/NO_BLOCKING_ISSUES/i.test(r) ? `- (${reviewers[i].displayName}) ${r.trim().slice(0, 10000)}` : '').filter(Boolean);
           if (blocking.length) { findings.push(...blocking); artifact += `\n\n## QA blocking (one bounce-fix)\n${blocking.join('\n')}`; }
           return;
         }

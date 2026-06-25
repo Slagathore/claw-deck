@@ -262,13 +262,19 @@ export async function runProtocol(protocol: Protocol, deps: RunDeps): Promise<Ru
       const diff = extractDiff(artifact);
       if (deps.executor) {
         const p = phase.kind === 'execute' && !diff && actor && deps.executor.delegate
-          ? await deps.executor.delegate(actor, `Task:\n${deps.task}\n\nCouncil proposal:\n${artifact}\n\nEdit the working tree directly to implement the smallest correct fix. Keep changes focused. When done, summarize what changed.`)
+          ? await deps.executor.delegate(actor, `Task:\n${deps.task}\n\nCouncil proposal:\n${artifact}\n\nImplement this in the working tree. Create/overwrite whatever files are needed. Keep changes focused. When done, summarize what changed.`)
           : await deps.executor.propose(artifact, diff);
         emit({ type: 'propose', phase: label, ok: p.ok, agentId: actor?.id });
+        if (!p.ok) {
+          // Loud, actionable warning so a "deliberating but never writing" run is obvious.
+          const hint = diff ? '' : ' No fenced diff in the proposal and the actor could not edit — assign an editing-capable judge (Kimi with "edits" on, or Claude/Codex/OpenClaw) so the council can write files.';
+          emit({ type: 'warn', phase: label, content: `⚠ NOTHING WAS WRITTEN TO DISK: ${p.error ?? 'the executor could not apply changes'}.${hint}`, ok: false });
+        }
         if (p.ok && phase.kind === 'execute') {
           const v = await deps.executor.validate();
           emit({ type: 'validate', phase: label, ok: v.ok });
           if (v.ok) { const ap = await deps.executor.approve(); approved = ap.ok; emit({ type: 'execute', phase: label, ok: ap.ok }); }
+          else emit({ type: 'warn', phase: label, content: '⚠ changes written to the worktree FAILED validation — not applied to your tree. See the Run ledger for the diff.', ok: false });
         }
       } else if (actor) {
         record(label, phase.kind, `(no executor bound; ${phase.kind} skipped)`, actor.id);
