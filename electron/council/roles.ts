@@ -49,8 +49,8 @@ interface Eligibility {
 // The §1.1 table. `eligible` is the allowlist; `notEligible` are hard bans the
 // rules call out explicitly (a ban always wins over the allowlist).
 export const ADVISOR_ELIGIBILITY: Record<AdvisorKey, Eligibility> = {
-  kimi: { eligible: ['critic', 'red-team', 'wildcard-critic', 'builder', 'consolidator-backup', 'qa-wholedoc', 'diverger', 'ideator', 'extractor'], notEligible: [], context: 'large' },
-  qwen35: { eligible: ['critic', 'red-team', 'builder', 'diverger', 'ideator', 'qa-focused'], notEligible: [], context: 'large' },
+  kimi: { eligible: ['critic', 'red-team', 'wildcard-critic', 'builder', 'consolidator-backup', 'qa-wholedoc', 'diverger', 'ideator', 'extractor', 'judge'], notEligible: [], context: 'large' },
+  qwen35: { eligible: ['critic', 'red-team', 'builder', 'diverger', 'ideator', 'qa-focused', 'judge'], notEligible: [], context: 'large' },
   'qwen-coder': { eligible: ['builder', 'repair-hand', 'extractor', 'qa-wholedoc', 'diverger'], notEligible: ['critic', 'red-team', 'wildcard-critic'], context: 'large' },
   'gemini-hot': { eligible: ['diverger', 'wildcard-critic', 'ideator'], notEligible: ['builder', 'final-qa', 'consolidator', 'consolidator-backup', 'judge', 'judge-primary', 'judge-tiebreak', 'qa-wholedoc', 'qa-code'], context: 'small', temp: 1.1 },
   deepseek: { eligible: ['qa-focused', 'builder', 'critic', 'red-team', 'diverger'], notEligible: ['qa-wholedoc'], context: 'small' },

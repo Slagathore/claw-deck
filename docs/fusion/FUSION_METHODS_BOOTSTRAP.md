@@ -236,13 +236,13 @@ Implement: each method's end-prompt, on selection, builds the next method's `see
 ## 6. Acceptance checklist (verify before opening the PR)
 
 - [x] `fusion-lint.ts` placed (`electron/council/fusionLint.ts`), unit test passes, **regression test feeds the gist defect strings and asserts they flag** (`tests/fusion.lint.test.ts`). Wired as a pre-gate in `run.ts` (emits a `lint` event, folds findings into the gate prompt). *Repair loop still pending — §2.*
-- [ ] No `throw`/early-return ends any run; every phase returns via the fix-or-fallback helper.
-- [ ] Every cross-phase handoff passes artifacts by reference + asserts length/hash; no inline-truncation path remains.
-- [ ] Reviewers/judges emit the `REVIEWING:` echo and the orchestrator asserts it.
+- [x] No `throw`/early-return ends any run; every phase returns via the fix-or-fallback helper. (Methods: every step wrapped in `runPhase`; the engine returns a result even if the transport always throws — `tests/fusion.methods.test.ts` "NEVER aborts".)
+- [~] Every cross-phase handoff passes artifacts by reference + asserts length/hash. (`artifactStore`/`integrityOk`/`reviewingHeader` built + tested in `fusionInfra.ts`; methods thread the artifact in-process (no inline-truncation path), but do not yet route through `artifactStore` — pending.)
+- [~] Reviewers/judges emit the `REVIEWING:` echo and the orchestrator asserts it. (`echoMatches` built + tested; enforcement in the QA/judge steps pending.)
 - [x] Role config rejects: Qwen-Coder as critic; Gemini@1.1 as builder/final-qa/judge; deepseek as whole-doc QA. (`electron/council/roles.ts`, `tests/fusion.roles.test.ts`.)
 - [x] Trusted-budget guard asserts `claude <= 10 && codex <= 10` per run and downgrades optional trusted steps rather than erroring. (`makeBudget` in `roles.ts` — `charge` returns `'over'`, never throws.)
 - [x] `crucible` consolidates to one artifact before QA (harden → Consolidate → QA reorder), runs the lint gate (now with a ≤2-round auto-repair loop before any QA model call), surfaces dropped advisors (`warn` events from fan-out phases).
-- [ ] All four new methods registered; printed descriptions render on start.
-- [ ] `assay`/`prospect` query Atlas first and fall back to grep/AST when `.fusion/atlas.db` is absent.
-- [ ] Chaining (`assay`/`prospect`/`foundry-design` -> `foundry`) passes a seed without re-ingest.
-- [ ] `CHANGE_PLAN.md` + `changes.diff` produced in the worktree.
+- [x] All four new methods (+ `relay`/`scatter`) registered; printed descriptions render on start. (`electron/council/methods.ts` `METHODS` + `printMethodCard`; the run emits the card as its first event. Launcher in `CouncilTab` (`FusionMethods`); IPC `council:methods` / `council:runMethod`.)
+- [~] `assay`/`prospect` query Atlas first and fall back when `.fusion/atlas.db` is absent. (Engine queries `deps.atlasQuery` first and falls back with a logged WARN; the IPC does not yet wire a real `atlasQuery` — always falls back today. Pending.)
+- [~] Chaining (`assay`/`prospect`/`foundry-design` -> `foundry`) passes a seed without re-ingest. (Each method returns a `seed { task, focus, contract, artifacts }`; the end-prompt → seed → `foundry` launch is not wired in the UI yet. Pending.)
+- [ ] `CHANGE_PLAN.md` + `changes.diff` produced in the worktree. (Method `build` step delegates to an editing actor in a worktree via the executor; the explicit CHANGE_PLAN.md artifact is pending.)

@@ -40,6 +40,7 @@ export default function CouncilTab() {
           {!expanded && (
             <div className="col" style={{ width: 400, minHeight: 0, overflow: 'auto' }}>
               <CouncilSettings workspace={active} key={active} />
+              <FusionMethods repo={active} />
               <SessionHistory repo={active} onRerun={(id) => startRun(active, id)} />
               <ManualExecutor repo={active} />
               <RunLedger repo={active} />
@@ -121,6 +122,43 @@ function BridgeBadge() {
 }
 
 const WRAP: React.CSSProperties = { whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere' };
+
+/** §3/§4 — launcher for the fusion methods (foundry / foundry-design / assay / prospect / relay / scatter). */
+function FusionMethods({ repo }: { repo: string }) {
+  const { startRun } = useCouncil();
+  const [methods, setMethods] = useState<{ id: string; name: string; use: string; endPrompt: string; budget: string; card: string }[]>([]);
+  const [methodId, setMethodId] = useState('foundry');
+  const [task, setTask] = useState('');
+  const [focus, setFocus] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  useEffect(() => { window.api.council.methods().then((r) => { if (r.ok) setMethods(r.methods); }); }, []);
+  const sel = methods.find((m) => m.id === methodId);
+  const needsFocus = methodId === 'assay' || methodId === 'prospect';
+  async function run() {
+    if (!task.trim()) { setErr('describe the task first'); return; }
+    setBusy(true); setErr('');
+    const r = await window.api.council.runMethod({ repo, methodId, task, focus: focus.trim() || undefined });
+    setBusy(false);
+    if (r.ok && r.runId) startRun(repo, r.runId); else setErr(r.error ?? 'failed to start');
+  }
+  return (
+    <div className="card col" style={{ gap: 6 }}>
+      <div className="row" style={{ justifyContent: 'space-between' }}><strong>⚗ Fusion methods</strong><span className="label">{sel?.budget}</span></div>
+      <select value={methodId} onChange={(e) => setMethodId(e.target.value)}>
+        {methods.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+      </select>
+      {sel && <div className="label" style={{ ...WRAP }}>{sel.use}</div>}
+      <textarea placeholder={needsFocus ? 'What to audit / brainstorm about this repo…' : 'Describe the task / problem…'} value={task} onChange={(e) => setTask(e.target.value)} rows={3} style={{ fontSize: 12 }} />
+      {needsFocus && <input placeholder='optional focus: e.g. "auth flow, version detection"' value={focus} onChange={(e) => setFocus(e.target.value)} style={{ fontSize: 12 }} />}
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+        <span className="label" title="shown to you when the run finishes">Ends: {sel?.endPrompt}</span>
+        <button onClick={run} disabled={busy} style={{ borderColor: 'var(--good)', color: 'var(--good)' }}>{busy ? 'Starting…' : '▶ Run method'}</button>
+      </div>
+      {err && <div className="label" style={{ color: 'var(--bad)' }}>{err}</div>}
+    </div>
+  );
+}
 
 /** Post-run tools: ask an agent a follow-up, generate a PR description, or replay
  *  the proposal's evolution across phases. */

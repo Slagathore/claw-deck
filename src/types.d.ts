@@ -97,6 +97,8 @@ declare global {
       };
       council: {
         start: (opts: { repo?: string; protocolId: string; assignment: import('../electron/council/agents').SessionAssignment; task: string; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number }; prologue?: boolean; personas?: Record<string, string>; forceBlind?: boolean }) => Promise<{ ok: boolean; runId?: string; awaiting?: boolean; error?: string }>;
+        methods: () => Promise<{ ok: boolean; methods: { id: string; name: string; use: string; endPrompt: string; budget: string; card: string }[] }>;
+        runMethod: (opts: { repo?: string; methodId: string; task: string; focus?: string; context?: string }) => Promise<{ ok: boolean; runId?: string; error?: string }>;
         startLoop: (opts: { repo: string; protocolId: string; assignment: import('../electron/council/agents').SessionAssignment; goal: string; maxIterations?: number; costCeiling?: number; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number } }) => Promise<{ ok: boolean; runId?: string; error?: string }>;
         answerQuestions: (runId: string, answers: string[]) => Promise<{ ok: boolean; runId?: string; error?: string }>;
         detectEnv: (repo: string) => Promise<{ ok: boolean; facts: string; error?: string }>;

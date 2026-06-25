@@ -17,6 +17,7 @@ import { getSetting } from './settings';
 import { appendAudit } from './security';
 import { PROTOCOLS, Protocol } from '../council/protocol';
 import { runProtocol, ExecutorHooks, CouncilEvent, ResumeState } from '../council/run';
+import { METHODS, runMethod, printMethodCard } from '../council/methods';
 import { runAutoloop } from '../council/autoloop';
 import { makeTransport, TransportConfig } from '../council/transport';
 import { buildToolSet, ToolSet, McpServerSpec } from '../council/mcpClient';
@@ -702,6 +703,59 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
     const user = `Task:\n${row.task}\n\nOutcome / final proposal:\n${(row.artifact ?? '').slice(0, 8000)}\n\nValidation: ${ex ? (ex.validation_ok == null ? 'not validated' : ex.validation_ok ? 'tests passed' : 'tests FAILED') : 'not run'}\n\nDiff:\n${diff || '(no diff captured)'}`;
     try { const markdown = await transport(author, [{ role: 'system', content: sys }, { role: 'user', content: user }]); appendAudit('council:prDescription', { runId: opts.runId }); return { ok: true, markdown }; }
     catch (e: any) { return { ok: false, error: String(e?.message ?? e) }; }
+  });
+
+  // §3/§4 — list the registered fusion methods + their printed cards (for the launcher).
+  ipcMain.handle('council:methods', () => ({
+    ok: true,
+    methods: Object.values(METHODS).map((m) => ({ id: m.id, name: m.name, use: m.use, endPrompt: m.endPrompt, budget: m.budget, card: printMethodCard(m) })),
+  }));
+
+  // §3 — run a fusion method (foundry / foundry-design / assay / prospect / relay / scatter).
+  ipcMain.handle('council:runMethod', (_e, opts: { repo?: string; methodId: string; task: string; focus?: string; context?: string }) => {
+    const method = METHODS[opts.methodId];
+    if (!method) return { ok: false, error: `unknown method: ${opts.methodId}` };
+    const roster = getSetting<RosterAgent[]>('fusionRoster', []);
+    const runId = `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
+    const task = withContext(opts.task, opts.context);
+    const db = getDb();
+    db.prepare('INSERT INTO council_runs(run_id, repo, protocol, task, assignment, status, started) VALUES(?,?,?,?,?,?,?)')
+      .run(runId, opts.repo ?? null, method.id, task, '{}', 'running', Date.now());
+    appendAudit('council:runMethod', { runId, method: method.id, repo: opts.repo ?? null });
+    trace('council:runMethod', { runId, method: method.id, repo: opts.repo ?? null, focus: opts.focus });
+
+    const controller = new AbortController();
+    const signal = { aborted: false, controller };
+    signals.set(runId, signal);
+
+    void (async () => {
+      send(runId, { type: 'phase', phase: method.name, kind: 'method' });
+      send(runId, { type: 'agent', phase: method.name, content: printMethodCard(method) });
+      const transport = makeTransport(transportConfig(opts.repo, controller.signal));
+      // build capability: delegate to an editing actor in a worktree (degrades if the
+      // assigned builder can't edit, or there's no repo).
+      const build = opts.repo
+        ? async (artifact: string, builder: RosterAgent) => {
+            if (!builder.capabilities?.canEdit) return { ok: false, error: `${builder.displayName} cannot edit files` };
+            const ex = makeExecutorHooks(opts.repo!, `method-${runId}`, controller.signal);
+            if (!ex.delegate) return { ok: false, error: 'no delegate capability' };
+            const r = await ex.delegate(builder, `Implement the following into the working tree directly. Keep changes focused; when done, summarize what changed.\n\n${artifact}`);
+            return { ok: r.ok, diff: r.diff, error: r.error };
+          }
+        : undefined;
+      try {
+        const res = await runMethod(method, { task, focus: opts.focus, roster, transport, signal, emit: (ev) => send(runId, ev), build });
+        const status = res.degraded ? 'completed-degraded' : 'completed';
+        db.prepare('UPDATE council_runs SET status=?, finished=?, artifact=?, result=? WHERE run_id=?')
+          .run(status, Date.now(), res.artifact, JSON.stringify({ report: res.report, scores: res.scores, warnings: res.warnings, findings: res.findings, seed: res.seed, endPrompt: method.endPrompt }), runId);
+        appendAudit('council:methodFinish', { runId, method: method.id, degraded: res.degraded });
+        send(runId, { type: 'finished', status, ok: !res.degraded });
+      } catch (err: any) {
+        db.prepare('UPDATE council_runs SET status=?, finished=? WHERE run_id=?').run('error', Date.now(), runId);
+        send(runId, { type: 'error', content: String(err?.message ?? err) });
+      } finally { signals.delete(runId); }
+    })();
+    return { ok: true, runId };
   });
 
   // Per-phase artifact snapshots for the replay timeline.
