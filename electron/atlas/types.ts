@@ -64,6 +64,8 @@ export interface SymbolCard {
   supersededBy?: string | null;  // location of the superseding symbol
   refCount: number;
   gitLastDate?: number | null;
+  statusReason?: string;
+  confidence?: 'high' | 'medium' | 'low';
   callers: { name: string; location: string }[];
   callees: { name: string; location: string }[];
 }

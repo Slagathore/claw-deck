@@ -56,7 +56,12 @@ contextBridge.exposeInMainWorld('api', {
     version: () => invoke('app:version'),
     setCloseToTray: (value: boolean) => invoke('app:setCloseToTray', value),
     quit: () => invoke('app:quit'),
-    show: () => invoke('app:show')
+    show: () => invoke('app:show'),
+    openPath: (target: string) => invoke('app:openPath', target),
+    showItemInFolder: (target: string) => invoke('app:showItemInFolder', target),
+    which: (binary: string) => invoke('app:which', binary),
+    traceInfo: () => invoke('app:traceInfo'),
+    openTraceLog: () => invoke('app:openTraceLog')
   },
   audit: {
     scan: (path: string) => invoke('audit:scan', { path }),
@@ -102,6 +107,7 @@ contextBridge.exposeInMainWorld('api', {
     startLoop: (opts: { repo: string; protocolId: string; assignment: any; goal: string; maxIterations?: number; costCeiling?: number }) => invoke('council:startLoop', opts),
     cancel: (runId: string) => invoke('council:cancel', { runId }),
     list: () => invoke('council:list'),
+    probeAgent: (agent: any, repo?: string) => invoke('council:probeAgent', { agent, repo }),
     onEvent: (cb: (e: any) => void) => on('council:event', cb)
   },
   exec: {
@@ -109,14 +115,16 @@ contextBridge.exposeInMainWorld('api', {
     proposal: (runId: string, plan: string, diff?: string) => invoke('exec:proposal', { runId, plan, diff }),
     validate: (runId: string) => invoke('exec:validate', { runId }),
     approve: (runId: string) => invoke('exec:approve', { runId }),
-    reject: (runId: string) => invoke('exec:reject', { runId })
+    reject: (runId: string) => invoke('exec:reject', { runId }),
+    list: (limit?: number) => invoke('exec:list', { limit }),
+    rollback: (snapshotId: string) => invoke('exec:rollback', { snapshotId })
   },
   atlas: {
     open: (workspace: string) => invoke('atlas:open', { workspace }),
     index: (workspace: string) => invoke('atlas:index', { workspace }),
     status: (workspace: string) => invoke('atlas:status', { workspace }),
     query: (workspace: string, tool: string, arg: string) => invoke('atlas:query', { workspace, tool, arg }),
-    graph: (workspace: string, statuses?: string[], file?: string) => invoke('atlas:graph', { workspace, statuses, file }),
+    graph: (workspace: string, statuses?: string[], file?: string, search?: string, limit?: number) => invoke('atlas:graph', { workspace, statuses, file, search, limit }),
     card: (workspace: string, ref: string) => invoke('atlas:card', { workspace, ref }),
     enrich: (workspace: string, kind: 'embed' | 'summarize') => invoke('atlas:enrich', { workspace, kind }),
     close: (workspace: string) => invoke('atlas:close', { workspace }),

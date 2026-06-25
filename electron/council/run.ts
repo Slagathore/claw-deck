@@ -8,12 +8,13 @@
 import { RosterAgent, SessionAssignment, Msg, GateVerdict, resolveAgents } from './agents';
 import { Protocol, Phase, parseGateVerdict, isConverged, extractDiff } from './protocol';
 
-export type TransportFn = (agent: RosterAgent, messages: Msg[]) => Promise<string>;
+export type TransportFn = (agent: RosterAgent, messages: Msg[], onDelta?: (chunk: string) => void) => Promise<string>;
 
 export interface CouncilEvent { type: string; phase?: string; kind?: string; agentId?: string; content?: string; verdict?: string; round?: number; ok?: boolean; status?: string }
 
 export interface ExecutorHooks {
   propose: (plan: string, diff?: string) => Promise<{ ok: boolean; diff?: string; error?: string }>;
+  delegate?: (agent: RosterAgent, prompt: string) => Promise<{ ok: boolean; diff?: string; error?: string }>;
   validate: () => Promise<{ ok: boolean }>;
   approve: () => Promise<{ ok: boolean; error?: string }>;
 }
@@ -46,9 +47,17 @@ const SYS = {
   relay: 'You are pairing on a fix. Build on the other agent\'s last message; move toward a concrete, minimal change. Include a fenced ```diff when you have one.',
 };
 
-async function ask(deps: RunDeps, agent: RosterAgent, system: string, user: string): Promise<string | null> {
-  try { return await deps.transport(agent, [{ role: 'system', content: system }, { role: 'user', content: user }]); }
-  catch { return null; }
+async function ask(deps: RunDeps, agent: RosterAgent, system: string, user: string, phase?: string): Promise<string | null> {
+  try {
+    deps.emit?.({ type: 'agent-start', phase, agentId: agent.id });
+    return await deps.transport(agent, [{ role: 'system', content: system }, { role: 'user', content: user }],
+      (delta) => { try { deps.emit?.({ type: 'agent-delta', phase, agentId: agent.id, content: delta }); } catch { /* ignore */ } });
+  }
+  catch (e: any) {
+    const msg = String(e?.message ?? e).slice(0, 1000);
+    try { deps.emit?.({ type: 'agent-error', phase, agentId: agent.id, content: msg, ok: false }); } catch { /* ignore */ }
+    return null;
+  }
 }
 
 export async function runProtocol(protocol: Protocol, deps: RunDeps): Promise<RunResult> {
@@ -73,7 +82,7 @@ export async function runProtocol(protocol: Protocol, deps: RunDeps): Promise<Ru
 
     if (phase.kind === 'independent') {
       const agents = resolveAgents(deps.roster, phase.agents, deps.assignment);
-      const settled = await Promise.allSettled(agents.map((a) => ask(deps, a, SYS.panelist, `Task:\n${deps.task}\n\nCurrent artifact:\n${artifact || '(none yet)'}`)));
+      const settled = await Promise.allSettled(agents.map((a) => ask(deps, a, SYS.panelist, `Task:\n${deps.task}\n\nCurrent artifact:\n${artifact || '(none yet)'}`, label)));
       const takes: string[] = [];
       settled.forEach((s, i) => {
         if (s.status === 'fulfilled' && s.value) { takes.push(`### ${agents[i].displayName}\n${s.value}`); record(label, phase.kind, s.value, agents[i].id); }
@@ -88,12 +97,12 @@ export async function runProtocol(protocol: Protocol, deps: RunDeps): Promise<Ru
       for (let r = 0; r < rounds; r++) {
         if (deps.signal?.aborted) break;
         emit({ type: 'debate-round', phase: label, round: r + 1 });
-        const settled = await Promise.allSettled(agents.map((a) => ask(deps, a, SYS.panelist, `Task:\n${deps.task}\n\nDiscussion so far:\n${artifact}\n\nYour refined take:`)));
+        const settled = await Promise.allSettled(agents.map((a) => ask(deps, a, SYS.panelist, `Task:\n${deps.task}\n\nDiscussion so far:\n${artifact}\n\nYour refined take:`, label)));
         const takes: string[] = [];
         settled.forEach((s, i) => { if (s.status === 'fulfilled' && s.value) { takes.push(`### ${agents[i].displayName}\n${s.value}`); record(label, phase.kind, s.value, agents[i].id); } });
         if (takes.length) artifact = takes.join('\n\n');
         if (phase.stopOn === 'converge' && agents.length) {
-          const check = await ask(deps, agents[0], SYS.converge, artifact);
+          const check = await ask(deps, agents[0], SYS.converge, artifact, label);
           if (check && isConverged(check)) { emit({ type: 'converged', phase: label, round: r + 1 }); break; }
         }
       }
@@ -101,13 +110,20 @@ export async function runProtocol(protocol: Protocol, deps: RunDeps): Promise<Ru
 
     else if (phase.kind === 'synthesize') {
       const scribe = resolveAgents(deps.roster, [phase.by ?? '@scribe'], deps.assignment)[0];
-      if (scribe) { const out = await ask(deps, scribe, SYS.scribe, artifact); if (out) { artifact = out; record(label, phase.kind, out, scribe.id); } }
+      if (scribe) { const out = await ask(deps, scribe, SYS.scribe, artifact, label); if (out) { artifact = out; record(label, phase.kind, out, scribe.id); } }
     }
 
     else if (phase.kind === 'gate') {
       const gate = resolveAgents(deps.roster, [phase.by ?? '@qa-gate'], deps.assignment)[0];
       if (!gate) continue;
-      const reply = await ask(deps, gate, SYS.gate, `Proposal to review:\n${artifact}`) ?? 'major (no response)';
+      const reply = await ask(deps, gate, SYS.gate, `Proposal to review:\n${artifact}`, label);
+      if (!reply) {
+        const verdict: GateVerdict = { verdict: 'major', notes: `${gate.displayName} failed to respond; see agent-error event above.` };
+        verdicts.push(verdict);
+        emit({ type: 'verdict', phase: label, agentId: gate.id, verdict: verdict.verdict, content: verdict.notes });
+        emit({ type: 'bounce', phase: label, verdict: verdict.verdict });
+        return { status: 'bounced', phasesRun, transcript, artifact, verdicts, approved };
+      }
       const verdict = parseGateVerdict(reply);
       verdicts.push(verdict);
       record(label, phase.kind, reply, gate.id);
@@ -126,7 +142,7 @@ export async function runProtocol(protocol: Protocol, deps: RunDeps): Promise<Ru
       for (let t = 0; t < turns && pair.length >= 1; t++) {
         if (deps.signal?.aborted) break;
         const speaker = pair[t % pair.length];
-        const reply = await ask(deps, speaker, SYS.relay, msg);
+        const reply = await ask(deps, speaker, SYS.relay, msg, label);
         if (!reply) continue;
         msg = reply; artifact = reply; record(label, phase.kind, reply, speaker.id);
       }
@@ -136,7 +152,7 @@ export async function runProtocol(protocol: Protocol, deps: RunDeps): Promise<Ru
       const agents = resolveAgents(deps.roster, phase.agents, deps.assignment);
       let yes = 0; let n = 0;
       await Promise.allSettled(agents.map(async (a) => {
-        const reply = await ask(deps, a, 'Reply YES if you approve this proposal, else NO, then a brief reason.', artifact);
+        const reply = await ask(deps, a, 'Reply YES if you approve this proposal, else NO, then a brief reason.', artifact, label);
         if (reply) { n++; if (/\byes\b/i.test(reply)) yes++; record(label, phase.kind, reply, a.id); }
       }));
       if (n && yes * 2 <= n) { emit({ type: 'bounce', phase: label, verdict: 'vote-failed' }); return { status: 'bounced', phasesRun, transcript, artifact, verdicts, approved }; }
@@ -146,7 +162,9 @@ export async function runProtocol(protocol: Protocol, deps: RunDeps): Promise<Ru
       const actor = resolveAgents(deps.roster, [phase.by ?? '@judge'], deps.assignment)[0];
       const diff = extractDiff(artifact);
       if (deps.executor) {
-        const p = await deps.executor.propose(artifact, diff);
+        const p = phase.kind === 'execute' && !diff && actor && deps.executor.delegate
+          ? await deps.executor.delegate(actor, `Task:\n${deps.task}\n\nCouncil proposal:\n${artifact}\n\nEdit the working tree directly to implement the smallest correct fix. Keep changes focused. When done, summarize what changed.`)
+          : await deps.executor.propose(artifact, diff);
         emit({ type: 'propose', phase: label, ok: p.ok, agentId: actor?.id });
         if (p.ok && phase.kind === 'execute') {
           const v = await deps.executor.validate();

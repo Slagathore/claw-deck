@@ -1,10 +1,16 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useWorkspaces } from '../store/workspaces';
 import { atlas } from '../lib/atlasClient';
 
 /** Open-folders tab strip. "Open folder" → new workspace + kicks the Atlas index. */
 export default function WorkspaceTabs() {
   const { workspaces, active, add, setActive, remove } = useWorkspaces();
+
+  useEffect(() => {
+    for (const w of workspaces) {
+      atlas.open(w.path).catch(() => { /* reopen best-effort */ });
+    }
+  }, [workspaces]);
 
   async function open() {
     const p = await window.api.app.pickPath({ properties: ['openDirectory'] });

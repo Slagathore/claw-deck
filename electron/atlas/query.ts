@@ -90,11 +90,23 @@ export function getCard(db: Queryable, ref: string): SymbolCard | null {
     const sup = db.prepare(`${SYM_SELECT} WHERE s.id = ?`).all(s.supersededBy) as SymRow[];
     if (sup.length) supersededByLoc = loc(sup[0].file, sup[0].startLine);
   }
+  const resolvedEdges = (db.prepare(`SELECT COUNT(*) AS n FROM atlas_edges WHERE (src = ? OR dst = ?) AND resolved = 1`).get(s.id, s.id) as { n: number }).n;
+  const totalEdges = (db.prepare(`SELECT COUNT(*) AS n FROM atlas_edges WHERE src = ? OR dst = ?`).get(s.id, s.id) as { n: number }).n;
+  const statusReason = s.status === 'deprecated'
+    ? 'Marked deprecated by source documentation.'
+    : s.status === 'superseded'
+      ? `Embedding similarity found a referenced sibling; this symbol has ${s.refCount} refs.`
+      : s.status === 'orphaned'
+        ? `No entrypoint reachability and ${s.refCount} incoming refs were found.`
+        : s.refCount > 0
+          ? `Referenced by ${s.refCount} indexed edge(s).`
+          : 'Exported or reachable from a known entrypoint.';
+  const confidence: SymbolCard['confidence'] = totalEdges > 0 && resolvedEdges === 0 ? 'medium' : s.status === 'orphaned' && s.refCount === 0 ? 'medium' : 'high';
   return {
     id: s.id, name: s.name, qualifiedName: s.qualifiedName, kind: s.kind as SymbolCard['kind'],
     signature: s.signature ?? undefined, summary: s.summary, doc: s.doc,
     location: loc(s.file, s.startLine), status: s.status, supersededBy: supersededByLoc,
-    refCount: s.refCount, gitLastDate: s.gitLastDate,
+    refCount: s.refCount, gitLastDate: s.gitLastDate, statusReason, confidence,
     callers: neighbours(db, s.id, 'in'), callees: neighbours(db, s.id, 'out'),
   };
 }
@@ -154,12 +166,17 @@ export interface GraphNode { id: string; label: string; kind: string; status: st
 export interface GraphEdge { source: string; target: string; kind: string; }
 
 /** Graph for cytoscape, optionally filtered to a set of statuses and/or a file. */
-export function graph(db: Queryable, opts: { statuses?: SymbolStatus[]; file?: string; limit?: number } = {}): { nodes: GraphNode[]; edges: GraphEdge[] } {
+export function graph(db: Queryable, opts: { statuses?: SymbolStatus[]; file?: string; search?: string; limit?: number } = {}): { nodes: GraphNode[]; edges: GraphEdge[] } {
   const limit = opts.limit ?? 1500;
   const where: string[] = [`s.kind != 'module'`];
   const params: any[] = [];
   if (opts.statuses && opts.statuses.length) { where.push(`s.status IN (${opts.statuses.map(() => '?').join(',')})`); params.push(...opts.statuses); }
   if (opts.file) { where.push(`f.path = ?`); params.push(opts.file); }
+  if (opts.search?.trim()) {
+    const like = `%${opts.search.trim()}%`;
+    where.push(`(s.name LIKE ? OR s.qualified_name LIKE ? OR f.path LIKE ? OR s.summary LIKE ? OR s.doc LIKE ?)`);
+    params.push(like, like, like, like, like);
+  }
   const rows = db.prepare(`${SYM_SELECT} WHERE ${where.join(' AND ')} ORDER BY s.ref_count DESC LIMIT ?`).all(...params, limit) as SymRow[];
   const nodes: GraphNode[] = rows.map((r) => ({ id: String(r.id), label: r.name, kind: r.kind, status: r.status, file: r.file, line: r.startLine, refCount: r.refCount }));
   const ids = new Set(nodes.map((n) => n.id));

@@ -1,11 +1,16 @@
-import React from 'react';
-import { CouncilEvt } from '../store/council';
+import React, { useEffect, useRef } from 'react';
+import { CouncilEvt, LiveLane } from '../store/council';
 
 const LANE_COLORS = ['#7c9cff', '#4ade80', '#fbbf24', '#f87171', '#a78bfa', '#22d3ee'];
 
-/** Live debate stream: phase headers, per-agent lanes, verdicts, convergence, result. */
-export default function DebateTheater({ events, running }: { events: CouncilEvt[]; running?: boolean }) {
-  if (!events.length) return <div className="card" style={{ color: 'var(--muted)', fontSize: 12 }}>No session yet — configure on the left and press Start.</div>;
+/** Live debate stream: phase headers, per-agent lanes, streaming text, verdicts, result. */
+export default function DebateTheater({ events, live, running }: { events: CouncilEvt[]; live?: Record<string, LiveLane>; running?: boolean }) {
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const liveLanes = Object.entries(live ?? {}).filter(([, l]) => l.text);
+  // auto-scroll to the newest output as events + streaming text arrive
+  useEffect(() => { bottomRef.current?.scrollIntoView({ block: 'end' }); }, [events.length, liveLanes.map(([, l]) => l.text.length).join(',')]);
+
+  if (!events.length && !liveLanes.length) return <div className="card" style={{ color: 'var(--muted)', fontSize: 12 }}>No session yet — configure on the left and press Start.</div>;
 
   const laneColor = (() => {
     const m = new Map<string, string>(); let i = 0;
@@ -24,7 +29,8 @@ export default function DebateTheater({ events, running }: { events: CouncilEvt[
           case 'loop:done': return <div key={i}><span className={`badge ${e.ok ? 'ok' : 'warn'}`}>loop finished: {e.status}</span></div>;
           case 'phase': return <div key={i} style={{ borderTop: '1px solid var(--border)', paddingTop: 6, marginTop: 4 }}><strong style={{ color: 'var(--accent)' }}>▸ {e.phase}</strong> <span style={{ color: 'var(--muted)', fontSize: 11 }}>{e.kind}</span></div>;
           case 'debate-round': return <div key={i} style={{ fontSize: 11, color: 'var(--muted)' }}>round {e.round}</div>;
-          case 'agent': return <div key={i} style={{ fontSize: 12 }}><span style={{ color: laneColor(e.agentId), fontWeight: 600 }}>{e.agentId}</span>: <span style={{ whiteSpace: 'pre-wrap' }}>{(e.content ?? '').slice(0, 600)}</span></div>;
+          case 'agent': return <div key={i} style={{ fontSize: 12 }}><span style={{ color: laneColor(e.agentId), fontWeight: 600 }}>{e.agentId}</span>: <span style={{ whiteSpace: 'pre-wrap' }}>{(e.content ?? '').slice(0, 6000)}</span></div>;
+          case 'agent-error': return <div key={i} className="banner warn" style={{ fontSize: 12 }}><strong>{e.agentId}</strong> failed: {(e.content ?? '').slice(0, 800)}</div>;
           case 'verdict': return <div key={i}><span className={`badge ${e.verdict === 'approve' ? 'ok' : e.verdict === 'minor' ? 'warn' : 'bad'}`}>{e.verdict}</span> <span style={{ fontSize: 11, color: 'var(--muted)' }}>{e.agentId}</span></div>;
           case 'converged': return <div key={i}><span className="badge ok">converged</span></div>;
           case 'bounce': return <div key={i}><span className="badge bad">bounced — {e.verdict}</span></div>;
@@ -34,6 +40,16 @@ export default function DebateTheater({ events, running }: { events: CouncilEvt[
           default: return null;
         }
       })}
+
+      {/* in-flight streaming lanes (text as it arrives, before the agent finalizes) */}
+      {liveLanes.map(([agentId, lane]) => (
+        <div key={`live-${agentId}`} style={{ fontSize: 12 }}>
+          <span style={{ color: laneColor(agentId), fontWeight: 600 }}>{agentId}</span>
+          <span className="badge warn" style={{ fontSize: 9, marginLeft: 4 }}>streaming</span>:{' '}
+          <span style={{ whiteSpace: 'pre-wrap' }}>{lane.text.slice(-6000)}<span style={{ opacity: 0.5 }}>▋</span></span>
+        </div>
+      ))}
+      <div ref={bottomRef} />
     </div>
   );
 }

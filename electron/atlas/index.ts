@@ -10,6 +10,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
+import { spawnSync } from 'child_process';
 import { Queryable, rowId } from './driver';
 import { migrate } from './schema';
 import { parseTsProgram } from './parse/tsProgram';
@@ -141,9 +142,26 @@ function entryFilesFor(root: string, rels: string[]): string[] {
   return [...new Set(entries)];
 }
 
+function gitLastDates(root: string): Map<string, number> {
+  const out = new Map<string, number>();
+  try {
+    const r = spawnSync('git', ['-C', root, 'log', '--max-count=2000', '--format=@%ct', '--name-only', '--', '.'], { encoding: 'utf8', timeout: 15000 });
+    if (r.status !== 0 || !r.stdout) return out;
+    let ts: number | null = null;
+    for (const raw of r.stdout.split(/\r?\n/)) {
+      const line = raw.trim();
+      if (!line) continue;
+      if (line.startsWith('@')) { ts = Number(line.slice(1)); continue; }
+      if (ts && !out.has(line.replace(/\\/g, '/'))) out.set(line.replace(/\\/g, '/'), ts);
+    }
+  } catch { /* git unavailable or not a repo */ }
+  return out;
+}
+
 /** Read + parse a workspace into a ParseResult plus per-file metadata. */
 export function scanWorkspace(root: string): { parse: ParseResult; fileMeta: Record<string, FileMeta>; entryFiles: string[] } {
   const abs = collectSourceFiles(root);
+  const recency = gitLastDates(root);
   const tsFiles: Record<string, string> = {};
   const polyFiles: Record<string, string> = {};
   const fileMeta: Record<string, FileMeta> = {};
@@ -154,7 +172,7 @@ export function scanWorkspace(root: string): { parse: ParseResult; fileMeta: Rec
     if (rel.endsWith('.ts') || rel.endsWith('.tsx')) tsFiles[rel] = content; else polyFiles[rel] = content;
     let mtime = Date.now();
     try { mtime = Math.floor(fs.statSync(f).mtimeMs); } catch { /* ignore */ }
-    fileMeta[rel] = { lang: langOf(rel), hash: crypto.createHash('sha256').update(content).digest('hex'), mtime, gitLastDate: null };
+    fileMeta[rel] = { lang: langOf(rel), hash: crypto.createHash('sha256').update(content).digest('hex'), mtime, gitLastDate: recency.get(rel) ?? null };
   }
   const ts = parseTsProgram(tsFiles);
   const poly = parsePolyglot(polyFiles);

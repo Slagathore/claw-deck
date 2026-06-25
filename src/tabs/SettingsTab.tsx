@@ -10,6 +10,7 @@ export default function SettingsTab() {
   const [draft, setDraft] = useState<any>(data);
   const [mcpStatuses, setMcpStatuses] = useState<McpStatus[]>([]);
   const [ollamaHealth, setOllamaHealth] = useState<'unknown' | 'ok' | 'bad'>('unknown');
+  const [agentProbe, setAgentProbe] = useState<Record<string, { ok: boolean; detail: string }>>({});
   function set<K extends string>(k: K, v: any) { setDraft({ ...draft, [k]: v }); }
 
   useEffect(() => {
@@ -33,6 +34,10 @@ export default function SettingsTab() {
   }
 
   function statusFor(name: string) { return mcpStatuses.find(s => s.name === name); }
+  async function probeAgent(a: any) {
+    const r = await window.api.council.probeAgent(a);
+    setAgentProbe(p => ({ ...p, [a.id]: r }));
+  }
   return (
     <div className="col">
       <div className="card col">
@@ -89,13 +94,16 @@ export default function SettingsTab() {
 
       <div className="card col">
         <h3 style={{ margin: 0 }}>Fusion Council</h3>
-        <label className="label">Panelists run on your <strong>local Ollama</strong> (it serves <code>*:cloud</code> models itself — no key needed). The fields below are only for a genuinely remote OpenAI-compatible endpoint.</label>
+        <label className="label">Council cloud models call your <strong>local Ollama daemon</strong>, which forwards <code>*:cloud</code> / <code>*-cloud</code> models to Ollama Cloud. Probe should report a <code>remote_host</code>; the fields below are only for a separate remote OpenAI-compatible endpoint.</label>
         <label className="label">Remote OpenAI-compat URL (optional; blank = use local Ollama)</label>
         <input value={draft.ollamaCloudUrl ?? ''} onChange={e => set('ollamaCloudUrl', e.target.value)} placeholder="(blank — uses local Ollama)" />
         <label className="label">Remote API key (optional; blank for local)</label>
         <input type="password" value={draft.ollamaCloudKey ?? ''} onChange={e => set('ollamaCloudKey', e.target.value)} />
         <label className="label">Embedding model (Atlas, 768-dim)</label>
         <input value={draft.embedModel ?? ''} onChange={e => set('embedModel', e.target.value)} placeholder="nomic-embed-text" />
+        <label className="label" title="When OFF (default), Claw Deck drops ANTHROPIC_API_KEY when spawning Claude Code so it uses your `claude login` Pro/Max subscription. Turn ON only if you specifically want pay-per-token API billing.">
+          <input type="checkbox" checked={!!draft.claudeUseApiKey} onChange={e => set('claudeUseApiKey', e.target.checked)} /> Bill Claude Code to the API key (off = use your <code>claude login</code> subscription)
+        </label>
 
         <label className="label" style={{ marginTop: 8 }}><strong>Agent Roster</strong> — the global pool each Council tab assigns from</label>
         {(draft.fusionRoster ?? []).map((a: any, i: number) => (
@@ -110,7 +118,10 @@ export default function SettingsTab() {
               {['cheap', 'mid', 'expensive'].map(t => <option key={t} value={t}>{t}</option>)}
             </select>
             <label style={{ fontSize: 11 }}><input type="checkbox" checked={!!a.capabilities?.canEdit} onChange={e => { const n = [...draft.fusionRoster]; n[i] = { ...a, capabilities: { ...a.capabilities, canEdit: e.target.checked } }; set('fusionRoster', n); }} /> edits</label>
+            <label style={{ fontSize: 11 }}><input type="checkbox" checked={!!a.capabilities?.canRunTools} onChange={e => { const n = [...draft.fusionRoster]; n[i] = { ...a, capabilities: { ...a.capabilities, canRunTools: e.target.checked } }; set('fusionRoster', n); }} /> tools</label>
+            <button onClick={() => probeAgent(a)}>Probe</button>
             <button onClick={() => { const n = [...draft.fusionRoster]; n.splice(i, 1); set('fusionRoster', n); }}>×</button>
+            {agentProbe[a.id] && <span className={`badge ${agentProbe[a.id].ok ? 'ok' : 'bad'}`} title={agentProbe[a.id].detail}>{agentProbe[a.id].ok ? 'ready' : 'not ready'}</span>}
           </div>
         ))}
         <button onClick={() => set('fusionRoster', [...(draft.fusionRoster ?? []), { id: `agent-${Date.now().toString(36)}`, displayName: 'New agent', transport: 'ollama-cloud', model: '', capabilities: { canEdit: false, canRunTools: false, costTier: 'mid' } }])}>+ Add agent</button>

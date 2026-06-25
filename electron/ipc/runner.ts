@@ -2,6 +2,8 @@ import { ipcMain, BrowserWindow } from 'electron';
 import { spawn, ChildProcess } from 'child_process';
 import { randomUUID } from 'crypto';
 import { getActiveMcpEnv } from './mcp';
+import { resolveCliBinary } from './cliResolve';
+import { trace } from './trace';
 
 /**
  * Subprocess runner. Two modes:
@@ -23,21 +25,46 @@ const sessions = new Map<string, Session>();
  * collect stdout/stderr, resolve on exit. Used by the executor to drive
  * apply-mode actors and detect quota/auth failures (see executor/fallback.ts).
  */
+/** Kill a child and (on Windows) its whole process tree — CLIs spawn children. */
+function killProcTree(proc: ChildProcess): void {
+  try {
+    if (process.platform === 'win32' && proc.pid) {
+      spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { stdio: 'ignore', shell: false });
+    } else {
+      proc.kill('SIGKILL');
+    }
+  } catch { /* already dead */ }
+}
+
 export function runCaptured(opts: {
   binary: string; args?: string[]; cwd?: string; env?: Record<string, string>; input?: string; timeoutMs?: number;
+  signal?: AbortSignal; onData?: (chunk: string) => void; unsetEnv?: string[];
 }): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    const env = { ...process.env, ...getActiveMcpEnv(), ...(opts.env ?? {}) };
-    const bareName = !/[\\/]/.test(opts.binary);
+    const env: Record<string, string | undefined> = { ...process.env, ...getActiveMcpEnv(), ...(opts.env ?? {}) };
+    for (const k of opts.unsetEnv ?? []) delete env[k];   // e.g. drop ANTHROPIC_API_KEY → claude uses the login subscription
+    const binary = resolveCliBinary(opts.binary);
+    const bareName = !/[\\/]/.test(binary);
     const useShell = process.platform === 'win32' && bareName;
-    const proc = spawn(opts.binary, opts.args ?? [], { cwd: opts.cwd, env, shell: useShell });
+    const started = Date.now();
+    trace('runner:start', { requested: opts.binary, resolved: binary, args: opts.args ?? [], cwd: opts.cwd, inputBytes: opts.input?.length ?? 0, timeoutMs: opts.timeoutMs });
+    const proc = spawn(binary, opts.args ?? [], { cwd: opts.cwd, env, shell: useShell });
     let out = '', err = '', done = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const finish = (code: number | null) => { if (done) return; done = true; if (timer) clearTimeout(timer); resolve({ code, stdout: out, stderr: err }); };
-    if (opts.timeoutMs) timer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* dead */ } err += '\n[killed: timeout]'; finish(null); }, opts.timeoutMs);
-    proc.stdout?.on('data', (d) => { out += d.toString(); });
+    const onAbort = () => { killProcTree(proc); err += '\n[aborted]'; finish(null); };
+    const finish = (code: number | null) => {
+      if (done) return;
+      done = true;
+      if (timer) clearTimeout(timer);
+      if (opts.signal) opts.signal.removeEventListener('abort', onAbort);
+      trace('runner:finish', { requested: opts.binary, resolved: binary, code, ms: Date.now() - started, stdoutBytes: out.length, stderrBytes: err.length, stdoutTail: out.slice(-800), stderrTail: err.slice(-1200) });
+      resolve({ code, stdout: out, stderr: err });
+    };
+    if (opts.timeoutMs) timer = setTimeout(() => { killProcTree(proc); err += '\n[killed: timeout]'; finish(null); }, opts.timeoutMs);
+    if (opts.signal) { if (opts.signal.aborted) onAbort(); else opts.signal.addEventListener('abort', onAbort); }
+    proc.stdout?.on('data', (d) => { const s = d.toString(); out += s; opts.onData?.(s); });
     proc.stderr?.on('data', (d) => { err += d.toString(); });
-    proc.on('error', (e) => { err += String(e); finish(null); });
+    proc.on('error', (e) => { err += String(e); trace('runner:error', { requested: opts.binary, resolved: binary, error: e.message }); finish(null); });
     proc.on('exit', (code) => finish(code));
     if (opts.input != null) { try { proc.stdin?.write(opts.input); proc.stdin?.end(); } catch { /* no stdin */ } }
   });
@@ -71,7 +98,8 @@ export function registerRunnerHandlers(getWindow: () => BrowserWindow | null) {
       const pty = loadPty();
       if (pty) {
         try {
-          const term = pty.spawn(opts.binary, opts.args ?? [], {
+          const binary = resolveCliBinary(opts.binary);
+          const term = pty.spawn(binary, opts.args ?? [], {
             name: 'xterm-256color',
             cols: opts.cols ?? 120,
             rows: opts.rows ?? 30,
@@ -92,9 +120,10 @@ export function registerRunnerHandlers(getWindow: () => BrowserWindow | null) {
     // Pipe path. On Windows, bare command names (e.g. `clawhub`, `npm`, `winget`)
     // are usually `.cmd`/`.exe` resolved via PATHEXT — which spawn() only does
     // with a shell. Use a shell for bare names so npm-installed CLIs resolve.
-    const bareName = !/[\\/]/.test(opts.binary);
+    const binary = resolveCliBinary(opts.binary);
+    const bareName = !/[\\/]/.test(binary);
     const useShell = process.platform === 'win32' && bareName;
-    const proc = spawn(opts.binary, opts.args ?? [], { cwd: opts.cwd, env, shell: useShell });
+    const proc = spawn(binary, opts.args ?? [], { cwd: opts.cwd, env, shell: useShell });
     sessions.set(id, { kind: 'pipe', proc, backend: opts.backend });
     proc.stdout?.on('data', d => emit(id, 'stdout', d.toString()));
     proc.stderr?.on('data', d => emit(id, 'stderr', d.toString()));

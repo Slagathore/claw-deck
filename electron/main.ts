@@ -1,5 +1,6 @@
-import { app, BrowserWindow, ipcMain, desktopCapturer, screen, dialog, Tray, Menu, nativeImage } from 'electron';
+import { app, BrowserWindow, ipcMain, desktopCapturer, screen, dialog, Tray, Menu, nativeImage, shell } from 'electron';
 import * as path from 'path';
+import { spawn } from 'child_process';
 import { initDb } from './ipc/db';
 import { registerRunnerHandlers } from './ipc/runner';
 import { registerOllamaHandlers } from './ipc/ollama';
@@ -18,6 +19,8 @@ import { registerAtlasHandlers, closeAllAtlasWatchers } from './ipc/atlas';
 import { registerExecutorHandlers } from './ipc/executor';
 import { registerCouncilHandlers } from './ipc/council';
 import { registerBridgeHandlers } from './ipc/bridge';
+import { resolveCliBinary } from './ipc/cliResolve';
+import { ensureTraceFile, tracePath } from './ipc/trace';
 import { closeAllAtlas } from './atlas/db';
 import { registerSelfUpgradeHandlers } from './selfUpgrade/registry';
 import { executeProbeMode } from './selfUpgrade/probe';
@@ -220,6 +223,38 @@ app.whenReady().then(async () => {
   ipcMain.handle('app:quit', () => { quitting = true; app.quit(); });
 
   ipcMain.handle('app:show', () => { showWindow(); return { ok: true }; });
+
+  ipcMain.handle('app:openPath', async (_e, target: string) => {
+    const reason = await shell.openPath(target);
+    return { ok: !reason, reason };
+  });
+
+  ipcMain.handle('app:showItemInFolder', (_e, target: string) => {
+    shell.showItemInFolder(target);
+    return { ok: true };
+  });
+
+  ipcMain.handle('app:which', async (_e, binary: string) => {
+    const resolved = resolveCliBinary(binary);
+    if (resolved && resolved !== binary) return { ok: true, path: resolved };
+    const probe = process.platform === 'win32' ? 'where.exe' : 'which';
+    return await new Promise(resolve => {
+      const proc = spawn(probe, [binary], { windowsHide: true });
+      let out = ''; let err = '';
+      proc.stdout?.on('data', d => { out += d.toString(); });
+      proc.stderr?.on('data', d => { err += d.toString(); });
+      proc.on('error', e => resolve({ ok: false, error: e.message }));
+      proc.on('close', code => resolve({ ok: code === 0, path: out.trim().split(/\r?\n/)[0], error: err.trim() }));
+    });
+  });
+
+  ipcMain.handle('app:traceInfo', () => ({ ok: true, path: tracePath() }));
+
+  ipcMain.handle('app:openTraceLog', async () => {
+    const p = ensureTraceFile();
+    const reason = await shell.openPath(p);
+    return { ok: !reason, path: p, reason };
+  });
 
   createWindow();
   await buildTray();

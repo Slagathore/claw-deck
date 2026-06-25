@@ -15,6 +15,12 @@ export default function ProjectBrainTab() {
   const [card, setCard] = useState<Card | null>(null);
   const [locateQ, setLocateQ] = useState('');
   const [locateHits, setLocateHits] = useState<{ location: string; name: string; kind: string; status: string }[]>([]);
+  const [graphSearch, setGraphSearch] = useState('');
+  const [fileFilter, setFileFilter] = useState('');
+  const [graphLimit, setGraphLimit] = useState(600);
+  const [layoutName, setLayoutName] = useState<'cose' | 'grid' | 'circle'>('cose');
+  const [mcpStatus, setMcpStatus] = useState<{ status: string; lastError?: string } | null>(null);
+  const [openedServer, setOpenedServer] = useState<string>('');
 
   const cyHost = useRef<HTMLDivElement>(null);
   const cy = useRef<cytoscape.Core | null>(null);
@@ -53,8 +59,8 @@ export default function ProjectBrainTab() {
     if (r.ok) setCard(r.card ?? null);
   }, []);
 
-  const refreshGraph = useCallback(async (ws: string, active: Set<AtlasStatus>) => {
-    const r = await atlas.graph(ws, [...active]);
+  const refreshGraph = useCallback(async (ws: string, active: Set<AtlasStatus>, search = graphSearch, file = fileFilter, limit = graphLimit, layout = layoutName) => {
+    const r = await atlas.graph(ws, [...active], file.trim() || undefined, search.trim() || undefined, limit);
     const inst = cy.current;
     if (!inst || !r.ok || !r.graph) return;
     const maxRef = Math.max(1, ...r.graph.nodes.map((n) => n.refCount));
@@ -63,8 +69,11 @@ export default function ProjectBrainTab() {
       ...r.graph.nodes.map((n) => ({ data: { id: n.id, label: n.label, color: STATUS_COLOR[n.status as AtlasStatus] ?? '#8a93a6', size: 14 + Math.round(26 * (n.refCount / maxRef)), ref: `${n.file}:${n.line}` } })),
       ...r.graph.edges.map((e) => ({ data: { id: `${e.source}-${e.target}-${e.kind}`, source: e.source, target: e.target } })),
     ]);
-    inst.layout({ name: 'cose', animate: false, nodeRepulsion: () => 8000, idealEdgeLength: () => 60 } as any).run();
-  }, []);
+    const layoutOpts = layout === 'cose'
+      ? { name: 'cose', animate: false, nodeRepulsion: () => 8000, idealEdgeLength: () => 60 }
+      : { name: layout, animate: false };
+    inst.layout(layoutOpts as any).run();
+  }, [fileFilter, graphLimit, graphSearch, layoutName]);
 
   const refreshStatus = useCallback(async (ws: string) => {
     const r = await atlas.status(ws);
@@ -81,6 +90,7 @@ export default function ProjectBrainTab() {
       const o = await atlas.open(ws);          // reopens the persisted <ws>/.fusion/atlas.db
       if (!o.ok || cancelled) return;
       setWorkspace(ws);
+      setOpenedServer(o.mcpServer ?? '');
       setMsg(`Restored ${ws} — press ↻ Re-index to refresh from disk`);
       await refreshStatus(ws);
       await refreshGraph(ws, new Set(ALL_STATUSES));
@@ -97,6 +107,7 @@ export default function ProjectBrainTab() {
     const o = await atlas.open(ws);
     if (!o.ok) { setBusy(''); setMsg(`Open failed: ${o.error}`); return; }
     setWorkspace(ws);
+    setOpenedServer(o.mcpServer ?? '');
     window.api.settings.set({ projectBrainWorkspace: ws }); // remember across restarts
     setBusy('Indexing…');
     const ix = await atlas.index(ws);
@@ -140,12 +151,33 @@ export default function ProjectBrainTab() {
     if (workspace) refreshGraph(workspace, next);
   }
 
+  function openLocation(location: string) {
+    if (!workspace) return;
+    const [file] = location.split(':');
+    if (!file) return;
+    window.api.app.openPath(`${workspace}\\${file.replace(/\//g, '\\')}`).catch(() => { /* best-effort */ });
+  }
+
+  useEffect(() => {
+    if (!workspace || !openedServer) return;
+    let cancelled = false;
+    const poll = async () => {
+      const list = await window.api.mcp.list().catch(() => []);
+      if (cancelled) return;
+      const st = list.find((m: any) => m.name === openedServer);
+      setMcpStatus(st ? { status: st.status, lastError: st.lastError } : null);
+    };
+    poll();
+    const t = setInterval(poll, 4000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [workspace, openedServer]);
+
   // live re-index events from the watcher
   useEffect(() => {
     const off = atlas.onEvent((e) => {
       if (!workspace || e.workspace !== workspace) return;
       if (e.kind === 'reindexed' || e.kind === 'indexed' || e.kind === 'enriched') {
-        refreshStatus(workspace); refreshGraph(workspace, filters);
+          refreshStatus(workspace); refreshGraph(workspace, filters);
       }
     });
     return off;
@@ -175,7 +207,24 @@ export default function ProjectBrainTab() {
         </div>
       )}
 
+      {workspace && (
+        <div className="row" style={{ flexWrap: 'wrap' }}>
+          <input placeholder="graph search: symbol, file, summary" value={graphSearch} onChange={e => setGraphSearch(e.target.value)} style={{ minWidth: 220 }} />
+          <input placeholder="file filter: src/App.tsx" value={fileFilter} onChange={e => setFileFilter(e.target.value)} style={{ minWidth: 180 }} />
+          <label className="label">limit <input type="number" min={50} max={3000} step={50} value={graphLimit} onChange={e => setGraphLimit(Math.max(50, Math.min(3000, Number(e.target.value) || 600)))} style={{ width: 80 }} /></label>
+          <select value={layoutName} onChange={e => setLayoutName(e.target.value as any)}>
+            <option value="cose">cluster</option>
+            <option value="grid">grid</option>
+            <option value="circle">circle</option>
+          </select>
+          <button onClick={() => refreshGraph(workspace, filters)}>Apply graph filters</button>
+        </div>
+      )}
+
       {msg && <div className="card" style={{ padding: 8, fontSize: 12, color: 'var(--muted)' }}>{msg}</div>}
+      {workspace && mcpStatus && mcpStatus.status !== 'running' && (
+        <div className="banner warn">code-brain MCP is {mcpStatus.status}{mcpStatus.lastError ? `: ${mcpStatus.lastError.slice(0, 240)}` : ''}</div>
+      )}
 
       <div className="row" style={{ flex: 1, alignItems: 'stretch', minHeight: 0 }}>
         <div ref={cyHost} className="card" style={{ flex: 1, padding: 0, minHeight: 320 }} />
@@ -193,13 +242,14 @@ export default function ProjectBrainTab() {
                   <div key={h.location} className="row" style={{ cursor: 'pointer', justifyContent: 'space-between' }} onClick={() => loadCard(h.location)}>
                     <span style={{ color: 'var(--accent)' }}>{h.name}</span>
                     <span style={{ color: 'var(--muted)', fontSize: 11 }}>{h.kind}</span>
+                    <button onClick={(e) => { e.stopPropagation(); openLocation(h.location); }} style={{ padding: '2px 6px', fontSize: 11 }}>Open</button>
                   </div>
                 ))}
               </div>
             )}
           </div>
 
-          {card ? <CardView card={card} onNavigate={loadCard} /> : (
+          {card ? <CardView card={card} onNavigate={loadCard} onOpen={openLocation} /> : (
             <div className="card" style={{ color: 'var(--muted)', fontSize: 12 }}>
               {workspace ? 'Click a node or a locate result to inspect a symbol.' : 'Open a folder to build its Atlas (symbols, edges, status tags).'}
             </div>
@@ -210,7 +260,7 @@ export default function ProjectBrainTab() {
   );
 }
 
-function CardView({ card, onNavigate }: { card: Card; onNavigate: (ref: string) => void }) {
+function CardView({ card, onNavigate, onOpen }: { card: Card; onNavigate: (ref: string) => void; onOpen: (ref: string) => void }) {
   const badge = STATUS_BADGE[card.status as AtlasStatus] ?? '';
   return (
     <div className="card col" style={{ gap: 8 }}>
@@ -219,6 +269,10 @@ function CardView({ card, onNavigate }: { card: Card; onNavigate: (ref: string) 
         <span className={`badge ${badge}`} style={!badge ? { color: 'var(--muted)' } : undefined}>{card.status}</span>
       </div>
       <div style={{ color: 'var(--muted)', fontSize: 11 }}>{card.kind} · {card.location} · {card.refCount} refs</div>
+      {card.statusReason && <div className="banner info" style={{ fontSize: 12 }}>Why: {card.statusReason} Confidence: {card.confidence ?? 'unknown'}.</div>}
+      <div className="row">
+        <button onClick={() => onOpen(card.location)} style={{ padding: '3px 8px', fontSize: 11 }}>Open file</button>
+      </div>
       {card.signature && <pre style={{ margin: 0, whiteSpace: 'pre-wrap', fontSize: 11 }}>{card.signature}</pre>}
       {card.summary && <div style={{ fontSize: 12 }}>{card.summary}</div>}
       {card.doc && !card.summary && <div style={{ fontSize: 12, color: 'var(--muted)' }}>{card.doc}</div>}

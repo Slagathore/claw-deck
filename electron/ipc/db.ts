@@ -71,6 +71,23 @@ export async function initDb() {
       result TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_council_started ON council_runs(started DESC);
+    CREATE TABLE IF NOT EXISTS executor_runs (
+      run_id TEXT PRIMARY KEY,
+      repo TEXT NOT NULL,
+      mode TEXT NOT NULL,
+      status TEXT NOT NULL,
+      wt_dir TEXT,
+      branch TEXT,
+      plan_path TEXT,
+      diff_path TEXT,
+      diff_bytes INTEGER NOT NULL DEFAULT 0,
+      validation_ok INTEGER,
+      snapshot_id TEXT,
+      started INTEGER NOT NULL,
+      updated INTEGER NOT NULL,
+      error TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_executor_updated ON executor_runs(updated DESC);
   `);
   // additive migrations — safe to run on every boot
   migrate('upgrades', 'install_path', 'TEXT');

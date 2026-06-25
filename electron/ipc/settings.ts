@@ -12,6 +12,7 @@ export const DEFAULTS = {
   openclawPath: '',
   claudeCodePath: 'claude',
   codexPath: 'codex',                          // Fusion QA-gate actor (Cole is installing the CLI)
+  claudeUseApiKey: false,                      // false = drop ANTHROPIC_API_KEY when spawning claude → use the claude-login subscription (not API credits)
   clawhubPath: 'clawhub',
   ollamaCloudUrl: '',                          // blank = use local Ollama (it serves *:cloud models itself); set only for a remote OpenAI-compat endpoint
   ollamaCloudKey: '',                          // usually blank — local Ollama needs no key

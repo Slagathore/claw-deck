@@ -8,7 +8,7 @@ import { useCouncil } from '../store/council';
 
 export default function CouncilTab() {
   const { active } = useWorkspaces();
-  const { runByWs, events, running, appendEvent, finishRun } = useCouncil();
+  const { runByWs, events, live, running, appendEvent, finishRun } = useCouncil();
 
   // single subscription to the council event stream
   useEffect(() => {
@@ -34,12 +34,49 @@ export default function CouncilTab() {
           <div className="col" style={{ width: 400, minHeight: 0, overflow: 'auto' }}>
             <CouncilSettings workspace={active} key={active} />
             <ManualExecutor repo={active} />
+            <RunLedger repo={active} />
           </div>
           <div className="col" style={{ flex: 1, minHeight: 0 }}>
-            <DebateTheater events={runId ? (events[runId] ?? []) : []} running={runId ? running[runId] : false} />
+            {runId && running[runId] && <button onClick={() => window.api.council.cancel(runId)} style={{ alignSelf: 'flex-end', borderColor: 'var(--bad)', color: 'var(--bad)' }}>Cancel run</button>}
+            <DebateTheater events={runId ? (events[runId] ?? []) : []} live={runId ? live[runId] : undefined} running={runId ? running[runId] : false} />
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function RunLedger({ repo }: { repo: string }) {
+  const [rows, setRows] = useState<any[]>([]);
+  const [msg, setMsg] = useState('');
+  async function refresh() {
+    const r = await window.api.exec.list(80);
+    if (r.ok) setRows(r.runs.filter((x: any) => x.repo === repo));
+  }
+  useEffect(() => { refresh(); const t = setInterval(refresh, 5000); return () => clearInterval(t); }, [repo]);
+  async function rollback(id: string) {
+    if (!confirm(`Rollback snapshot ${id}? This resets the repo to that snapshot.`)) return;
+    const r = await window.api.exec.rollback(id);
+    setMsg(r.ok ? `Rolled back ${id}` : (r.error ?? 'rollback failed'));
+    refresh();
+  }
+  return (
+    <div className="card col" style={{ gap: 6 }}>
+      <div className="row" style={{ justifyContent: 'space-between' }}><strong>Run ledger</strong><button onClick={refresh}>Refresh</button></div>
+      {msg && <div className="label">{msg}</div>}
+      {rows.length === 0 && <div className="label">No executor history for this workspace yet.</div>}
+      {rows.slice(0, 12).map((r) => (
+        <div key={r.run_id} className="row" style={{ borderTop: '1px solid var(--border)', paddingTop: 6, alignItems: 'flex-start' }}>
+          <div className="col" style={{ flex: 1, gap: 2 }}>
+            <div><span className={`badge ${r.status === 'approved' ? 'ok' : r.status === 'invalid' || r.status === 'apply-failed' ? 'bad' : 'warn'}`}>{r.status}</span> <code style={{ fontSize: 11 }}>{r.run_id}</code></div>
+            <div className="label">{r.mode} · {r.diff_bytes ?? 0} bytes · validation {r.validation_ok == null ? 'n/a' : r.validation_ok ? 'passed' : 'failed'}</div>
+            {r.error && <div className="label" style={{ color: 'var(--bad)' }}>{r.error}</div>}
+          </div>
+          {r.plan_path && <button onClick={() => window.api.app.openPath(r.plan_path)} style={{ padding: '3px 8px', fontSize: 11 }}>Plan</button>}
+          {r.diff_path && <button onClick={() => window.api.app.openPath(r.diff_path)} style={{ padding: '3px 8px', fontSize: 11 }}>Diff</button>}
+          {r.snapshot_id && <button onClick={() => rollback(r.snapshot_id)} style={{ padding: '3px 8px', fontSize: 11 }}>Rollback</button>}
+        </div>
+      ))}
     </div>
   );
 }

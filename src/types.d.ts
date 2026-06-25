@@ -50,6 +50,11 @@ declare global {
         setCloseToTray: (value: boolean) => Promise<{ ok: boolean; closeToTray: boolean }>;
         quit: () => Promise<void>;
         show: () => Promise<{ ok: boolean }>;
+        openPath: (target: string) => Promise<{ ok: boolean; reason?: string }>;
+        showItemInFolder: (target: string) => Promise<{ ok: boolean }>;
+        which: (binary: string) => Promise<{ ok: boolean; path?: string; error?: string }>;
+        traceInfo: () => Promise<{ ok: boolean; path: string }>;
+        openTraceLog: () => Promise<{ ok: boolean; path: string; reason?: string }>;
       };
       audit: {
         scan: (path: string) => Promise<import('../electron/lib/scanner').AuditReport>;
@@ -95,21 +100,24 @@ declare global {
         startLoop: (opts: { repo: string; protocolId: string; assignment: import('../electron/council/agents').SessionAssignment; goal: string; maxIterations?: number; costCeiling?: number }) => Promise<{ ok: boolean; runId?: string; error?: string }>;
         cancel: (runId: string) => Promise<{ ok: boolean }>;
         list: () => Promise<{ ok: boolean; runs: { runId: string; repo: string | null; protocol: string; task: string; status: string; approved: number; started: number; finished: number | null }[] }>;
+        probeAgent: (agent: import('../electron/council/agents').RosterAgent, repo?: string) => Promise<{ ok: boolean; detail: string }>;
         onEvent: (cb: (e: { runId: string; type: string; phase?: string; kind?: string; agentId?: string; content?: string; verdict?: string; round?: number; ok?: boolean; status?: string }) => void) => () => void;
       };
       exec: {
         beginRun: (repo: string, mode?: 'delegate' | 'apply') => Promise<{ ok: boolean; runId?: string; wtDir?: string; branch?: string; error?: string }>;
         proposal: (runId: string, plan: string, diff?: string) => Promise<{ ok: boolean; plan?: string; diff?: string; planPath?: string; diffPath?: string; empty?: boolean; error?: string }>;
         validate: (runId: string) => Promise<{ ok: boolean; result?: import('../electron/selfUpgrade/sandbox').SandboxResult; error?: string }>;
-        approve: (runId: string) => Promise<{ ok: boolean; error?: string }>;
+        approve: (runId: string) => Promise<{ ok: boolean; snapshotId?: string; error?: string }>;
         reject: (runId: string) => Promise<{ ok: boolean; error?: string }>;
+        list: (limit?: number) => Promise<{ ok: boolean; runs: { run_id: string; repo: string; mode: string; status: string; wt_dir?: string; branch?: string; plan_path?: string; diff_path?: string; diff_bytes: number; validation_ok?: number | null; snapshot_id?: string | null; started: number; updated: number; error?: string | null }[] }>;
+        rollback: (snapshotId: string) => Promise<{ ok: boolean; error?: string }>;
       };
       atlas: {
         open: (workspace: string) => Promise<{ ok: boolean; dbPath?: string; mcpServer?: string; error?: string }>;
         index: (workspace: string) => Promise<{ ok: boolean; counts?: import('../electron/atlas/index').IndexCounts; error?: string }>;
         status: (workspace: string) => Promise<{ ok: boolean; counts?: ReturnType<typeof import('../electron/atlas/query').statusCounts>; lastRun?: { started: number; finished: number; files: number; symbols: number; mode: string } | null; vecAvailable?: boolean; error?: string }>;
         query: (workspace: string, tool: string, arg: string) => Promise<{ ok: boolean; result?: any; error?: string }>;
-        graph: (workspace: string, statuses?: string[], file?: string) => Promise<{ ok: boolean; graph?: { nodes: import('../electron/atlas/query').GraphNode[]; edges: import('../electron/atlas/query').GraphEdge[] }; error?: string }>;
+        graph: (workspace: string, statuses?: string[], file?: string, search?: string, limit?: number) => Promise<{ ok: boolean; graph?: { nodes: import('../electron/atlas/query').GraphNode[]; edges: import('../electron/atlas/query').GraphEdge[] }; error?: string }>;
         card: (workspace: string, ref: string) => Promise<{ ok: boolean; card?: import('../electron/atlas/types').SymbolCard | null; error?: string }>;
         enrich: (workspace: string, kind: 'embed' | 'summarize') => Promise<{ ok: boolean; embedded?: number; summarized?: number; remaining?: number; superseded?: number; reason?: string }>;
         close: (workspace: string) => Promise<{ ok: boolean }>;

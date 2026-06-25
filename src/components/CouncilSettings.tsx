@@ -4,6 +4,36 @@ import { useCouncil, Assignment, SessionConfig } from '../store/council';
 interface RosterAgent { id: string; displayName: string; transport: string; model?: string; binary?: string; capabilities: { canEdit: boolean; canRunTools: boolean; costTier: string } }
 const PROTOCOLS = ['COUNCIL', 'PCRSR', 'GCRJ', 'REDTEAM', 'PAIR'];
 
+/** What each session protocol does, how it works, and what it's best at (hover tooltips + inline). */
+const PROTOCOL_INFO: Record<string, { name: string; how: string; best: string }> = {
+  COUNCIL: {
+    name: 'Full Council',
+    how: 'Independent takes from every panelist → debate to consensus (≤3 rounds, stops early on convergence) → scribe synthesizes one proposal → QA gate → QA⇄judge relay → judge gate → execute.',
+    best: 'Hard or ambiguous changes where you want maximum scrutiny and diverse perspectives before any code is touched. Most thorough — and most expensive.',
+  },
+  PCRSR: {
+    name: 'Propose · Critique · Revise · Synthesize · Ratify',
+    how: 'Panelists propose → one critique round → one revise round → scribe synthesizes → judge ratifies (approve, or bounce with notes).',
+    best: 'Well-scoped features where you want a structured improve-then-ratify cycle without a full open debate. Balanced cost.',
+  },
+  GCRJ: {
+    name: 'Generate · Cross-critique · Rebuttal · Judge',
+    how: 'Panelists generate independently → cross-critique each other → one rebuttal round → judge decides.',
+    best: '“Which approach?” design decisions, where adversarial cross-examination between models surfaces flaws fastest.',
+  },
+  REDTEAM: {
+    name: 'Red Team',
+    how: 'Panelists propose → 2 attack rounds actively trying to break the proposal → scribe hardens it → judge sign-off.',
+    best: 'Security-sensitive or high-risk changes — you want the panel attacking the proposal before it’s approved.',
+  },
+  PAIR: {
+    name: 'Pair (quick fix)',
+    how: 'Skips the swarm entirely: a QA⇄judge relay (≤4 turns) → execute. Just two actors, no panel.',
+    best: 'Small, well-understood fixes where a full council is overkill. Fastest and cheapest.',
+  },
+};
+const protocolTitle = (p: string) => `${PROTOCOL_INFO[p]?.name}\n\nHow: ${PROTOCOL_INFO[p]?.how}\n\nBest for: ${PROTOCOL_INFO[p]?.best}`;
+
 function defaultConfig(roster: RosterAgent[]): SessionConfig {
   const panel = roster.filter((a) => a.transport.startsWith('ollama')).map((a) => a.id).slice(0, 3);
   const judge = roster.find((a) => a.transport === 'claude-code')?.id ?? roster[0]?.id ?? '';
@@ -13,27 +43,49 @@ function defaultConfig(roster: RosterAgent[]): SessionConfig {
 
 /** Per-tab session config — dropdowns populated from the global roster (§4.5). */
 export default function CouncilSettings({ workspace }: { workspace: string }) {
-  const { configs, setConfig, startRun } = useCouncil();
+  const { configs, setConfig, startRun, runByWs, running } = useCouncil();
   const [roster, setRoster] = useState<RosterAgent[]>([]);
   const [busy, setBusy] = useState('');
   const [err, setErr] = useState('');
   const [loopGoal, setLoopGoal] = useState('');
   const [loopMax, setLoopMax] = useState(5);
+  const [probe, setProbe] = useState<Record<string, { ok: boolean; detail: string }>>({});
+  const [dryRun, setDryRun] = useState(false);
 
   useEffect(() => { window.api.settings.get().then((s) => setRoster(s.fusionRoster ?? [])); }, []);
   useEffect(() => { if (roster.length && !configs[workspace]) setConfig(workspace, defaultConfig(roster)); }, [roster, workspace, configs, setConfig]);
 
   const cfg = configs[workspace] ?? defaultConfig(roster);
+  const activeRun = runByWs[workspace];
+  const locked = !!activeRun && running[activeRun];
   const update = (patch: Partial<SessionConfig>) => setConfig(workspace, { ...cfg, ...patch });
   const updateAssign = (patch: Partial<Assignment>) => update({ assignment: { ...cfg.assignment, ...patch } });
   const togglePanelist = (id: string) => updateAssign({ panelists: cfg.assignment.panelists.includes(id) ? cfg.assignment.panelists.filter((x) => x !== id) : [...cfg.assignment.panelists, id] });
 
   async function start() {
+    const ready = await preflight();
+    if (!ready) return;
     setErr(''); setBusy('Starting…');
-    const r = await window.api.council.start({ repo: workspace, protocolId: cfg.protocolId, assignment: cfg.assignment, task: cfg.task });
+    const r = await window.api.council.start({ repo: dryRun ? undefined : workspace, protocolId: cfg.protocolId, assignment: cfg.assignment, task: cfg.task });
     setBusy('');
     if (!r.ok || !r.runId) { setErr(r.error ?? 'failed to start'); return; }
     startRun(workspace, r.runId);
+  }
+
+  async function preflight(): Promise<boolean> {
+    const ids = [...new Set([...cfg.assignment.panelists, cfg.assignment.judge, cfg.assignment.qaGate, cfg.assignment.scribe].filter(Boolean) as string[])];
+    const next: Record<string, { ok: boolean; detail: string }> = {};
+    setBusy('Checking agents…'); setErr('');
+    for (const id of ids) {
+      const agent = roster.find(a => a.id === id);
+      if (!agent) { next[id] = { ok: false, detail: 'not found in roster' }; continue; }
+      next[id] = await window.api.council.probeAgent(agent as any, workspace);
+    }
+    setProbe(next);
+    setBusy('');
+    const bad = Object.entries(next).filter(([, r]) => !r.ok);
+    if (bad.length) setErr(`Not ready: ${bad.map(([id, r]) => `${id} (${r.detail})`).join('; ')}`);
+    return bad.length === 0;
   }
 
   async function startLoop() {
@@ -45,12 +97,19 @@ export default function CouncilSettings({ workspace }: { workspace: string }) {
   }
 
   const opt = (a: RosterAgent) => <option key={a.id} value={a.id}>{a.displayName}</option>;
+  const probed = Object.entries(probe);
 
   return (
     <div className="card col" style={{ gap: 8 }}>
       <div className="row" style={{ justifyContent: 'space-between' }}>
-        <strong>Session config</strong>
-        <select value={cfg.protocolId} onChange={(e) => update({ protocolId: e.target.value })}>{PROTOCOLS.map((p) => <option key={p} value={p}>{p}</option>)}</select>
+        <strong title="Hover a protocol for what it does; the selected one is described below.">Session config</strong>
+        <select value={cfg.protocolId} disabled={locked} title={protocolTitle(cfg.protocolId)} onChange={(e) => update({ protocolId: e.target.value })}>
+          {PROTOCOLS.map((p) => <option key={p} value={p} title={protocolTitle(p)}>{p}</option>)}
+        </select>
+      </div>
+      <div className="label" style={{ fontSize: 11 }} title={protocolTitle(cfg.protocolId)}>
+        <strong style={{ color: 'var(--accent)' }}>{PROTOCOL_INFO[cfg.protocolId]?.name}</strong> — {PROTOCOL_INFO[cfg.protocolId]?.how}
+        <br /><span style={{ color: 'var(--muted)' }}>Best for: {PROTOCOL_INFO[cfg.protocolId]?.best}</span>
       </div>
 
       <div className="col" style={{ gap: 4 }}>
@@ -58,32 +117,45 @@ export default function CouncilSettings({ workspace }: { workspace: string }) {
         <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
           {roster.map((a) => (
             <label key={a.id} style={{ fontSize: 12 }}>
-              <input type="checkbox" checked={cfg.assignment.panelists.includes(a.id)} onChange={() => togglePanelist(a.id)} /> {a.displayName}
+              <input type="checkbox" disabled={locked} checked={cfg.assignment.panelists.includes(a.id)} onChange={() => togglePanelist(a.id)} /> {a.displayName}
+              {probe[a.id] && <span className={`badge ${probe[a.id].ok ? 'ok' : 'bad'}`} title={probe[a.id].detail}>{probe[a.id].ok ? 'ready' : 'bad'}</span>}
             </label>
           ))}
         </div>
       </div>
 
       <div className="row" style={{ flexWrap: 'wrap', gap: 10 }}>
-        <label style={{ fontSize: 12 }}>Judge <select value={cfg.assignment.judge} onChange={(e) => updateAssign({ judge: e.target.value })}>{roster.map(opt)}</select></label>
-        <label style={{ fontSize: 12 }}>QA gate <select value={cfg.assignment.qaGate} onChange={(e) => updateAssign({ qaGate: e.target.value })}>{roster.map(opt)}</select></label>
-        <label style={{ fontSize: 12 }}>Scribe <select value={cfg.assignment.scribe ?? ''} onChange={(e) => updateAssign({ scribe: e.target.value || undefined })}><option value="">(judge)</option>{roster.map(opt)}</select></label>
+        <label style={{ fontSize: 12 }}>Judge <select disabled={locked} value={cfg.assignment.judge} onChange={(e) => updateAssign({ judge: e.target.value })}>{roster.map(opt)}</select></label>
+        <label style={{ fontSize: 12 }}>QA gate <select disabled={locked} value={cfg.assignment.qaGate} onChange={(e) => updateAssign({ qaGate: e.target.value })}>{roster.map(opt)}</select></label>
+        <label style={{ fontSize: 12 }}>Scribe <select disabled={locked} value={cfg.assignment.scribe ?? ''} onChange={(e) => updateAssign({ scribe: e.target.value || undefined })}><option value="">(judge)</option>{roster.map(opt)}</select></label>
       </div>
 
-      <textarea placeholder="Task / goal for the council…" value={cfg.task} onChange={(e) => update({ task: e.target.value })} rows={3} />
-      {err && <div style={{ color: 'var(--bad)', fontSize: 12 }}>{err}</div>}
+      <textarea disabled={locked} placeholder="Task / goal for the council…" value={cfg.task} onChange={(e) => update({ task: e.target.value })} rows={3} />
+      {err && <div className="banner warn" style={{ fontSize: 12 }}>{err}</div>}
+      {!!probed.length && (
+        <div className="col" style={{ gap: 3 }}>
+          {probed.map(([id, r]) => {
+            const agent = roster.find(a => a.id === id);
+            return <div key={id} className="label"><span className={`badge ${r.ok ? 'ok' : 'bad'}`}>{r.ok ? 'ready' : 'not ready'}</span> {agent?.displayName ?? id}: {r.detail}</div>;
+          })}
+        </div>
+      )}
       <div className="row">
-        <button onClick={start} disabled={!!busy || !cfg.task.trim() || !cfg.assignment.panelists.length}>▶ Start session</button>
+        <label className="label"><input type="checkbox" checked={dryRun} disabled={locked} onChange={e => setDryRun(e.target.checked)} /> dry-run (no merge)</label>
+        <button onClick={preflight} disabled={!!busy}>Check agents</button>
+        <button onClick={start} disabled={!!busy || locked || !cfg.task.trim() || !cfg.assignment.panelists.length}>▶ Start session</button>
+        <button onClick={() => window.api.app.openTraceLog()}>Open trace log</button>
         {busy && <span className="badge warn">{busy}</span>}
+        {locked && <span className="badge warn">session locked while running</span>}
         <span style={{ color: 'var(--muted)', fontSize: 11 }}>Roster is edited in Settings → Agent Roster.</span>
       </div>
 
       <div className="col" style={{ gap: 6, borderTop: '1px solid var(--border)', paddingTop: 8 }}>
         <label style={{ fontSize: 11, color: 'var(--muted)' }}>Autonomous goal loop — branch → run → checkpoint each iteration → goal-check → repeat (halts on success / cap / oscillation)</label>
-        <textarea placeholder="High-level goal to drive autonomously…" value={loopGoal} onChange={(e) => setLoopGoal(e.target.value)} rows={2} />
+        <textarea disabled={locked} placeholder="High-level goal to drive autonomously…" value={loopGoal} onChange={(e) => setLoopGoal(e.target.value)} rows={2} />
         <div className="row">
-          <label style={{ fontSize: 12 }}>max iterations <input type="number" min={1} max={50} value={loopMax} onChange={(e) => setLoopMax(Math.max(1, Number(e.target.value) || 1))} style={{ width: 60 }} /></label>
-          <button onClick={startLoop} disabled={!!busy || !loopGoal.trim() || !cfg.assignment.panelists.length}>⟳ Start autonomous loop</button>
+          <label style={{ fontSize: 12 }}>max iterations <input disabled={locked} type="number" min={1} max={50} value={loopMax} onChange={(e) => setLoopMax(Math.max(1, Number(e.target.value) || 1))} style={{ width: 60 }} /></label>
+          <button onClick={startLoop} disabled={!!busy || locked || !loopGoal.trim() || !cfg.assignment.panelists.length}>⟳ Start autonomous loop</button>
         </div>
       </div>
     </div>

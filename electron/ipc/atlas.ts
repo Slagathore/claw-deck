@@ -117,10 +117,10 @@ export function registerAtlasHandlers(getWindow: () => BrowserWindow | null) {
     }
   });
 
-  ipcMain.handle('atlas:graph', (_e, opts: { workspace: string; statuses?: SymbolStatus[]; file?: string }) => {
+  ipcMain.handle('atlas:graph', (_e, opts: { workspace: string; statuses?: SymbolStatus[]; file?: string; search?: string; limit?: number }) => {
     const h = getOpenAtlas(opts.workspace);
     if (!h) return { ok: false, error: 'workspace not open' };
-    return { ok: true, graph: q.graph(asQueryable(h), { statuses: opts.statuses, file: opts.file }) };
+    return { ok: true, graph: q.graph(asQueryable(h), { statuses: opts.statuses, file: opts.file, search: opts.search, limit: opts.limit }) };
   });
 
   ipcMain.handle('atlas:card', (_e, opts: { workspace: string; ref: string }) => {

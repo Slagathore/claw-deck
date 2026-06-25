@@ -15,6 +15,7 @@ export default function DiffReview({ proposal, onResolved }: { proposal: Proposa
   const [busy, setBusy] = useState('');
   const [err, setErr] = useState('');
   const [done, setDone] = useState<'approved' | 'rejected' | null>(null);
+  const [snapshotId, setSnapshotId] = useState<string | null>(null);
 
   async function validate() {
     setBusy('Validating (npm ci + npm test in sandbox)…'); setErr('');
@@ -28,7 +29,8 @@ export default function DiffReview({ proposal, onResolved }: { proposal: Proposa
     const r = await window.api.exec.approve(proposal.runId);
     setBusy('');
     if (!r.ok) { setErr(r.error ?? 'approve failed'); return; }
-    setDone('approved'); onResolved?.('approved');
+    setSnapshotId(r.snapshotId ?? null);
+    setDone('approved');
   }
   async function reject() {
     setBusy('Discarding worktree…'); setErr('');
@@ -36,6 +38,14 @@ export default function DiffReview({ proposal, onResolved }: { proposal: Proposa
     setBusy('');
     if (!r.ok) { setErr(r.error ?? 'reject failed'); return; }
     setDone('rejected'); onResolved?.('rejected');
+  }
+  async function rollback() {
+    if (!snapshotId) return;
+    setBusy('Rolling back snapshot…'); setErr('');
+    const r = await window.api.exec.rollback(snapshotId);
+    setBusy('');
+    if (!r.ok) setErr(r.error ?? 'rollback failed');
+    else setDone('rejected');
   }
 
   const lines = (proposal.diff || '(no changes)').split('\n');
@@ -72,11 +82,14 @@ export default function DiffReview({ proposal, onResolved }: { proposal: Proposa
       {busy && <div style={{ color: 'var(--muted)', fontSize: 12 }}>{busy}</div>}
 
       {done ? (
-        <div className={`badge ${done === 'approved' ? 'ok' : 'bad'}`}>{done === 'approved' ? '✓ merged onto live tree' : '✗ rejected — worktree discarded'}</div>
+        <div className="row">
+          <div className={`badge ${done === 'approved' ? 'ok' : 'bad'}`}>{done === 'approved' ? '✓ merged onto live tree' : '✗ rejected — worktree discarded'}</div>
+          {snapshotId && <button onClick={rollback} disabled={!!busy} title={`Restore ${snapshotId}`}>Rollback snapshot</button>}
+        </div>
       ) : (
         <div className="row">
           <button onClick={validate} disabled={!!busy}>Validate</button>
-          <button onClick={approve} disabled={!!busy} style={{ borderColor: 'var(--good)', color: 'var(--good)' }}>Approve &amp; merge</button>
+          <button onClick={approve} disabled={!!busy || validation?.ok !== true} title={validation?.ok ? 'Create rollback snapshot and apply to live tree' : 'Run validation first'} style={{ borderColor: 'var(--good)', color: 'var(--good)' }}>Approve &amp; merge</button>
           <button onClick={reject} disabled={!!busy} style={{ borderColor: 'var(--bad)', color: 'var(--bad)' }}>Reject</button>
         </div>
       )}
