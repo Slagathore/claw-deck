@@ -140,6 +140,28 @@ function scopedReadOnlyServers(repo?: string): McpServerSpec[] {
   return out;
 }
 
+/** Digest of the files changed in the latest commit (the iteration's checkpoint), with their
+ *  contents capped, so the goal-checker can VERIFY what was actually produced — not just the
+ *  proposal text. Returns '' when nothing changed or git is unavailable. */
+async function changedFilesDigest(repo: string, maxFiles = 8, perFileChars = 3000, totalChars = 14000): Promise<string> {
+  const safeGit = async (args: string[]) => { try { return (await git(repo, args)).stdout.trim(); } catch { return ''; } };
+  let names = await safeGit(['diff', '--name-only', 'HEAD~1', 'HEAD']);
+  if (!names) names = await safeGit(['show', '--name-only', '--pretty=format:', 'HEAD']);
+  const files = names.split('\n').map((s) => s.trim()).filter(Boolean).slice(0, maxFiles);
+  let budget = totalChars;
+  const parts: string[] = [];
+  for (const f of files) {
+    try {
+      const abs = path.join(repo, f);
+      if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) continue;
+      const block = `--- ${f} ---\n${fs.readFileSync(abs, 'utf8').slice(0, perFileChars)}`;
+      if (block.length > budget) break;
+      budget -= block.length; parts.push(block);
+    } catch { /* skip unreadable */ }
+  }
+  return parts.join('\n\n');
+}
+
 /** Optional method capabilities for a repo: Atlas query, file-read grounding, and build.
  *  autoApply=true (loop) applies a successful build to the live tree so iterations
  *  accumulate; false (one-shot) leaves the diff in the worktree for review. */
@@ -676,7 +698,11 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
       },
       checkGoal: async (goal, _iter, last) => {
         if (!checker) return { met: false, reason: 'no checker agent' };
-        const reply = await transport(checker, [{ role: 'system', content: CHECKER_SYS }, { role: 'user', content: `Goal:\n${goal}\n\nLatest result (approved=${last.approved}):\n${last.artifact.slice(0, 2000)}` }]).catch(() => 'NOT MET');
+        // Read the files this iteration actually produced (committed at HEAD) so the checker
+        // verifies real output, not just the proposal text.
+        const produced = await changedFilesDigest(opts.repo).catch(() => '');
+        const body = `Goal:\n${goal}\n\nLatest proposal (approved=${last.approved}):\n${last.artifact.slice(0, 2000)}${produced ? `\n\nFiles produced/changed this iteration — INSPECT THESE to verify the goal is actually met:\n${produced}` : ''}`;
+        const reply = await transport(checker, [{ role: 'system', content: CHECKER_SYS }, { role: 'user', content: body }]).catch(() => 'NOT MET');
         const met = /\bmet\b/i.test(reply) && !/not\s*met/i.test(reply);
         return { met, reason: reply.slice(0, 300), nextSubtask: met ? undefined : reply.slice(0, 600) };
       },
