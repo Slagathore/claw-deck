@@ -195,6 +195,13 @@ export function parseTsProgram(files: Record<string, string>): ParseResult {
   const resolveTarget = (idNode: ts.Node): string | undefined => {
     let sym = checker.getSymbolAtLocation(idNode);
     if (!sym) return undefined;
+    // shorthand object property `{ COUNCIL }` → resolve to the VALUE symbol
+    // (otherwise it resolves to the enclosing object, dropping the real ref and
+    // making the referenced const look orphaned).
+    if (idNode.parent && ts.isShorthandPropertyAssignment(idNode.parent)) {
+      const v = checker.getShorthandAssignmentValueSymbol(idNode.parent);
+      if (v) sym = v;
+    }
     if (sym.flags & ts.SymbolFlags.Alias) {
       try { sym = checker.getAliasedSymbol(sym); } catch { /* keep original */ }
     }

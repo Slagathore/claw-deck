@@ -4,13 +4,10 @@
 // when available and simply hide them when not.
 
 import { ipcMain } from 'electron';
-import { getDb } from './db';
+import { getSetting } from './settings';
 import { bridgeStatus, bridgeDiagnostics, bridgeSelection, bridgeLmModels, bridgeLmInvoke, bridgeMcp } from '../bridge/client';
 
-function port(): number {
-  try { const r = getDb().prepare('SELECT value FROM settings WHERE key=?').get('clawBridgePort') as { value: string } | undefined; return r ? JSON.parse(r.value) : 39217; }
-  catch { return 39217; }
-}
+const port = (): number => getSetting<number>('clawBridgePort', 39217);
 
 export function registerBridgeHandlers() {
   ipcMain.handle('bridge:status', () => bridgeStatus(port()));

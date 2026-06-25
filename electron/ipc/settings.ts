@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron';
 import { getDb } from './db';
 
-const DEFAULTS = {
+export const DEFAULTS = {
   ollamaUrl: 'http://localhost:11434',
   openaiCompatUrl: 'http://localhost:11434/v1',
   openaiCompatKey: 'ollama',
@@ -58,6 +58,21 @@ const DEFAULTS = {
     goal: 'propose a small, safe improvement to code quality or test coverage'
   }
 };
+
+/**
+ * Read a single setting from the DB, falling back to DEFAULTS then `fallback`.
+ * IMPORTANT: the `settings:get` IPC merges DEFAULTS, but main-process code that
+ * reads the raw `settings` table must use THIS so seeded defaults (e.g.
+ * fusionRoster) are visible even before the user has saved settings once.
+ */
+export function getSetting<T = any>(key: string, fallback?: T): T {
+  try {
+    const row = getDb().prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined;
+    if (row) return JSON.parse(row.value) as T;
+  } catch { /* fall through to defaults */ }
+  if (key in DEFAULTS) return (DEFAULTS as Record<string, any>)[key] as T;
+  return fallback as T;
+}
 
 export function registerSettingsHandlers() {
   ipcMain.handle('settings:get', () => {

@@ -10,6 +10,7 @@
 import { ipcMain, BrowserWindow } from 'electron';
 import { randomUUID } from 'crypto';
 import { getDb } from './db';
+import { getSetting } from './settings';
 import { appendAudit } from './security';
 import { PROTOCOLS } from '../council/protocol';
 import { runProtocol, ExecutorHooks, CouncilEvent } from '../council/run';
@@ -22,11 +23,6 @@ import { validateWorktree } from '../executor/validate';
 import { git } from '../executor/git';
 
 const signals = new Map<string, { aborted: boolean }>();
-
-function getSetting<T>(key: string, fallback: T): T {
-  try { const r = getDb().prepare('SELECT value FROM settings WHERE key=?').get(key) as { value: string } | undefined; return r ? JSON.parse(r.value) as T : fallback; }
-  catch { return fallback; }
-}
 
 function transportConfig(repo?: string): TransportConfig {
   // Local Ollama serves *:cloud models itself (no key). ollamaCloudUrl is an

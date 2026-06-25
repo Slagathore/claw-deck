@@ -7,6 +7,7 @@ import { ipcMain, BrowserWindow } from 'electron';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { getDb } from './db';
+import { getSetting } from './settings';
 import { openAtlas, closeAtlas, getOpenAtlas, asQueryable, atlasDbPath, sqliteVecAvailable } from '../atlas/db';
 import { scanWorkspace, writeIndex } from '../atlas/index';
 import { watchWorkspace, Watcher } from '../atlas/watch';
@@ -18,13 +19,7 @@ import { SymbolStatus } from '../atlas/types';
 const watchers = new Map<string, Watcher>();
 const keyOf = (ws: string) => path.resolve(ws);
 
-// --- settings helpers (same pattern as mcp.ts) ----------------------------
-function getSetting<T>(key: string, fallback: T): T {
-  try {
-    const row = getDb().prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined;
-    return row ? JSON.parse(row.value) as T : fallback;
-  } catch { return fallback; }
-}
+// --- settings helpers (getSetting is shared so DEFAULTS apply) --------------
 function setSetting(key: string, value: unknown): void {
   getDb().prepare('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, JSON.stringify(value));
 }

@@ -18,6 +18,10 @@ export default function ProjectBrainTab() {
 
   const cyHost = useRef<HTMLDivElement>(null);
   const cy = useRef<cytoscape.Core | null>(null);
+  // keep the latest workspace in a ref so the cytoscape tap handler (bound once)
+  // never reads a stale (null) value from its mount-time closure.
+  const workspaceRef = useRef<string | null>(null);
+  useEffect(() => { workspaceRef.current = workspace; }, [workspace]);
 
   // --- cytoscape lifecycle --------------------------------------------------
   useEffect(() => {
@@ -35,7 +39,7 @@ export default function ProjectBrainTab() {
     });
     inst.on('tap', 'node', (evt) => {
       const d = evt.target.data();
-      if (workspace && d.ref) loadCard(d.ref);
+      if (d.ref) loadCard(d.ref);
     });
     cy.current = inst;
     return () => { inst.destroy(); cy.current = null; };
@@ -43,10 +47,11 @@ export default function ProjectBrainTab() {
   }, []);
 
   const loadCard = useCallback(async (ref: string) => {
-    if (!workspace) return;
-    const r = await atlas.card(workspace, ref);
+    const ws = workspaceRef.current;
+    if (!ws) return;
+    const r = await atlas.card(ws, ref);
     if (r.ok) setCard(r.card ?? null);
-  }, [workspace]);
+  }, []);
 
   const refreshGraph = useCallback(async (ws: string, active: Set<AtlasStatus>) => {
     const r = await atlas.graph(ws, [...active]);
@@ -66,6 +71,24 @@ export default function ProjectBrainTab() {
     if (r.ok && r.counts) setCounts(r.counts);
   }, []);
 
+  // --- persistence: restore the last-opened workspace on mount --------------
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const s = await window.api.settings.get();
+      const ws: string | undefined = s?.projectBrainWorkspace;
+      if (!ws || cancelled) return;
+      const o = await atlas.open(ws);          // reopens the persisted <ws>/.fusion/atlas.db
+      if (!o.ok || cancelled) return;
+      setWorkspace(ws);
+      setMsg(`Restored ${ws} — press ↻ Re-index to refresh from disk`);
+      await refreshStatus(ws);
+      await refreshGraph(ws, new Set(ALL_STATUSES));
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // --- actions --------------------------------------------------------------
   async function openFolder() {
     const ws = await window.api.app.pickPath({ properties: ['openDirectory'] });
@@ -74,6 +97,7 @@ export default function ProjectBrainTab() {
     const o = await atlas.open(ws);
     if (!o.ok) { setBusy(''); setMsg(`Open failed: ${o.error}`); return; }
     setWorkspace(ws);
+    window.api.settings.set({ projectBrainWorkspace: ws }); // remember across restarts
     setBusy('Indexing…');
     const ix = await atlas.index(ws);
     setBusy('');

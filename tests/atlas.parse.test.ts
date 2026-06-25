@@ -65,3 +65,20 @@ describe('parseTsProgram', () => {
     expect(byKey('src/main.ts#<module>')?.kind).toBe('module');
   });
 });
+
+// Regression: shorthand object refs `{ A, B }` (e.g. the council PROTOCOLS map)
+// must create reference edges so the consts aren't false-flagged orphaned.
+describe('shorthand property references', () => {
+  const FILES2: Record<string, string> = {
+    'protocols.ts': [
+      'const COUNCIL = { id: "council" };',
+      'const PAIR = { id: "pair" };',
+      'export const PROTOCOLS = { COUNCIL, PAIR };',
+    ].join('\n'),
+  };
+  const { edges } = parseTsProgram(FILES2);
+  it('resolves { COUNCIL, PAIR } to the value symbols', () => {
+    expect(edges.some((e) => e.dstKey === 'protocols.ts#COUNCIL' && e.kind === 'references' && e.resolved)).toBe(true);
+    expect(edges.some((e) => e.dstKey === 'protocols.ts#PAIR' && e.kind === 'references' && e.resolved)).toBe(true);
+  });
+});
