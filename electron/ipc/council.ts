@@ -42,6 +42,7 @@ function transportConfig(repo?: string, abortSignal?: AbortSignal): TransportCon
     abortSignal,
     // default: use the claude-login subscription, not API credits → drop ANTHROPIC_API_KEY for claude spawns
     claudeUnsetEnv: getSetting('claudeUseApiKey', false) ? undefined : ['ANTHROPIC_API_KEY'],
+    actorTimeoutMs: getSetting('actorTimeoutMs', 600000),
     cwd: repo,
   };
 }
@@ -126,7 +127,7 @@ async function runEditingDelegate(agent: RosterAgent, prompt: string, wt: Worktr
       args: ['--print', '--input-format', 'text', '--permission-mode', 'bypassPermissions', '--no-session-persistence'],
       input: prompt,
       cwd: wt.dir,
-      timeoutMs: 600000,
+      timeoutMs: cfg.actorTimeoutMs ?? 600000,
       signal: cfg.abortSignal,
       unsetEnv: cfg.claudeUnsetEnv,
     });
@@ -139,10 +140,10 @@ async function runEditingDelegate(agent: RosterAgent, prompt: string, wt: Worktr
     const binary = cfg.paths?.codex ?? agent.binary ?? 'codex';
     const r = await runCaptured({
       binary,
-      args: ['exec', '--sandbox', 'workspace-write', '--ask-for-approval', 'never', '--skip-git-repo-check', '--color', 'never', '-'],
+      args: ['exec', '--sandbox', 'workspace-write', '--skip-git-repo-check', '--color', 'never', '-'],
       input: prompt,
       cwd: wt.dir,
-      timeoutMs: 600000,
+      timeoutMs: cfg.actorTimeoutMs ?? 600000,
       signal: cfg.abortSignal,
     });
     const out = r.code === 0 ? { ok: true, output: outputSnippet(r) } : { ok: false, error: outputSnippet(r) };
@@ -154,7 +155,7 @@ async function runEditingDelegate(agent: RosterAgent, prompt: string, wt: Worktr
     const binary = cfg.paths?.openclaw ?? agent.binary ?? 'openclaw';
     const args = ['agent', '--local', '--json', '--message', prompt];
     if (agent.model) args.push('--model', agent.model);
-    const r = await runCaptured({ binary, args, cwd: wt.dir, timeoutMs: 600000, signal: cfg.abortSignal });
+    const r = await runCaptured({ binary, args, cwd: wt.dir, timeoutMs: cfg.actorTimeoutMs ?? 600000, signal: cfg.abortSignal });
     const out = r.code === 0 ? { ok: true, output: outputSnippet(r) } : { ok: false, error: outputSnippet(r) };
     trace('council:delegate:finish', { agentId: agent.id, transport: agent.transport, ok: out.ok, code: r.code, stdoutBytes: r.stdout.length, stderrBytes: r.stderr.length });
     return out;
@@ -361,7 +362,7 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
   });
 
   ipcMain.handle('council:list', () => {
-    const rows = getDb().prepare('SELECT run_id AS runId, repo, protocol, task, status, approved, started, finished FROM council_runs ORDER BY started DESC LIMIT 50').all();
+    const rows = getDb().prepare('SELECT run_id AS runId, repo, protocol, task, assignment, status, approved, started, finished FROM council_runs ORDER BY started DESC LIMIT 50').all();
     return { ok: true, runs: rows };
   });
 

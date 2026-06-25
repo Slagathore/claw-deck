@@ -8,7 +8,7 @@ import { useCouncil } from '../store/council';
 
 export default function CouncilTab() {
   const { active } = useWorkspaces();
-  const { runByWs, events, live, running, appendEvent, finishRun } = useCouncil();
+  const { runByWs, events, live, running, startRun, appendEvent, finishRun } = useCouncil();
 
   // single subscription to the council event stream
   useEffect(() => {
@@ -33,11 +33,17 @@ export default function CouncilTab() {
         <div className="row" style={{ flex: 1, alignItems: 'stretch', minHeight: 0, gap: 10 }}>
           <div className="col" style={{ width: 400, minHeight: 0, overflow: 'auto' }}>
             <CouncilSettings workspace={active} key={active} />
+            <SessionHistory repo={active} onRerun={(id) => startRun(active, id)} />
             <ManualExecutor repo={active} />
             <RunLedger repo={active} />
           </div>
           <div className="col" style={{ flex: 1, minHeight: 0 }}>
-            {runId && running[runId] && <button onClick={() => window.api.council.cancel(runId)} style={{ alignSelf: 'flex-end', borderColor: 'var(--bad)', color: 'var(--bad)' }}>Cancel run</button>}
+            {runId && running[runId] && (
+              <div className="row" style={{ alignSelf: 'flex-end', gap: 8, alignItems: 'center' }}>
+                <span style={{ color: 'var(--muted)', fontSize: 12 }}><Spinner /> session running…</span>
+                <button onClick={() => window.api.council.cancel(runId)} style={{ borderColor: 'var(--bad)', color: 'var(--bad)' }}>Cancel run</button>
+              </div>
+            )}
             <DebateTheater events={runId ? (events[runId] ?? []) : []} live={runId ? live[runId] : undefined} running={runId ? running[runId] : false} />
           </div>
         </div>
@@ -101,6 +107,49 @@ function BridgeBadge() {
   return connected
     ? <span className="badge ok" title={`${folders} folder(s)`}>VS Code bridge · {lm} lm · {diag} problems</span>
     : <span className="badge" style={{ color: 'var(--muted)' }} title="Open VS Code with the claw-bridge extension for live diagnostics + vscode.lm models">bridge offline</span>;
+}
+
+/** Animated braille spinner — shows the session is alive even while an agent thinks silently. */
+function Spinner() {
+  const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+  const [i, setI] = useState(0);
+  useEffect(() => { const t = setInterval(() => setI((x) => (x + 1) % frames.length), 80); return () => clearInterval(t); }, []);
+  return <span style={{ color: 'var(--accent)' }}>{frames[i]}</span>;
+}
+
+/** Past council sessions for this workspace (from council_runs) with a one-click Re-run. */
+function SessionHistory({ repo, onRerun }: { repo: string; onRerun: (runId: string) => void }) {
+  const [rows, setRows] = useState<any[]>([]);
+  const [busy, setBusy] = useState('');
+  async function refresh() { const r = await window.api.council.list(); if (r.ok) setRows(r.runs.filter((x: any) => x.repo === repo)); }
+  useEffect(() => { refresh(); const t = setInterval(refresh, 5000); return () => clearInterval(t); }, [repo]);
+  async function rerun(row: any) {
+    let assignment: any;
+    try { assignment = JSON.parse(row.assignment); } catch { return; }
+    setBusy(row.runId);
+    const isLoop = String(row.runId).startsWith('loop-');
+    const r = isLoop
+      ? await window.api.council.startLoop({ repo, protocolId: row.protocol, assignment, goal: row.task })
+      : await window.api.council.start({ repo, protocolId: row.protocol, assignment, task: row.task });
+    setBusy('');
+    if (r.ok && r.runId) onRerun(r.runId);
+  }
+  return (
+    <div className="card col" style={{ gap: 6 }}>
+      <div className="row" style={{ justifyContent: 'space-between' }}><strong>Session history</strong><button onClick={refresh}>Refresh</button></div>
+      {rows.length === 0 && <div className="label">No council sessions yet for this workspace.</div>}
+      {rows.slice(0, 15).map((r) => (
+        <div key={r.runId} className="row" style={{ borderTop: '1px solid var(--border)', paddingTop: 6, alignItems: 'flex-start', gap: 6 }}>
+          <div className="col" style={{ flex: 1, gap: 2, minWidth: 0 }}>
+            <div><span className={`badge ${r.approved || r.status === 'completed' || r.status === 'met' ? 'ok' : r.status === 'running' ? 'warn' : 'bad'}`}>{r.status}</span> <strong>{r.protocol}</strong>{String(r.runId).startsWith('loop-') && <span className="label"> · loop</span>}</div>
+            <div className="label" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.task}>{r.task}</div>
+            <div className="label">{new Date(r.started).toLocaleString()}</div>
+          </div>
+          <button disabled={!!busy || r.status === 'running'} onClick={() => rerun(r)} title="Restart this session with the same protocol, agents, and task">{busy === r.runId ? '…' : '↻ Re-run'}</button>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 /**

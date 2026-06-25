@@ -20,8 +20,11 @@ export interface TransportConfig {
   bridgePort?: number;       // claw-bridge (VS Code) localhost port for vscode-lm
   abortSignal?: AbortSignal; // cancels in-flight HTTP + kills CLI children on council:cancel
   claudeUnsetEnv?: string[]; // env vars to drop for claude-code (e.g. ANTHROPIC_API_KEY → use the subscription)
+  actorTimeoutMs?: number;   // per-call timeout for agentic CLI actors (default 10 min — they do full turns)
   cwd?: string;
 }
+
+const CLI_TIMEOUT_DEFAULT = 600000;
 
 export type OnDelta = (chunk: string) => void;
 
@@ -87,21 +90,21 @@ function renderPrompt(messages: Msg[]): string {
   return messages.map((m) => (m.role === 'system' ? `[system]\n${m.content}` : m.content)).join('\n\n');
 }
 
-async function cliPrompt(binary: string, baseArgs: string[], messages: Msg[], cwd?: string, signal?: AbortSignal, onDelta?: OnDelta, unsetEnv?: string[]): Promise<string> {
+async function cliPrompt(binary: string, baseArgs: string[], messages: Msg[], cwd?: string, signal?: AbortSignal, onDelta?: OnDelta, unsetEnv?: string[], timeoutMs = CLI_TIMEOUT_DEFAULT): Promise<string> {
   const prompt = messages.map((m) => (m.role === 'system' ? `[system]\n${m.content}` : m.content)).join('\n\n');
-  trace('council:transport:start', { transport: 'cli', binary, args: baseArgs, cwd, promptBytes: prompt.length });
-  const r = await runCaptured({ binary, args: baseArgs, input: prompt, cwd, timeoutMs: 180000, signal, onData: onDelta, unsetEnv });
+  trace('council:transport:start', { transport: 'cli', binary, args: baseArgs, cwd, promptBytes: prompt.length, timeoutMs });
+  const r = await runCaptured({ binary, args: baseArgs, input: prompt, cwd, timeoutMs, signal, onData: onDelta, unsetEnv });
   trace('council:transport:finish', { transport: 'cli', binary, code: r.code, stdoutBytes: r.stdout.length, stderrBytes: r.stderr.length });
   if (r.code !== 0 && !r.stdout.trim()) throw new Error(r.stderr.slice(0, 300) || `${binary} exited ${r.code}`);
   return r.stdout || r.stderr;
 }
 
-async function openclawPrompt(binary: string, model: string | undefined, messages: Msg[], cwd?: string, signal?: AbortSignal, onDelta?: OnDelta): Promise<string> {
+async function openclawPrompt(binary: string, model: string | undefined, messages: Msg[], cwd?: string, signal?: AbortSignal, onDelta?: OnDelta, timeoutMs = CLI_TIMEOUT_DEFAULT): Promise<string> {
   const prompt = renderPrompt(messages);
   const args = ['agent', '--local', '--json', '--message', prompt];
   if (model) args.push('--model', model);
   trace('council:transport:start', { transport: 'openclaw', binary, model, cwd, promptBytes: prompt.length });
-  const r = await runCaptured({ binary, args, cwd, timeoutMs: 180000, signal, onData: onDelta });
+  const r = await runCaptured({ binary, args, cwd, timeoutMs, signal, onData: onDelta });
   trace('council:transport:finish', { transport: 'openclaw', binary, model, code: r.code, stdoutBytes: r.stdout.length, stderrBytes: r.stderr.length });
   if (r.code !== 0 && !r.stdout.trim()) throw new Error(r.stderr.slice(0, 500) || `${binary} exited ${r.code}`);
   const raw = r.stdout || r.stderr;
@@ -119,9 +122,9 @@ export function makeTransport(cfg: TransportConfig): (agent: RosterAgent, messag
       case 'ollama-cloud': return chatCompat(cfg.ollamaCloudUrl ?? 'https://ollama.com/v1', cfg.ollamaCloudKey, agent.model ?? '', messages, cfg.abortSignal, onDelta);
       case 'ollama-local': return chatCompat(cfg.ollamaLocalUrl ?? 'http://localhost:11434/v1', undefined, agent.model ?? '', messages, cfg.abortSignal, onDelta);
       case 'openai-compat': return chatCompat(cfg.openaiCompatUrl ?? 'http://localhost:11434/v1', cfg.openaiCompatKey, agent.model ?? '', messages, cfg.abortSignal, onDelta);
-      case 'claude-code': return cliPrompt(cfg.paths?.claude ?? agent.binary ?? 'claude', ['--print', '--input-format', 'text', '--permission-mode', 'bypassPermissions', '--no-session-persistence'], messages, cfg.cwd, cfg.abortSignal, onDelta, cfg.claudeUnsetEnv);
-      case 'codex': return cliPrompt(cfg.paths?.codex ?? agent.binary ?? 'codex', ['exec', '--sandbox', 'workspace-write', '--ask-for-approval', 'never', '--skip-git-repo-check', '--color', 'never', '-'], messages, cfg.cwd, cfg.abortSignal, onDelta);
-      case 'openclaw': return openclawPrompt(cfg.paths?.openclaw ?? agent.binary ?? 'openclaw', agent.model, messages, cfg.cwd, cfg.abortSignal, onDelta);
+      case 'claude-code': return cliPrompt(cfg.paths?.claude ?? agent.binary ?? 'claude', ['--print', '--input-format', 'text', '--permission-mode', 'bypassPermissions', '--no-session-persistence'], messages, cfg.cwd, cfg.abortSignal, onDelta, cfg.claudeUnsetEnv, cfg.actorTimeoutMs);
+      case 'codex': return cliPrompt(cfg.paths?.codex ?? agent.binary ?? 'codex', ['exec', '--sandbox', 'workspace-write', '--skip-git-repo-check', '--color', 'never', '-'], messages, cfg.cwd, cfg.abortSignal, onDelta, undefined, cfg.actorTimeoutMs);
+      case 'openclaw': return openclawPrompt(cfg.paths?.openclaw ?? agent.binary ?? 'openclaw', agent.model, messages, cfg.cwd, cfg.abortSignal, onDelta, cfg.actorTimeoutMs);
       case 'vscode-lm': {
         const out = await bridgeLmInvoke(cfg.bridgePort ?? 39217, agent.model ?? '', messages);
         if (out == null) throw new Error('vscode-lm unavailable — is VS Code open with the claw-bridge extension running?');

@@ -104,6 +104,8 @@ export default function SettingsTab() {
         <label className="label" title="When OFF (default), Claw Deck drops ANTHROPIC_API_KEY when spawning Claude Code so it uses your `claude login` Pro/Max subscription. Turn ON only if you specifically want pay-per-token API billing.">
           <input type="checkbox" checked={!!draft.claudeUseApiKey} onChange={e => set('claudeUseApiKey', e.target.checked)} /> Bill Claude Code to the API key (off = use your <code>claude login</code> subscription)
         </label>
+        <label className="label" title="Agentic CLI actors (Claude Code / Codex / OpenClaw) run a full turn per call — reading the repo, etc. — which can take minutes. Raise this if claude is being killed by [timeout].">Actor call timeout (ms) — claude/codex/openclaw do full turns; 180000 is often too short</label>
+        <input type="number" value={draft.actorTimeoutMs ?? 600000} onChange={e => set('actorTimeoutMs', Math.max(30000, Number(e.target.value) || 600000))} />
 
         <label className="label" style={{ marginTop: 8 }}><strong>Agent Roster</strong> — the global pool each Council tab assigns from</label>
         {(draft.fusionRoster ?? []).map((a: any, i: number) => (

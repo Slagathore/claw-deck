@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { CouncilEvt, LiveLane } from '../store/council';
 
 const LANE_COLORS = ['#7c9cff', '#4ade80', '#fbbf24', '#f87171', '#a78bfa', '#22d3ee'];
@@ -6,7 +6,7 @@ const LANE_COLORS = ['#7c9cff', '#4ade80', '#fbbf24', '#f87171', '#a78bfa', '#22
 /** Live debate stream: phase headers, per-agent lanes, streaming text, verdicts, result. */
 export default function DebateTheater({ events, live, running }: { events: CouncilEvt[]; live?: Record<string, LiveLane>; running?: boolean }) {
   const bottomRef = useRef<HTMLDivElement>(null);
-  const liveLanes = Object.entries(live ?? {}).filter(([, l]) => l.text);
+  const liveLanes = Object.entries(live ?? {});   // include empty lanes → show "thinking…" while an agent works
   // auto-scroll to the newest output as events + streaming text arrive
   useEffect(() => { bottomRef.current?.scrollIntoView({ block: 'end' }); }, [events.length, liveLanes.map(([, l]) => l.text.length).join(',')]);
 
@@ -41,15 +41,25 @@ export default function DebateTheater({ events, live, running }: { events: Counc
         }
       })}
 
-      {/* in-flight streaming lanes (text as it arrives, before the agent finalizes) */}
+      {/* in-flight lanes: streaming text as it arrives, or "thinking…" for agents
+          that don't stream incrementally (e.g. claude --print buffers until done) */}
       {liveLanes.map(([agentId, lane]) => (
         <div key={`live-${agentId}`} style={{ fontSize: 12 }}>
           <span style={{ color: laneColor(agentId), fontWeight: 600 }}>{agentId}</span>
-          <span className="badge warn" style={{ fontSize: 9, marginLeft: 4 }}>streaming</span>:{' '}
-          <span style={{ whiteSpace: 'pre-wrap' }}>{lane.text.slice(-6000)}<span style={{ opacity: 0.5 }}>▋</span></span>
+          <span className="badge warn" style={{ fontSize: 9, marginLeft: 4 }}>{lane.text ? 'streaming' : 'thinking'}</span>:{' '}
+          {lane.text
+            ? <span style={{ whiteSpace: 'pre-wrap' }}>{lane.text.slice(-6000)}<span style={{ opacity: 0.5 }}>▋</span></span>
+            : <span style={{ color: 'var(--muted)' }}><PulseDots /></span>}
         </div>
       ))}
       <div ref={bottomRef} />
     </div>
   );
+}
+
+/** A tiny animated "working" indicator (no CSS keyframes needed). */
+export function PulseDots() {
+  const [n, setN] = useState(0);
+  useEffect(() => { const t = setInterval(() => setN((x) => (x + 1) % 4), 350); return () => clearInterval(t); }, []);
+  return <span>working{'.'.repeat(n)}{' '.repeat(3 - n)}</span>;
 }
