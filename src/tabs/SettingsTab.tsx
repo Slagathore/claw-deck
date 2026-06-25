@@ -70,6 +70,11 @@ export default function SettingsTab() {
           <input value={draft.claudeCodePath ?? ''} onChange={e => set('claudeCodePath', e.target.value)} placeholder="claude" style={{ flex: 1 }} />
           <button onClick={async () => { const p = await window.api.app.pickPath(); if (p) set('claudeCodePath', p); }}>Pick</button>
         </div>
+        <label className="label">Codex CLI (Fusion QA-gate actor)</label>
+        <div className="row">
+          <input value={draft.codexPath ?? ''} onChange={e => set('codexPath', e.target.value)} placeholder="codex" style={{ flex: 1 }} />
+          <button onClick={async () => { const p = await window.api.app.pickPath(); if (p) set('codexPath', p); }}>Pick</button>
+        </div>
         <label className="label">ClawHub CLI (for the Skills tab; <code>npm i -g clawhub</code>)</label>
         <div className="row">
           <input value={draft.clawhubPath ?? ''} onChange={e => set('clawhubPath', e.target.value)} placeholder="clawhub" style={{ flex: 1 }} />
@@ -80,6 +85,34 @@ export default function SettingsTab() {
           <input value={draft.skillsDir ?? ''} onChange={e => set('skillsDir', e.target.value)} placeholder="C:\\Users\\you\\openclaw-workspace" style={{ flex: 1 }} />
           <button onClick={async () => { const p = await window.api.app.pickPath({ properties: ['openDirectory'] }); if (p) set('skillsDir', p); }}>Pick</button>
         </div>
+      </div>
+
+      <div className="card col">
+        <h3 style={{ margin: 0 }}>Fusion Council</h3>
+        <label className="label">Ollama Cloud URL (OpenAI-compatible; <code>*:cloud</code> models)</label>
+        <input value={draft.ollamaCloudUrl ?? ''} onChange={e => set('ollamaCloudUrl', e.target.value)} placeholder="https://ollama.com/v1" />
+        <label className="label">Ollama Cloud API key (<code>OLLAMA_API_KEY</code>; falls back to env)</label>
+        <input type="password" value={draft.ollamaCloudKey ?? ''} onChange={e => set('ollamaCloudKey', e.target.value)} />
+        <label className="label">Embedding model (Atlas, 768-dim)</label>
+        <input value={draft.embedModel ?? ''} onChange={e => set('embedModel', e.target.value)} placeholder="nomic-embed-text" />
+
+        <label className="label" style={{ marginTop: 8 }}><strong>Agent Roster</strong> — the global pool each Council tab assigns from</label>
+        {(draft.fusionRoster ?? []).map((a: any, i: number) => (
+          <div key={i} className="row" style={{ flexWrap: 'wrap', gap: 6, borderTop: '1px solid var(--border)', paddingTop: 6 }}>
+            <input value={a.displayName ?? ''} onChange={e => { const n = [...draft.fusionRoster]; n[i] = { ...a, displayName: e.target.value }; set('fusionRoster', n); }} placeholder="name" style={{ width: 130 }} />
+            <select value={a.transport} onChange={e => { const n = [...draft.fusionRoster]; n[i] = { ...a, transport: e.target.value }; set('fusionRoster', n); }}>
+              {['ollama-cloud', 'ollama-local', 'openai-compat', 'claude-code', 'codex', 'openclaw', 'vscode-lm'].map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+            <input value={a.model ?? ''} onChange={e => { const n = [...draft.fusionRoster]; n[i] = { ...a, model: e.target.value }; set('fusionRoster', n); }} placeholder="model (cloud)" style={{ width: 150 }} />
+            <input value={a.binary ?? ''} onChange={e => { const n = [...draft.fusionRoster]; n[i] = { ...a, binary: e.target.value }; set('fusionRoster', n); }} placeholder="binary (CLI)" style={{ width: 90 }} />
+            <select value={a.capabilities?.costTier ?? 'mid'} onChange={e => { const n = [...draft.fusionRoster]; n[i] = { ...a, capabilities: { ...a.capabilities, costTier: e.target.value } }; set('fusionRoster', n); }}>
+              {['cheap', 'mid', 'expensive'].map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+            <label style={{ fontSize: 11 }}><input type="checkbox" checked={!!a.capabilities?.canEdit} onChange={e => { const n = [...draft.fusionRoster]; n[i] = { ...a, capabilities: { ...a.capabilities, canEdit: e.target.checked } }; set('fusionRoster', n); }} /> edits</label>
+            <button onClick={() => { const n = [...draft.fusionRoster]; n.splice(i, 1); set('fusionRoster', n); }}>×</button>
+          </div>
+        ))}
+        <button onClick={() => set('fusionRoster', [...(draft.fusionRoster ?? []), { id: `agent-${Date.now().toString(36)}`, displayName: 'New agent', transport: 'ollama-cloud', model: '', capabilities: { canEdit: false, canRunTools: false, costTier: 'mid' } }])}>+ Add agent</button>
       </div>
 
       <div className="card col">

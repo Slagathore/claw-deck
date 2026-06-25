@@ -396,6 +396,29 @@ orchestrator also auto-injects the target symbol's card + 1-hop neighbors into e
 ## 9. Build progress log (agent-maintained)
 > Running record of what's been built/touched, per phase. Newest at top. Keep honest — note partials.
 
+### 2026-06-24 — Phase 4 (Council UI) SHIPPED — branch `fusion/phase-1-atlas`
+The visible council. 222/222 tests green, lint clean, both builds clean.
+- `src/store/workspaces.ts` + `src/store/council.ts`: open folders (multiple at once) + per-workspace session
+  config + per-run event streams.
+- `src/components/WorkspaceTabs.tsx`: open-folder tab strip; opening a folder kicks `atlas.open` + background
+  index (so Council and Project Brain share the same workspace).
+- `src/components/CouncilSettings.tsx`: per-tab dropdowns populated from the roster (panelists multi-select;
+  judge/QA/scribe single-select) + protocol + task → `council:start`. Sensible defaults from the roster.
+- `src/components/DebateTheater.tsx`: live `council:event` stream — phase headers, per-agent lanes, verdict
+  badges, convergence/bounce, finished/approved.
+- `src/tabs/CouncilTab.tsx`: workspace strip + settings + theater, plus an in-tab **Manual change (executor)**
+  panel (begin apply-mode run → paste plan+diff → DiffReview Validate/Approve/Reject) so a diff can be
+  approved/rejected in-tab. Registered as the **Council** tab in `App.tsx` (`store/ui.ts` Tab union extended).
+- `src/tabs/SettingsTab.tsx`: new **Fusion Council** section — Ollama Cloud URL/key, embed model, codex path, and
+  a full **Agent Roster editor** (add/remove/edit transport/model/binary/cost/edits).
+- *Acceptance:* Cole can open 2+ workspaces, assign agents per tab from the roster, start a session, watch the
+  debate theater, and approve/reject a diff in-tab. (End-to-end with live models needs the cloud key + a running
+  council; the engine is stub-tested and the UI/IPC path compiles + wires through.)
+- *Deferred (Phase-4 polish):* a dedicated cytoscape-style "lanes" layout (current theater is a styled vertical
+  stream); the "full council first-pass" toggle; interactive gate approve/reject mid-run (`council:approveGate`).
+  Phases 5 (autonomous loop) + 6 (claw-bridge) not started.
+
+
 ### 2026-06-24 — Phase 3 (Council Orchestrator engine) SHIPPED — branch `fusion/phase-1-atlas`
 Engine + tests complete (222/222 green, lint clean). No UI yet (Phase 4).
 - `electron/council/agents.ts`: Transport/Role/CostTier/RosterAgent/SessionAssignment/GateVerdict types +
