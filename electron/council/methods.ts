@@ -244,6 +244,8 @@ export async function runMethod(method: Method, deps: MethodDeps): Promise<Metho
               artifact = rr.artifact; lint = lintArtifact(artifact);
               deps.emit?.({ type: 'lint', phase: `${step.label} · repaired`, content: rr.passed ? `clean in ${rr.rounds} round(s)` : formatFindings(lint), ok: rr.passed });
             }
+            // §1.2 — still failing after the repair budget → ship, but surface it as UNRESOLVED.
+            if (!lint.passed) findings.push(`lint (UNRESOLVED after ${'≤2'} repair rounds): ${formatFindings(lint).replace(/\s+/g, ' ').slice(0, 300)}`);
           }
           // optional deterministic gates — degrade to a note when absent
           if (deps.compileCheck) { const c = await deps.compileCheck(artifact); deps.emit?.({ type: 'validate', phase: `${step.label} · compile`, ok: c.ok }); if (!c.ok) findings.push(`compile: ${c.output.slice(0, 300)}`); }
