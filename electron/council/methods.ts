@@ -69,6 +69,7 @@ export interface MethodDeps {
   compileCheck?: (artifact: string) => Promise<{ ok: boolean; output: string }>;
   goldenTests?: (artifact: string, contract: string) => Promise<{ ok: boolean; output: string }>;
   atlasQuery?: (q: string) => Promise<string | null>;
+  readFiles?: (paths: string[]) => Promise<Record<string, string>>; // real-code grounding for assay/prospect
   build?: (artifact: string, builder: RosterAgent) => Promise<{ ok: boolean; diff?: string; error?: string }>;
 }
 
@@ -156,6 +157,7 @@ export async function runMethod(method: Method, deps: MethodDeps): Promise<Metho
   let contract = deps.seed?.contract ?? '';
   let artifact = deps.seed?.artifacts?.length ? deps.seed.artifacts.join('\n\n') : '';
   let map = '';
+  let codeContext = '';   // actual source of the key files (real-code grounding for audits)
   let findings: string[] = [];
   const scores: { agentId: string; verdict: string }[] = [];
   let lastAuthors: string[] = [];
@@ -184,7 +186,18 @@ export async function runMethod(method: Method, deps: MethodDeps): Promise<Metho
           let atlas: string | null = null;
           if (deps.atlasQuery) { try { atlas = await deps.atlasQuery(deps.focus || deps.task); } catch { /* fall back */ } }
           if (!atlas) { warnings.push('Atlas unavailable — extractor falls back to doc/grep walk'); deps.emit?.({ type: 'warn', phase: step.label, content: 'Atlas (.fusion/atlas.db) unavailable — falling back to doc/grep walk', ok: true }); }
-          if (ex) { const out = await call(ldeps, budget, ex, SYS.ingest, `Task:\n${deps.task}\n\nRepo context (Atlas or fallback):\n${atlas ?? '(none — describe from the task + your knowledge of the repo)'}`, step.label); if (out) map = out; }
+          // Real grounding: pull the actual source of the top files the Atlas surfaced so
+          // the extractor + the later sweep audit real code, not just a summary. Degrades
+          // (no readFiles capability) to summary-only.
+          if (atlas && deps.readFiles) {
+            const files = [...new Set(atlas.split('\n').map((l) => l.split(' — ')[0].replace(/:\d+$/, '').trim()).filter(Boolean))].slice(0, 6);
+            try {
+              const contents = await deps.readFiles(files);
+              const parts = Object.entries(contents).filter(([, c]) => c).map(([f, c]) => `// ===== FILE: ${f} =====\n${c.slice(0, 8000)}`);
+              if (parts.length) { codeContext = parts.join('\n\n'); deps.emit?.({ type: 'agent', phase: step.label, kind: 'files', content: `read ${parts.length} file(s) for grounding: ${files.slice(0, parts.length).join(', ')}` }); }
+            } catch { /* summary-only */ }
+          } else if (atlas && !deps.readFiles) { warnings.push('no file-read capability — sweep audits the summary, not full source'); }
+          if (ex) { const out = await call(ldeps, budget, ex, SYS.ingest, `Task:\n${deps.task}\n\nAtlas symbol map:\n${atlas ?? '(none — describe from the task + your knowledge of the repo)'}${codeContext ? `\n\nActual source of the key files:\n${codeContext}` : ''}`, step.label); if (out) map = out; }
           return;
         }
         case 'scope': {
@@ -208,9 +221,9 @@ export async function runMethod(method: Method, deps: MethodDeps): Promise<Metho
           const n = step.count ?? 3;
           const critics = assign(ldeps, step.role ?? 'critic', n, step.rotated ? lastAuthors : [], warnings, step.label);
           // Review the draft artifact when there is one (foundry/relay/prospect); for an
-          // audit sweep with no draft (assay) review the ingested repo map instead so the
-          // critics have real material, not an empty body.
-          const subject = artifact || map || '(no draft — audit the repository from the task/focus and your knowledge)';
+          // audit sweep with no draft (assay) review the ingested repo map + the actual
+          // source pulled in during ingest, so the critics audit real code, not a summary.
+          const subject = artifact || [codeContext && `Actual source:\n${codeContext}`, map && `Repo map:\n${map}`].filter(Boolean).join('\n\n---\n\n') || '(no draft — audit the repository from the task/focus and your knowledge)';
           const base = `Task:\n${deps.task}${deps.focus ? `\nFocus: ${deps.focus}` : ''}\n\nMaterial to review:\n${subject}`;
           const replies = await Promise.all(critics.map((a) => call(ldeps, budget, a, step.label.toLowerCase().includes('feasib') ? SYS.feasibility : SYS.critic, base, step.label)));
           const fresh = replies.map((r, i) => r && !/NO_FURTHER_ISSUES/i.test(r) ? `- (${critics[i].displayName}) ${r.replace(/\s+/g, ' ').slice(0, 500)}` : '').filter(Boolean);

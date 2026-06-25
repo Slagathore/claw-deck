@@ -106,6 +106,21 @@ describe('§3 runMethod engine', () => {
     expect(r.scores.length).toBeGreaterThanOrEqual(1);          // still scored after the re-feed
   });
 
+  it('§3.3 file-read grounding: the audit sweep sees real file source pulled via readFiles', async () => {
+    let criticSawSource = false;
+    const t: TransportFn = async (_agent, messages) => {
+      const sys = messages[0]?.content ?? '';
+      const user = messages[messages.length - 1]?.content ?? '';
+      if (/adversarial critic/.test(sys)) { criticSawSource = /SECRET_MARKER_42/.test(user); return 'NO_FURTHER_ISSUES'; }
+      if (/mapping a repository/.test(sys)) return 'repo map';
+      return 'ok';
+    };
+    const atlasQuery = async () => 'scripts/core/foo.gd:10 — foo (function, active)';
+    const readFiles = async () => ({ 'scripts/core/foo.gd': 'func foo():\n\treturn SECRET_MARKER_42' });
+    await runMethod(METHODS.assay, deps({ transport: t, atlasQuery, readFiles }));
+    expect(criticSawSource).toBe(true);  // the critic audited actual source, not just the summary
+  });
+
   it('respects the trusted-call budget: an exhausted Claude budget downgrades the consolidate step', async () => {
     // pre-exhaust Claude so the consolidator (Claude) is skipped, not errored
     const { makeBudget } = await import('../electron/council/roles');

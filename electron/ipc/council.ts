@@ -775,9 +775,24 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
             return { ok: r.ok, diff: r.diff, error: r.error };
           }
         : undefined;
+      // real-code grounding: read repo files the Atlas surfaced (repo-relative, no traversal)
+      const readFiles = opts.repo
+        ? async (paths: string[]) => {
+            const out: Record<string, string> = {};
+            const root = path.resolve(opts.repo!);
+            for (const rel of paths.slice(0, 8)) {
+              try {
+                const abs = path.resolve(root, rel);
+                if (!abs.startsWith(root)) continue;
+                if (fs.existsSync(abs) && fs.statSync(abs).isFile() && fs.statSync(abs).size < 200_000) out[rel] = fs.readFileSync(abs, 'utf8');
+              } catch { /* skip unreadable */ }
+            }
+            return out;
+          }
+        : undefined;
       const runDir = opts.repo ? path.join(opts.repo, '.fusion', `method-${runId}`) : undefined;
       try {
-        const res = await runMethod(method, { task, focus: opts.focus ?? opts.seed?.focus, roster, transport, signal, emit: (ev) => send(runId, ev), build, atlasQuery, runDir, seed: opts.seed });
+        const res = await runMethod(method, { task, focus: opts.focus ?? opts.seed?.focus, roster, transport, signal, emit: (ev) => send(runId, ev), build, atlasQuery, readFiles, runDir, seed: opts.seed });
         const status = res.degraded ? 'completed-degraded' : 'completed';
         db.prepare('UPDATE council_runs SET status=?, finished=?, artifact=?, result=? WHERE run_id=?')
           .run(status, Date.now(), res.artifact, JSON.stringify({ report: res.report, scores: res.scores, warnings: res.warnings, findings: res.findings, seed: res.seed, endPrompt: method.endPrompt }), runId);
