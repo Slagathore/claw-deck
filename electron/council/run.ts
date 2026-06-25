@@ -48,6 +48,7 @@ export interface RunDeps {
   signal?: { aborted: boolean };
   resumeFrom?: ResumeState;                 // continue a prior run from this checkpoint
   onCheckpoint?: (cp: ResumeState) => void; // called after each phase completes (persist to resume later)
+  forceBlind?: boolean;                     // make EVERY gate blind (judge never sees the consensus)
 }
 
 const SYS = {
@@ -183,11 +184,12 @@ export async function runProtocol(protocol: Protocol, deps: RunDeps): Promise<Ru
       const gate = resolveAgents(deps.roster, [phase.by ?? '@qa-gate'], deps.assignment)[0];
       if (!gate) continue;
       // blind: judge sees ONLY (task + the patch), never the discussion/consensus.
+      const blind = phase.blind || deps.forceBlind;
       const diff = extractDiff(artifact);
-      const reviewBody = phase.blind
+      const reviewBody = blind
         ? `Original task:\n${deps.task}\n\nProposed change:\n${diff ?? `(no diff fenced; proposal text follows)\n${artifact.slice(0, 6000)}`}`
         : `Proposal to review:\n${artifact}`;
-      const reply = await ask(deps, gate, phase.blind ? SYS.blindJudge : SYS.gate, reviewBody, label);
+      const reply = await ask(deps, gate, blind ? SYS.blindJudge : SYS.gate, reviewBody, label);
       if (!reply) {
         const verdict: GateVerdict = { verdict: 'major', notes: `${gate.displayName} failed to respond; see agent-error event above.` };
         verdicts.push(verdict);
@@ -195,7 +197,7 @@ export async function runProtocol(protocol: Protocol, deps: RunDeps): Promise<Ru
         emit({ type: 'bounce', phase: label, verdict: verdict.verdict });
         return { status: 'bounced', phasesRun, transcript, artifact, verdicts, approved };
       }
-      const verdict = phase.blind ? parseBlindVerdict(reply) : parseGateVerdict(reply);
+      const verdict = blind ? parseBlindVerdict(reply) : parseGateVerdict(reply);
       verdicts.push(verdict);
       record(label, phase.kind, reply, gate.id);
       emit({ type: 'verdict', phase: label, agentId: gate.id, verdict: verdict.verdict });

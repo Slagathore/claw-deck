@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useCouncil, Assignment, SessionConfig } from '../store/council';
 
 interface RosterAgent { id: string; displayName: string; transport: string; model?: string; binary?: string; capabilities: { canEdit: boolean; canRunTools: boolean; costTier: string } }
-const PROTOCOLS = ['COUNCIL', 'GAUNTLET', 'DEVIL', 'STEELMAN', 'TOURNAMENT', 'REDTEAM', 'PCRSR', 'GCRJ', 'PAIR', 'SOLO'];
+const PROTOCOLS = ['COUNCIL', 'CRUCIBLE', 'GAUNTLET', 'DEVIL', 'STEELMAN', 'TOURNAMENT', 'REDTEAM', 'PCRSR', 'GCRJ', 'PAIR', 'SOLO'];
 
 /** What each session protocol does, how it works, and what it's best at (hover tooltips + inline). */
 const PROTOCOL_INFO: Record<string, { name: string; how: string; best: string }> = {
@@ -10,6 +10,11 @@ const PROTOCOL_INFO: Record<string, { name: string; how: string; best: string }>
     name: 'Full Council',
     how: 'Independent takes from every panelist → debate to consensus (≤3 rounds, stops early on convergence) → scribe synthesizes one proposal → QA gate → QA⇄judge relay → judge gate → execute.',
     best: 'Hard or ambiguous changes where you want maximum scrutiny and diverse perspectives before any code is touched. Most thorough — and most expensive.',
+  },
+  CRUCIBLE: {
+    name: 'Crucible (steelman ⇄ red-team ×3)',
+    how: 'Generate → 3 rounds that each STEELMAN (strengthen the proposal) then RED-TEAM (attack it for new flaws) → scribe synthesizes → one more steelman to harden → QA gate → BLIND judge → build. The full forge.',
+    best: 'High-stakes work where you want the proposal repeatedly strengthened AND attacked before building. The most rigorous mode — and the most expensive.',
   },
   GAUNTLET: {
     name: 'Adversarial Gauntlet',
@@ -81,6 +86,7 @@ export default function CouncilSettings({ workspace }: { workspace: string }) {
   const [hotAgents, setHotAgents] = useState<string[]>([]);
   const [hotTemp, setHotTemp] = useState(1.15);
   const [prologue, setPrologue] = useState(false);
+  const [forceBlind, setForceBlind] = useState(false);
   const [personaDefs, setPersonaDefs] = useState<{ id: string; name: string; prompt: string }[]>([]);
   const [personas, setPersonas] = useState<Record<string, string>>({});
   const [showPersonas, setShowPersonas] = useState(false);
@@ -108,7 +114,7 @@ export default function CouncilSettings({ workspace }: { workspace: string }) {
     const ready = await preflight();
     if (!ready) return;
     setErr(''); setBusy('Starting…');
-    const r = await window.api.council.start({ repo: dryRun ? undefined : workspace, protocolId: cfg.protocolId, assignment: cfg.assignment, task: cfg.task, context, hot: hotConfig, prologue, personas });
+    const r = await window.api.council.start({ repo: dryRun ? undefined : workspace, protocolId: cfg.protocolId, assignment: cfg.assignment, task: cfg.task, context, hot: hotConfig, prologue, personas, forceBlind });
     setBusy('');
     if (!r.ok || !r.runId) { setErr(r.error ?? 'failed to start'); return; }
     startRun(workspace, r.runId);
@@ -237,6 +243,9 @@ export default function CouncilSettings({ workspace }: { workspace: string }) {
         <label className="label"><input type="checkbox" checked={dryRun} disabled={locked} onChange={e => setDryRun(e.target.checked)} /> dry-run (no merge)</label>
         <label className="label" title="Before round 1, the panel agrees on up to 6 clarifying questions, then PAUSES for you to answer. Your answers are injected as authoritative context; the chosen mode then runs in full (nothing is skipped).">
           <input type="checkbox" checked={prologue} disabled={locked} onChange={e => setPrologue(e.target.checked)} /> 🧭 Prologue (ask me questions first)
+        </label>
+        <label className="label" title="Force EVERY judge gate to be blind — the judge sees only the task + the patch, never the panel's discussion or consensus, and is asked 'what is still wrong?'. Gauntlet/Red-team/Steelman/Devil/Crucible are already blind; this adds it to Council/PCRSR/GCRJ/etc.">
+          <input type="checkbox" checked={forceBlind} disabled={locked} onChange={e => setForceBlind(e.target.checked)} /> 🙈 Blind judge
         </label>
         <button onClick={preflight} disabled={!!busy}>Check agents</button>
         <button onClick={start} disabled={!!busy || locked || !cfg.task.trim() || !cfg.assignment.panelists.length}>▶ Start session</button>

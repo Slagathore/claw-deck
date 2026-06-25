@@ -54,7 +54,7 @@ export default function CouncilTab() {
             </div>
             {runId && (questions[runId]?.length ?? 0) > 0 && <ProloguePanel key={runId} runId={runId} questions={questions[runId]} onSubmitted={() => { clearQuestions(runId); markRunning(runId); }} />}
             {runId && !running[runId] && lastFinishedStatus(events[runId]) === 'bounced' && <BounceRecovery runId={runId} onSent={() => markRunning(runId)} />}
-            {runId && !running[runId] && !!lastFinishedStatus(events[runId]) && <PostRunPanel runId={runId} roster={roster} />}
+            {runId && !running[runId] && isTerminated(events[runId]) && <PostRunPanel runId={runId} roster={roster} />}
             <DebateTheater events={runId ? (events[runId] ?? []) : []} live={runId ? live[runId] : undefined} running={runId ? running[runId] : false} nameOf={nameOf} />
           </div>
         </div>
@@ -127,15 +127,30 @@ const WRAP: React.CSSProperties = { whiteSpace: 'pre-wrap', wordBreak: 'break-wo
 function PostRunPanel({ runId, roster }: { runId: string; roster: { id: string; displayName: string }[] }) {
   const [tab, setTab] = useState<'ask' | 'pr' | 'replay' | null>(null);
   const [agentId, setAgentId] = useState(roster[0]?.id ?? '');
+  const [target, setTarget] = useState<'agent' | 'room'>('agent');
   const [q, setQ] = useState('');
-  const [answer, setAnswer] = useState('');
+  const [thread, setThread] = useState<{ q: string; who: string; entries: { name: string; answer: string }[] }[]>([]);
   const [pr, setPr] = useState('');
   const [snaps, setSnaps] = useState<{ phaseIndex: number; label: string; artifact: string }[]>([]);
   const [snapIdx, setSnapIdx] = useState(0);
   const [busy, setBusy] = useState('');
 
+  const nameOf = (id: string) => roster.find((a) => a.id === id)?.displayName ?? id;
   useEffect(() => { if (!agentId && roster[0]) setAgentId(roster[0].id); }, [roster, agentId]);
-  async function ask() { if (!q.trim()) return; setBusy('ask'); setAnswer(''); const r = await window.api.council.ask(runId, agentId, q); setBusy(''); setAnswer(r.ok ? (r.answer ?? '') : `error: ${r.error}`); }
+  async function ask() {
+    if (!q.trim()) return;
+    setBusy('ask');
+    const question = q;
+    if (target === 'room') {
+      const r = await window.api.council.askRoom(runId, question);
+      setThread((t) => [...t, { q: question, who: 'the room', entries: r.ok ? (r.answers ?? []).map((a) => ({ name: nameOf(a.agentId), answer: a.answer })) : [{ name: 'error', answer: r.error ?? 'failed' }] }]);
+    } else {
+      const r = await window.api.council.ask(runId, agentId, question);
+      setThread((t) => [...t, { q: question, who: nameOf(agentId), entries: [{ name: nameOf(agentId), answer: r.ok ? (r.answer ?? '') : `error: ${r.error}` }] }]);
+    }
+    setQ('');
+    setBusy('');
+  }
   async function genPr() { setBusy('pr'); setPr(''); const r = await window.api.council.prDescription(runId); setBusy(''); setPr(r.ok ? (r.markdown ?? '') : `error: ${r.error}`); }
   async function loadReplay() { setBusy('replay'); const r = await window.api.council.snapshots(runId); setBusy(''); setSnaps(r.snapshots ?? []); setSnapIdx(Math.max(0, (r.snapshots?.length ?? 1) - 1)); setTab('replay'); }
 
@@ -143,19 +158,37 @@ function PostRunPanel({ runId, roster }: { runId: string; roster: { id: string; 
     <div className="card col" style={{ gap: 8 }}>
       <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
         <strong>Post-run</strong>
-        <button onClick={() => setTab(tab === 'ask' ? null : 'ask')}>💬 Ask an agent</button>
+        <button onClick={() => setTab(tab === 'ask' ? null : 'ask')}>💬 Ask</button>
         <button onClick={() => { setTab('pr'); if (!pr && busy !== 'pr') genPr(); }}>📝 PR description</button>
         <button onClick={loadReplay}>⏮ Replay timeline</button>
       </div>
 
       {tab === 'ask' && (
         <div className="col" style={{ gap: 6 }}>
-          <div className="row" style={{ gap: 6 }}>
-            <select value={agentId} onChange={(e) => setAgentId(e.target.value)}>{roster.map((a) => <option key={a.id} value={a.id}>{a.displayName}</option>)}</select>
-            <input style={{ flex: 1 }} placeholder="Ask this agent about its statement…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && ask()} />
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+            <select value={target} onChange={(e) => setTarget(e.target.value as any)}>
+              <option value="agent">one agent</option>
+              <option value="room">the whole room</option>
+            </select>
+            {target === 'agent' && <select value={agentId} onChange={(e) => setAgentId(e.target.value)}>{roster.map((a) => <option key={a.id} value={a.id}>{a.displayName}</option>)}</select>}
+            <input style={{ flex: 1, minWidth: 160 }} placeholder={target === 'room' ? 'Ask everyone who spoke…' : 'Ask this agent about its statement…'} value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && ask()} />
             <button onClick={ask} disabled={busy === 'ask'}>{busy === 'ask' ? '…' : 'Ask'}</button>
           </div>
-          {answer && <pre style={{ margin: 0, fontSize: 12, maxHeight: 300, overflow: 'auto', ...WRAP }}>{answer}</pre>}
+          {thread.length > 0 && (
+            <div className="col" style={{ gap: 8, maxHeight: 380, overflow: 'auto' }}>
+              {thread.map((t, i) => (
+                <div key={i} className="col" style={{ gap: 4, borderTop: '1px solid var(--border)', paddingTop: 6 }}>
+                  <div style={{ fontSize: 12 }}><span style={{ color: 'var(--accent)' }}>You → {t.who}:</span> {t.q}</div>
+                  {t.entries.map((e, j) => (
+                    <div key={j} className="col" style={{ gap: 2 }}>
+                      {t.entries.length > 1 && <div className="label" style={{ color: 'var(--muted)' }}>{e.name}</div>}
+                      <pre style={{ margin: 0, fontSize: 12, ...WRAP }}>{e.answer}</pre>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -185,24 +218,40 @@ function lastFinishedStatus(evs?: { type: string; status?: string }[]): string |
   return undefined;
 }
 
-/** A bounced final → send it back to the group or QA, optionally with a note. */
+/** Did the run reach a terminal state (finished OR errored)? Post-run tools (ask,
+ *  PR, replay) are available for bounced and failed runs too, not just clean ones. */
+function isTerminated(evs?: { type: string }[]): boolean {
+  return !!evs?.some((e) => e.type === 'finished' || e.type === 'error');
+}
+
+/** A bounced final → send it back (group or QA, repeatedly), or accept-as-is and
+ *  salvage it into docs + working code + TODOs for the bad parts. */
 function BounceRecovery({ runId, onSent }: { runId: string; onSent: () => void }) {
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
   async function send(target: 'group' | 'qa') {
-    setBusy(true);
+    setBusy(true); setErr('');
     const r = await window.api.council.continueBounced(runId, target, note);
     setBusy(false);
-    if (r.ok) onSent();
+    if (r.ok) onSent(); else setErr(r.error ?? 'failed');
+  }
+  async function salvage() {
+    setBusy(true); setErr('');
+    const r = await window.api.council.salvageBounced(runId, note);
+    setBusy(false);
+    if (r.ok) onSent(); else setErr(r.error ?? 'salvage failed');
   }
   return (
     <div className="card col" style={{ gap: 8, border: '1px solid var(--bad)' }}>
-      <strong style={{ color: 'var(--bad)' }}>Bounced — not a dead end. Send it back:</strong>
-      <textarea placeholder="Optional: clarify, add a constraint, or ask them something — injected as a user follow-up for everyone…" value={note} onChange={(e) => setNote(e.target.value)} rows={2} style={{ fontSize: 12 }} />
+      <strong style={{ color: 'var(--bad)' }}>Bounced — not a dead end. You can send it back as many times as you like:</strong>
+      <textarea placeholder="Optional: clarify, add a constraint, or ask them something — injected as a user follow-up for everyone (and as a note to the salvage actor)…" value={note} onChange={(e) => setNote(e.target.value)} rows={2} style={{ fontSize: 12 }} />
       <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
         <button disabled={busy} onClick={() => send('group')} title="Re-run the debate/gauntlet with your note, then re-synthesize and re-judge">↩ Back to the group</button>
         <button disabled={busy} onClick={() => send('qa')} title="Re-run just the QA / judge gate on the same proposal with your note">↩ Back to QA / judge</button>
+        <button disabled={busy} onClick={salvage} style={{ borderColor: 'var(--warn)', color: 'var(--warn)' }} title="Accept the proposal as-is: the editing actor writes a doc commenting extensively on exactly what's good/bad and why, codes up the good parts, and leaves labeled TODOs for the bad parts. Auto-applies if the build stays green.">📝 Accept & document (code good, TODO bad)</button>
       </div>
+      {err && <div className="label" style={{ color: 'var(--bad)' }}>{err}</div>}
     </div>
   );
 }

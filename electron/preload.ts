@@ -103,15 +103,17 @@ contextBridge.exposeInMainWorld('api', {
     mcp: () => invoke('bridge:mcp')
   },
   council: {
-    start: (opts: { repo?: string; protocolId: string; assignment: any; task: string; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number }; prologue?: boolean; personas?: Record<string, string> }) => invoke('council:start', opts),
+    start: (opts: { repo?: string; protocolId: string; assignment: any; task: string; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number }; prologue?: boolean; personas?: Record<string, string>; forceBlind?: boolean }) => invoke('council:start', opts),
     startLoop: (opts: { repo: string; protocolId: string; assignment: any; goal: string; maxIterations?: number; costCeiling?: number; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number } }) => invoke('council:startLoop', opts),
     answerQuestions: (runId: string, answers: string[]) => invoke('council:answerQuestions', { runId, answers }),
     detectEnv: (repo: string) => invoke('council:detectEnv', { repo }),
     resume: (runId: string) => invoke('council:resume', { runId }),
     continueBounced: (runId: string, target: 'group' | 'qa', note?: string) => invoke('council:continueBounced', { runId, target, note }),
     ask: (runId: string, agentId: string, question: string) => invoke('council:ask', { runId, agentId, question }),
+    askRoom: (runId: string, question: string) => invoke('council:askRoom', { runId, question }),
     prDescription: (runId: string) => invoke('council:prDescription', { runId }),
     snapshots: (runId: string) => invoke('council:snapshots', { runId }),
+    salvageBounced: (runId: string, note?: string) => invoke('council:salvageBounced', { runId, note }),
     cancel: (runId: string) => invoke('council:cancel', { runId }),
     list: () => invoke('council:list'),
     probeAgent: (agent: any, repo?: string) => invoke('council:probeAgent', { agent, repo }),

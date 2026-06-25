@@ -102,7 +102,7 @@ function withContext(task: string, context?: string): string {
 // Prologue: a run that is paused after generating clarifying questions, waiting
 // for the user's answers before the real protocol launches. Held in memory until
 // answered (the prologue is interactive and resolved within the session).
-interface ProloguePending { repo?: string; protocol: Protocol; roster: RosterAgent[]; assignment: SessionAssignment; task: string; agentOptions?: Record<string, { temperature?: number; top_p?: number }>; agentPersonas?: Record<string, string>; questions: string[] }
+interface ProloguePending { repo?: string; protocol: Protocol; roster: RosterAgent[]; assignment: SessionAssignment; task: string; agentOptions?: Record<string, { temperature?: number; top_p?: number }>; agentPersonas?: Record<string, string>; forceBlind?: boolean; questions: string[] }
 const pendingPrologue = new Map<string, ProloguePending>();
 
 /** Parse a consolidated questions reply into ≤6 clean question strings. */
@@ -398,7 +398,7 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
 
   // Shared launcher for a fresh start AND a resume (resumeFrom set). Persists a
   // checkpoint after every phase so an aborted/errored run can be continued.
-  function launchCouncilRun(runId: string, opts: { repo?: string; protocol: Protocol; roster: RosterAgent[]; assignment: SessionAssignment; task: string; resumeFrom?: ResumeState; agentOptions?: Record<string, { temperature?: number; top_p?: number }>; agentPersonas?: Record<string, string> }) {
+  function launchCouncilRun(runId: string, opts: { repo?: string; protocol: Protocol; roster: RosterAgent[]; assignment: SessionAssignment; task: string; resumeFrom?: ResumeState; agentOptions?: Record<string, { temperature?: number; top_p?: number }>; agentPersonas?: Record<string, string>; forceBlind?: boolean }) {
     const db = getDb();
     const controller = new AbortController();
     const signal = { aborted: false, controller };
@@ -420,7 +420,7 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
       try {
         const res = await runProtocol(opts.protocol, {
           roster: opts.roster, assignment: opts.assignment, task: opts.task, transport, executor, signal,
-          resumeFrom: opts.resumeFrom,
+          resumeFrom: opts.resumeFrom, forceBlind: opts.forceBlind,
           emit: (ev) => send(runId, ev),
           onCheckpoint: (cp) => {
             try {
@@ -499,7 +499,7 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
     getDb().prepare('UPDATE council_runs SET status=?, task=? WHERE run_id=?').run('running', task, opts.runId);
     appendAudit('council:answers', { runId: opts.runId, answered: (opts.answers ?? []).filter(Boolean).length });
     trace('council:answers', { runId: opts.runId, questions: p.questions.length });
-    launchCouncilRun(opts.runId, { repo: p.repo, protocol: p.protocol, roster: p.roster, assignment: p.assignment, task, agentOptions: p.agentOptions, agentPersonas: p.agentPersonas });
+    launchCouncilRun(opts.runId, { repo: p.repo, protocol: p.protocol, roster: p.roster, assignment: p.assignment, task, agentOptions: p.agentOptions, agentPersonas: p.agentPersonas, forceBlind: p.forceBlind });
     return { ok: true, runId: opts.runId };
   });
 
@@ -508,7 +508,7 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
     try { return { ok: true, facts: detectEnv(opts.repo) }; } catch (e: any) { return { ok: false, facts: '', error: e?.message }; }
   });
 
-  ipcMain.handle('council:start', (_e, opts: { repo?: string; protocolId: string; assignment: SessionAssignment; task: string; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number }; prologue?: boolean; personas?: Record<string, string> }) => {
+  ipcMain.handle('council:start', (_e, opts: { repo?: string; protocolId: string; assignment: SessionAssignment; task: string; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number }; prologue?: boolean; personas?: Record<string, string>; forceBlind?: boolean }) => {
     const protocol = PROTOCOLS[opts.protocolId];
     if (!protocol) return { ok: false, error: `unknown protocol: ${opts.protocolId}` };
     const roster = getSetting<RosterAgent[]>('fusionRoster', []);
@@ -525,10 +525,10 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
     trace('council:start', { runId, protocol: protocol.id, repo: opts.repo ?? null, assignment: opts.assignment, taskBytes: task.length, hot: opts.hot?.agents, prologue: !!opts.prologue });
 
     if (opts.prologue) {
-      startPrologue(runId, { repo: opts.repo, protocol, roster, assignment: opts.assignment, task, agentOptions, agentPersonas });
+      startPrologue(runId, { repo: opts.repo, protocol, roster, assignment: opts.assignment, task, agentOptions, agentPersonas, forceBlind: opts.forceBlind });
       return { ok: true, runId, awaiting: true };
     }
-    launchCouncilRun(runId, { repo: opts.repo, protocol, roster, assignment: opts.assignment, task, agentOptions, agentPersonas });
+    launchCouncilRun(runId, { repo: opts.repo, protocol, roster, assignment: opts.assignment, task, agentOptions, agentPersonas, forceBlind: opts.forceBlind });
     return { ok: true, runId };
   });
 
@@ -709,6 +709,76 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
     const row = getDb().prepare('SELECT snapshots FROM council_runs WHERE run_id=?').get(opts.runId) as { snapshots?: string } | undefined;
     if (!row) return { ok: false, snapshots: [] };
     try { return { ok: true, snapshots: row.snapshots ? JSON.parse(row.snapshots) : [] }; } catch { return { ok: true, snapshots: [] }; }
+  });
+
+  // Ask the whole room a follow-up — every agent that spoke answers in parallel.
+  ipcMain.handle('council:askRoom', async (_e, opts: { runId: string; question: string }) => {
+    const row = getDb().prepare('SELECT * FROM council_runs WHERE run_id=?').get(opts.runId) as any;
+    if (!row) return { ok: false, error: 'unknown run', answers: [] };
+    const roster = getSetting<RosterAgent[]>('fusionRoster', []);
+    let transcript: { agentId?: string; content: string }[] = [];
+    try { transcript = row.transcript ? JSON.parse(row.transcript) : []; } catch { /* none */ }
+    const spoke = [...new Set(transcript.map((t) => t.agentId).filter(Boolean) as string[])];
+    let agents = spoke.map((id) => roster.find((a) => a.id === id)).filter(Boolean) as RosterAgent[];
+    if (!agents.length) { try { agents = resolveAgents(roster, ['@panelists'], JSON.parse(row.assignment)); } catch { /* none */ } }
+    if (!agents.length) return { ok: false, error: 'no participants to ask', answers: [] };
+    const others = transcript.map((t) => `${t.agentId}: ${String(t.content).slice(0, 500)}`).join('\n').slice(0, 6000);
+    const transport = makeTransport(transportConfig(row.repo ?? undefined));
+    const answers = await Promise.all(agents.map(async (agent) => {
+      const mine = transcript.filter((t) => t.agentId === agent.id).map((t) => t.content).join('\n\n').slice(0, 5000);
+      const sys = `You are ${agent.displayName}, a member of a code-review council answering a follow-up question about the session you took part in. Be concise and specific.`;
+      const user = `Council discussion (abridged):\n${others}\n\nYour own statements:\n${mine || '(you did not speak directly)'}\n\nThe user's question for the room:\n${opts.question}`;
+      try { const answer = await transport(agent, [{ role: 'system', content: sys }, { role: 'user', content: user }]); return { agentId: agent.id, answer }; }
+      catch (e: any) { return { agentId: agent.id, answer: `error: ${String(e?.message ?? e)}` }; }
+    }));
+    appendAudit('council:askRoom', { runId: opts.runId, participants: answers.length });
+    return { ok: true, answers };
+  });
+
+  // Salvage a bounced proposal: accept it as-is, write an extensively-commented doc
+  // on what's good/bad and the full why, code up the good parts, and leave the bad
+  // parts as labeled TODOs. Runs the editing actor in a worktree, then auto-applies
+  // if the build stays green (else leaves the diff for manual review).
+  ipcMain.handle('council:salvageBounced', (_e, opts: { runId: string; note?: string }) => {
+    const db = getDb();
+    const row = db.prepare('SELECT * FROM council_runs WHERE run_id=?').get(opts.runId) as any;
+    if (!row) return { ok: false, error: 'unknown run' };
+    if (!row.repo) return { ok: false, error: 'salvage needs a repo (this was a dry run)' };
+    const roster = getSetting<RosterAgent[]>('fusionRoster', []);
+    let assignment: SessionAssignment; try { assignment = JSON.parse(row.assignment); } catch { return { ok: false, error: 'corrupt assignment' }; }
+    const actor = resolveAgents(roster, ['@judge'], assignment)[0];
+    if (!actor) return { ok: false, error: 'no actor to salvage' };
+    if (!actor.capabilities?.canEdit) return { ok: false, error: `${actor.displayName} cannot edit files — assign an editing actor (claude/codex) as the judge` };
+
+    const runId = opts.runId;
+    const controller = new AbortController();
+    const signal = { aborted: false, controller };
+    signals.set(runId, signal);
+    const executor = makeExecutorHooks(row.repo, `salvage-${runId}-${Date.now().toString(36)}`, controller.signal);
+    db.prepare('UPDATE council_runs SET status=?, resumable=0, finished=NULL WHERE run_id=?').run('running', runId);
+
+    void (async () => {
+      send(runId, { type: 'phase', phase: 'Salvage — accept & document', kind: 'execute' });
+      const prompt = `A council proposal was BOUNCED by the judge, but the user has chosen to ACCEPT IT AS-IS and salvage the work.\n\nOriginal task:\n${row.task}\n\nThe bounced proposal:\n${(row.artifact ?? '').slice(0, 12000)}\n${opts.note ? `\nUser's note:\n${opts.note}\n` : ''}\nDo ALL of the following by editing the working tree directly:\n1. Write thorough documentation (a new markdown doc under docs/, plus inline comments at the relevant code) that comments EXTENSIVELY and elaborately on exactly what is GOOD and what is BAD about this proposal, and the ENTIRE reasoning WHY for each — be concrete and specific, not vague.\n2. Implement the GOOD, sound portions as real working code.\n3. For the BAD or unsafe portions, do NOT implement them blindly — leave clearly-labeled \`TODO(salvage):\` comments at the exact spots, each explaining what is wrong and what must be fixed before it is safe.\nKeep the build green. When done, summarize what you implemented vs. what you left as TODOs.`;
+      try {
+        const p = await executor.delegate!(actor, prompt);
+        send(runId, { type: 'propose', phase: 'Salvage', ok: p.ok, agentId: actor.id });
+        let approved = false;
+        if (p.ok) {
+          const v = await executor.validate();
+          send(runId, { type: 'validate', phase: 'Salvage', ok: v.ok });
+          if (v.ok) { const ap = await executor.approve(); approved = ap.ok; send(runId, { type: 'execute', phase: 'Salvage', ok: ap.ok }); }
+        }
+        const status = !p.ok ? 'error' : approved ? 'completed' : 'salvaged';
+        db.prepare('UPDATE council_runs SET status=?, approved=?, finished=? WHERE run_id=?').run(status, approved ? 1 : 0, Date.now(), runId);
+        appendAudit('council:salvage', { runId, ok: p.ok, approved });
+        send(runId, { type: 'finished', status, ok: approved });
+      } catch (err: any) {
+        db.prepare('UPDATE council_runs SET status=?, finished=? WHERE run_id=?').run('error', Date.now(), runId);
+        send(runId, { type: 'error', content: String(err?.message ?? err) });
+      } finally { signals.delete(runId); }
+    })();
+    return { ok: true, runId };
   });
 
   ipcMain.handle('council:probeAgent', async (_e, opts: { agent: RosterAgent; repo?: string }) => {

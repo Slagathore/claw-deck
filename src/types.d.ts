@@ -96,15 +96,17 @@ declare global {
         mcp: () => Promise<{ name: string; command: string; args?: string[] }[]>;
       };
       council: {
-        start: (opts: { repo?: string; protocolId: string; assignment: import('../electron/council/agents').SessionAssignment; task: string; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number }; prologue?: boolean; personas?: Record<string, string> }) => Promise<{ ok: boolean; runId?: string; awaiting?: boolean; error?: string }>;
+        start: (opts: { repo?: string; protocolId: string; assignment: import('../electron/council/agents').SessionAssignment; task: string; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number }; prologue?: boolean; personas?: Record<string, string>; forceBlind?: boolean }) => Promise<{ ok: boolean; runId?: string; awaiting?: boolean; error?: string }>;
         startLoop: (opts: { repo: string; protocolId: string; assignment: import('../electron/council/agents').SessionAssignment; goal: string; maxIterations?: number; costCeiling?: number; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number } }) => Promise<{ ok: boolean; runId?: string; error?: string }>;
         answerQuestions: (runId: string, answers: string[]) => Promise<{ ok: boolean; runId?: string; error?: string }>;
         detectEnv: (repo: string) => Promise<{ ok: boolean; facts: string; error?: string }>;
         resume: (runId: string) => Promise<{ ok: boolean; runId?: string; fromPhase?: number; error?: string }>;
         continueBounced: (runId: string, target: 'group' | 'qa', note?: string) => Promise<{ ok: boolean; runId?: string; fromPhase?: number; error?: string }>;
         ask: (runId: string, agentId: string, question: string) => Promise<{ ok: boolean; answer?: string; error?: string }>;
+        askRoom: (runId: string, question: string) => Promise<{ ok: boolean; answers: { agentId: string; answer: string }[]; error?: string }>;
         prDescription: (runId: string) => Promise<{ ok: boolean; markdown?: string; error?: string }>;
         snapshots: (runId: string) => Promise<{ ok: boolean; snapshots: { phaseIndex: number; label: string; artifact: string }[] }>;
+        salvageBounced: (runId: string, note?: string) => Promise<{ ok: boolean; runId?: string; error?: string }>;
         cancel: (runId: string) => Promise<{ ok: boolean }>;
         list: () => Promise<{ ok: boolean; runs: { runId: string; repo: string | null; protocol: string; task: string; assignment: string; status: string; approved: number; phaseIndex: number | null; resumable: number | null; started: number; finished: number | null }[] }>;
         probeAgent: (agent: import('../electron/council/agents').RosterAgent, repo?: string) => Promise<{ ok: boolean; detail: string }>;

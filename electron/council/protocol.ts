@@ -138,7 +138,27 @@ const DEVIL: Protocol = {
   ],
 };
 
-export const PROTOCOLS: Record<string, Protocol> = { COUNCIL, GAUNTLET, DEVIL, STEELMAN, TOURNAMENT, REDTEAM, PCRSR, GCRJ, PAIR, SOLO };
+// CRUCIBLE = generate → 3 rounds of (steelman ⇄ red-team) → synthesize → harden
+// → QA → blind judge → build. The full forge: strengthen and attack, repeatedly.
+const CRUCIBLE: Protocol = {
+  id: 'CRUCIBLE', name: 'Crucible (steelman ⇄ red-team ×3)',
+  phases: [
+    { kind: 'independent', agents: ['@panelists'], label: 'Generate' },
+    { kind: 'steelman', agents: ['@panelists'], rounds: 1, label: 'Steelman 1' },
+    { kind: 'gauntlet', agents: ['@panelists'], maxTurns: 4, label: 'Red-team 1' },
+    { kind: 'steelman', agents: ['@panelists'], rounds: 1, label: 'Steelman 2' },
+    { kind: 'gauntlet', agents: ['@panelists'], maxTurns: 4, label: 'Red-team 2' },
+    { kind: 'steelman', agents: ['@panelists'], rounds: 1, label: 'Steelman 3' },
+    { kind: 'gauntlet', agents: ['@panelists'], maxTurns: 4, label: 'Red-team 3' },
+    { kind: 'synthesize', by: '@scribe', label: 'Synthesize' },
+    { kind: 'steelman', agents: ['@panelists'], rounds: 1, label: 'Harden' },
+    { kind: 'gate', by: '@qa-gate', onMinor: 'apply-forward', onMajor: 'bounce', label: 'QA gate' },
+    { kind: 'gate', by: '@judge', blind: true, onMinor: 'apply-forward', onMajor: 'bounce', label: 'Blind judge' },
+    { kind: 'execute', by: '@judge', editPolicy: 'review-each', label: 'Build' },
+  ],
+};
+
+export const PROTOCOLS: Record<string, Protocol> = { COUNCIL, CRUCIBLE, GAUNTLET, DEVIL, STEELMAN, TOURNAMENT, REDTEAM, PCRSR, GCRJ, PAIR, SOLO };
 
 /** Parse a gate agent's free-text reply into a structured verdict. Default safe = 'major'. */
 export function parseGateVerdict(text: string): GateVerdict {

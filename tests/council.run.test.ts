@@ -120,6 +120,24 @@ describe('runProtocol', () => {
     expect(res.status).toBe('bounced');
   });
 
+  it('forceBlind makes a normal (non-blind) gate use the blind judge prompt + parser', async () => {
+    const proto: Protocol = { id: 'FB', name: 'fb', phases: [{ kind: 'gate', by: '@judge', onMajor: 'bounce', label: 'Gate' }] };
+    const systems: string[] = [];
+    const transport = stub((_id, system) => { systems.push(system); return /BLIND reviewer/.test(system) ? 'LGTM' : 'approve'; });
+    const res = await runProtocol(proto, { roster: ROSTER, assignment: ASSIGN, task: 't', transport, forceBlind: true });
+    expect(systems.some((s) => /BLIND reviewer/.test(s))).toBe(true);   // the gate was forced blind
+    expect(res.status).toBe('completed');                                // blind LGTM → approve
+  });
+
+  it('CRUCIBLE alternates steelman⇄red-team ×3, then synthesize/harden/QA/blind/build', () => {
+    const c = PROTOCOLS.CRUCIBLE;
+    expect(c).toBeTruthy();
+    expect(c.phases.filter((p) => p.kind === 'steelman').length).toBe(4);  // 3 rounds + harden
+    expect(c.phases.filter((p) => p.kind === 'gauntlet').length).toBe(3);  // red-team ×3
+    expect(c.phases.some((p) => p.kind === 'gate' && p.blind)).toBe(true); // final blind judge
+    expect(c.phases.at(-1)!.kind).toBe('execute');                          // build last
+  });
+
   it('checkpoints after each phase and resumes mid-protocol without re-running earlier phases', async () => {
     const proto: Protocol = { id: 'R', name: 'r', phases: [
       { kind: 'independent', agents: ['@panelists'], label: 'P1' },
