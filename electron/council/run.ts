@@ -8,6 +8,7 @@
 import { RosterAgent, SessionAssignment, Msg, GateVerdict, resolveAgents } from './agents';
 import { Protocol, Phase, parseGateVerdict, parseBlindVerdict, isConverged, extractDiff } from './protocol';
 import { lintArtifact, formatFindings } from './fusionLint';
+import { boundedRepair } from './fusionInfra';
 
 export type TransportFn = (agent: RosterAgent, messages: Msg[], onDelta?: (chunk: string) => void) => Promise<string>;
 
@@ -67,6 +68,8 @@ const SYS = {
   blindJudge: 'You are a BLIND reviewer. You are NOT shown any prior discussion, agreement, or consensus — only the original task and the proposed change. Do not assume the change is correct because someone proposed it. Answer ONE question: what is STILL wrong, missing, or risky AFTER this change is applied? List concrete problems (and a corrected ```diff if you have one). If, after careful review, there is genuinely nothing wrong, reply with EXACTLY: LGTM',
   // Tournament: pick one winner, no merging.
   select: 'You are a judge selecting the single BEST proposal from several candidates. Choose exactly ONE — the most correct, complete, and runnable — and restate it IN FULL as the chosen proposal, with a one-line reason. Do NOT merge, average, or blend candidates.',
+  // Repair-hand: fix ONLY the deterministic findings, return the whole artifact.
+  repair: 'You are a repair hand. You are given an artifact and a list of DETERMINISTIC defects (truncated code, a wrong line left under a "BUG/should be/CORRECTION" note, an unclosed code fence, unbalanced brackets). Fix EXACTLY those defects and nothing else: complete truncated code, delete the known-wrong line and keep only the corrected value, close fences, balance brackets. Do not redesign. Output the COMPLETE corrected artifact, ready to ship — no commentary.',
 };
 
 async function ask(deps: RunDeps, agent: RosterAgent, system: string, user: string, phase?: string): Promise<string | null> {
@@ -111,6 +114,7 @@ export async function runProtocol(protocol: Protocol, deps: RunDeps): Promise<Ru
       settled.forEach((s, i) => {
         if (s.status === 'fulfilled' && s.value) { takes.push(`### ${agents[i].displayName}\n${s.value}`); record(label, phase.kind, s.value, agents[i].id); }
       });
+      if (takes.length < agents.length) emit({ type: 'warn', phase: label, content: `${agents.length - takes.length} advisor(s) dropped (fetch failed); quorum now ${takes.length}/${agents.length}`, ok: takes.length >= minAdvisors });
       if (takes.length < minAdvisors && takes.length === 0) { /* degrade: keep prior artifact */ }
       else artifact = takes.join('\n\n');
     }
@@ -164,6 +168,7 @@ export async function runProtocol(protocol: Protocol, deps: RunDeps): Promise<Ru
         const settled = await Promise.allSettled(agents.map((a) => ask(deps, a, SYS.steelman, `Task:\n${deps.task}\n\nCurrent proposal:\n${artifact}\n\nStrengthen it, then note what remains.`, label)));
         const takes: string[] = [];
         settled.forEach((s, i) => { if (s.status === 'fulfilled' && s.value) { takes.push(`### ${agents[i].displayName}\n${s.value}`); record(label, phase.kind, s.value, agents[i].id); } });
+        if (takes.length < agents.length) emit({ type: 'warn', phase: label, content: `${agents.length - takes.length} advisor(s) dropped this round; quorum ${takes.length}/${agents.length}`, ok: takes.length > 0 });
         if (takes.length) artifact = takes.join('\n\n');
       }
     }
@@ -185,11 +190,25 @@ export async function runProtocol(protocol: Protocol, deps: RunDeps): Promise<Ru
       const gate = resolveAgents(deps.roster, [phase.by ?? '@qa-gate'], deps.assignment)[0];
       if (!gate) continue;
       // §1.4 pre-gate: deterministic, free lint runs BEFORE the QA model call. It
-      // catches the truncation/dead-code/imbalance defects (incl. the bounce cause)
-      // and surfaces them to the judge so it never false-bounces a plumbing error.
-      const lint = lintArtifact(artifact);
+      // catches the truncation/dead-code/imbalance defects (incl. the bounce cause).
+      let lint = lintArtifact(artifact);
       if (lint.findings.length) emit({ type: 'lint', phase: label, content: formatFindings(lint), ok: lint.passed });
-      const lintNote = lint.passed ? '' : `\n\n[DETERMINISTIC PRE-GATE — free lint, not a content verdict]\n${formatFindings(lint)}\nIf a finding is pure truncation/plumbing, judge the work itself, not the cut.`;
+      // §1.4/§2.3 — blocking findings route into a bounded repair loop (≤2 rounds)
+      // BEFORE spending the QA model call. Still failing → ship + surface (no abort).
+      if (!lint.passed) {
+        const repairHand = resolveAgents(deps.roster, ['@scribe'], deps.assignment)[0] ?? gate;
+        const rr = await boundedRepair(
+          artifact,
+          { passed: false, findings: lint.findings, report: formatFindings(lint) },
+          async (art, report) => (await ask(deps, repairHand, SYS.repair, `Artifact:\n${art}\n\nDeterministic findings to fix (change nothing else):\n${report}\n\nReturn the COMPLETE corrected artifact.`, `${label} · repair`)) || art,
+          (art) => { const l = lintArtifact(art); return { passed: l.passed, findings: l.findings, report: formatFindings(l) }; },
+          { maxRounds: 2 },
+        );
+        artifact = rr.artifact;
+        lint = lintArtifact(artifact);
+        emit({ type: 'lint', phase: `${label} · repaired`, content: rr.passed ? `repaired clean in ${rr.rounds} round(s)` : formatFindings(lint), ok: rr.passed });
+      }
+      const lintNote = lint.passed ? '' : `\n\n[DETERMINISTIC PRE-GATE — free lint, not a content verdict; ${lint.blockCount} residual after auto-repair]\n${formatFindings(lint)}\nIf a finding is pure truncation/plumbing, judge the work itself, not the cut.`;
       // blind: judge sees ONLY (task + the patch), never the discussion/consensus.
       const blind = phase.blind || deps.forceBlind;
       const diff = extractDiff(artifact);

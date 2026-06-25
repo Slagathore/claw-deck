@@ -149,6 +149,24 @@ describe('runProtocol', () => {
     expect(gateSawLint).toBe(true);                     // findings folded into the gate prompt
   });
 
+  it('gate auto-repairs a deterministic defect (≤2 rounds) before the QA model call', async () => {
+    // Draft has an unclosed code fence; the scribe repair-hand closes it; the gate
+    // then approves. The run must NOT bounce on the plumbing defect.
+    const proto: Protocol = { id: 'RP', name: 'rp', phases: [
+      { kind: 'independent', agents: ['@panelists'], label: 'Draft' },
+      { kind: 'gate', by: '@judge', onMajor: 'bounce', label: 'Gate' },
+    ] };
+    const { evs, emit } = collect();
+    const transport = stub((_id, system) => {
+      if (/repair hand/i.test(system)) return '```ts\nfunction f() { return 1; }\n```'; // fixed: closed fence
+      if (/verdict word|BLIND reviewer/.test(system)) return 'approve';
+      return 'Here is the code:\n```ts\nfunction f() {\n  return 1;'; // unclosed fence
+    });
+    const res = await runProtocol(proto, { roster: ROSTER, assignment: ASSIGN, task: 't', transport, emit });
+    expect(res.status).toBe('completed');                              // repaired, not bounced
+    expect(evs.some((e) => e.type === 'lint' && /repaired/.test(e.phase ?? ''))).toBe(true);
+  });
+
   it('CRUCIBLE alternates steelman⇄red-team ×3, then synthesize/harden/QA/blind/build', () => {
     const c = PROTOCOLS.CRUCIBLE;
     expect(c).toBeTruthy();

@@ -150,8 +150,10 @@ const CRUCIBLE: Protocol = {
     { kind: 'gauntlet', agents: ['@panelists'], maxTurns: 4, label: 'Red-team 2' },
     { kind: 'steelman', agents: ['@panelists'], rounds: 1, label: 'Steelman 3' },
     { kind: 'gauntlet', agents: ['@panelists'], maxTurns: 4, label: 'Red-team 3' },
-    { kind: 'synthesize', by: '@scribe', label: 'Synthesize' },
     { kind: 'steelman', agents: ['@panelists'], rounds: 1, label: 'Harden' },
+    // §2.1 — consolidate the fanned-out hardened drafts into ONE canonical artifact
+    // (Claude/scribe) BEFORE QA, so QA never reviews an arbitrary multi-draft blob.
+    { kind: 'synthesize', by: '@scribe', label: 'Consolidate' },
     { kind: 'gate', by: '@qa-gate', onMinor: 'apply-forward', onMajor: 'bounce', label: 'QA gate' },
     { kind: 'gate', by: '@judge', blind: true, onMinor: 'apply-forward', onMajor: 'bounce', label: 'Blind judge' },
     { kind: 'execute', by: '@judge', editPolicy: 'review-each', label: 'Build' },
