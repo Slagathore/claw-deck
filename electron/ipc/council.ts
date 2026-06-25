@@ -16,7 +16,7 @@ import { getDb } from './db';
 import { getSetting } from './settings';
 import { appendAudit } from './security';
 import { PROTOCOLS, Protocol } from '../council/protocol';
-import { runProtocol, ExecutorHooks, CouncilEvent, ResumeState } from '../council/run';
+import { runProtocol, ExecutorHooks, CouncilEvent, ResumeState, RunResult } from '../council/run';
 import { METHODS, runMethod, printMethodCard } from '../council/methods';
 import { runAutoloop } from '../council/autoloop';
 import { makeTransport, TransportConfig } from '../council/transport';
@@ -138,6 +138,30 @@ function scopedReadOnlyServers(repo?: string): McpServerSpec[] {
     if (fs.existsSync(dbPath)) out.push({ name: 'code-brain', command: 'node', args: [path.join(__dirname, '..', 'atlas', 'codeBrainServer.js'), '--db', dbPath], cwd: repo });
   }
   return out;
+}
+
+/** Optional method capabilities for a repo: Atlas query, file-read grounding, and build.
+ *  autoApply=true (loop) applies a successful build to the live tree so iterations
+ *  accumulate; false (one-shot) leaves the diff in the worktree for review. */
+function methodCaps(repo: string | undefined, idBase: string, controller: AbortController, autoApply: boolean) {
+  const atlasQuery = repo && fs.existsSync(atlasDbPath(repo))
+    ? async (q: string) => { try { const hits = locate(asQueryable(openAtlas(repo!)), q, 15); return hits.length ? hits.map((h) => `${h.location} — ${h.name} (${h.kind}, ${h.status})`).join('\n') : null; } catch { return null; } }
+    : undefined;
+  const readFiles = repo
+    ? async (paths: string[]) => { const out: Record<string, string> = {}; const root = path.resolve(repo); for (const rel of paths.slice(0, 8)) { try { const abs = path.resolve(root, rel); if (abs.startsWith(root) && fs.existsSync(abs) && fs.statSync(abs).isFile() && fs.statSync(abs).size < 200_000) out[rel] = fs.readFileSync(abs, 'utf8'); } catch { /* skip */ } } return out; }
+    : undefined;
+  const build = repo
+    ? async (artifact: string, builder: RosterAgent) => {
+        if (!builder.capabilities?.canEdit) return { ok: false, error: `${builder.displayName} cannot edit files` };
+        const ex = makeExecutorHooks(repo, idBase, controller.signal);
+        if (!ex.delegate) return { ok: false, error: 'no delegate capability' };
+        const r = await ex.delegate(builder, `Implement the following into the working tree directly.\nFIRST write a CHANGE_PLAN.md mapping what you will change and why. THEN make the changes, keeping them focused. When done, summarize what changed.\n\n${artifact}`);
+        if (r.ok && autoApply) { const v = await ex.validate(); if (v.ok) await ex.approve(); }
+        return { ok: r.ok, diff: r.diff, error: r.error };
+      }
+    : undefined;
+  const runDir = repo ? path.join(repo, '.fusion', `method-${idBase}`) : undefined;
+  return { atlasQuery, readFiles, build, runDir };
 }
 
 function transportConfig(repo?: string, abortSignal?: AbortSignal, agentOptions?: Record<string, { temperature?: number; top_p?: number }>, toolset?: ToolSet, agentPersonas?: Record<string, string>): TransportConfig {
@@ -605,10 +629,12 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
   });
 
   // Autonomous goal loop (Phase 5): branch → run protocol → checkpoint → goal-check → repeat.
-  ipcMain.handle('council:startLoop', (_e, opts: { repo: string; protocolId: string; assignment: SessionAssignment; goal: string; maxIterations?: number; costCeiling?: number; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number }; personas?: Record<string, string>; forceBlind?: boolean }) => {
+  ipcMain.handle('council:startLoop', (_e, opts: { repo: string; protocolId: string; assignment: SessionAssignment; goal: string; maxIterations?: number; costCeiling?: number; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number }; personas?: Record<string, string>; forceBlind?: boolean; methodId?: string }) => {
     if (!opts?.repo) return { ok: false, error: 'autonomous loop needs a workspace (for checkpoints)' };
     const protocol = PROTOCOLS[opts.protocolId];
     if (!protocol) return { ok: false, error: `unknown protocol: ${opts.protocolId}` };
+    const method = opts.methodId ? METHODS[opts.methodId] : undefined;   // loop a fusion method instead of the protocol
+    if (opts.methodId && !method) return { ok: false, error: `unknown method: ${opts.methodId}` };
     const roster = getSetting<RosterAgent[]>('fusionRoster', []);
     const va = validateAssignment(roster, opts.assignment);
     if (!va.ok) return { ok: false, error: `invalid assignment${va.missing.length ? ` (unknown ids: ${va.missing.join(', ')})` : ''}` };
@@ -633,7 +659,15 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
       costCeiling: opts.costCeiling,
       signal,
       emit: (ev) => send(runId, { ...ev, type: `loop:${ev.type}` } as any),
-      runIteration: (task, iter) => runProtocol(protocol, { roster, assignment: opts.assignment, task, transport, executor: makeExecutorHooks(opts.repo, `${runId}-i${iter}`, controller.signal), signal, forceBlind: opts.forceBlind, emit: (ev) => send(runId, ev) }),
+      runIteration: method
+        // Method-driven loop: run the fusion method each iteration; its build step auto-applies
+        // to the live tree so iterations accumulate. Adapt MethodResult → RunResult for the loop.
+        ? async (task, iter) => {
+            const caps = methodCaps(opts.repo, `${runId}-i${iter}`, controller, true);
+            const m = await runMethod(method, { task, roster, transport, signal, emit: (ev) => send(runId, ev), ...caps });
+            return { status: 'completed', phasesRun: [method.name], transcript: [], artifact: m.artifact, verdicts: [], approved: !!m.diff } as RunResult;
+          }
+        : (task, iter) => runProtocol(protocol, { roster, assignment: opts.assignment, task, transport, executor: makeExecutorHooks(opts.repo, `${runId}-i${iter}`, controller.signal), signal, forceBlind: opts.forceBlind, emit: (ev) => send(runId, ev) }),
       checkpoint: async (iter) => {
         await git(opts.repo, ['add', '-A']);
         await git(opts.repo, ['commit', '-m', `fusion autoloop ${runId} iter ${iter}`, '--allow-empty', '--no-verify']);
@@ -823,43 +857,9 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
       send(runId, { type: 'phase', phase: method.name, kind: 'method' });
       send(runId, { type: 'agent', phase: method.name, content: printMethodCard(method) });
       const transport = makeTransport(transportConfig(opts.repo, controller.signal));
-      // §3.3/§3.4 — Atlas-first ingest: query the code-brain DB if it exists, else null
-      // (the engine logs a WARN and falls back to its doc/grep walk).
-      const atlasQuery = opts.repo && fs.existsSync(atlasDbPath(opts.repo))
-        ? async (q: string) => {
-            try {
-              const hits = locate(asQueryable(openAtlas(opts.repo!)), q, 15);
-              return hits.length ? hits.map((h) => `${h.location} — ${h.name} (${h.kind}, ${h.status})`).join('\n') : null;
-            } catch { return null; }
-          }
-        : undefined;
-      // build capability: delegate to an editing actor in a worktree (degrades if the
-      // assigned builder can't edit, or there's no repo). Asks for a CHANGE_PLAN.md first.
-      const build = opts.repo
-        ? async (artifact: string, builder: RosterAgent) => {
-            if (!builder.capabilities?.canEdit) return { ok: false, error: `${builder.displayName} cannot edit files` };
-            const ex = makeExecutorHooks(opts.repo!, `method-${runId}`, controller.signal);
-            if (!ex.delegate) return { ok: false, error: 'no delegate capability' };
-            const r = await ex.delegate(builder, `Implement the following into the working tree directly.\nFIRST write a CHANGE_PLAN.md mapping what you will change and why. THEN make the changes, keeping them focused. When done, summarize what changed.\n\n${artifact}`);
-            return { ok: r.ok, diff: r.diff, error: r.error };
-          }
-        : undefined;
-      // real-code grounding: read repo files the Atlas surfaced (repo-relative, no traversal)
-      const readFiles = opts.repo
-        ? async (paths: string[]) => {
-            const out: Record<string, string> = {};
-            const root = path.resolve(opts.repo!);
-            for (const rel of paths.slice(0, 8)) {
-              try {
-                const abs = path.resolve(root, rel);
-                if (!abs.startsWith(root)) continue;
-                if (fs.existsSync(abs) && fs.statSync(abs).isFile() && fs.statSync(abs).size < 200_000) out[rel] = fs.readFileSync(abs, 'utf8');
-              } catch { /* skip unreadable */ }
-            }
-            return out;
-          }
-        : undefined;
-      const runDir = opts.repo ? path.join(opts.repo, '.fusion', `method-${runId}`) : undefined;
+      // Atlas-first ingest + file-read grounding + build (one-shot: build is NOT auto-applied;
+      // it lands in a worktree the user can review/apply from the Run ledger).
+      const { atlasQuery, readFiles, build, runDir } = methodCaps(opts.repo, `method-${runId}`, controller, false);
       try {
         const res = await runMethod(method, { task, focus: opts.focus ?? opts.seed?.focus, roster, transport, signal, emit: (ev) => send(runId, ev), build, atlasQuery, readFiles, runDir, seed: opts.seed });
         const status = res.degraded ? 'completed-degraded' : 'completed';

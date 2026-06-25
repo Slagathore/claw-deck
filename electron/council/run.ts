@@ -261,8 +261,13 @@ export async function runProtocol(protocol: Protocol, deps: RunDeps): Promise<Ru
       const actor = resolveAgents(deps.roster, [phase.by ?? '@judge'], deps.assignment)[0];
       const diff = extractDiff(artifact);
       if (deps.executor) {
-        const p = phase.kind === 'execute' && !diff && actor && deps.executor.delegate
-          ? await deps.executor.delegate(actor, `Task:\n${deps.task}\n\nCouncil proposal:\n${artifact}\n\nImplement this in the working tree. Create/overwrite whatever files are needed. Keep changes focused. When done, summarize what changed.`)
+        // Prefer the agentic editor for an editing-capable actor: it writes real files and
+        // reconciles any proposed diff against the actual tree — more robust than blindly
+        // applying a model-emitted diff (which may be illustrative/partial). Fall back to
+        // diff-apply only when the actor can't edit (or there's no delegate hook).
+        const useDelegate = phase.kind === 'execute' && actor && deps.executor.delegate && actor.capabilities?.canEdit;
+        const p = useDelegate
+          ? await deps.executor.delegate!(actor!, `Task:\n${deps.task}\n\nCouncil proposal:\n${artifact}\n\nImplement this in the working tree. Create/overwrite whatever files are needed. Keep changes focused. When done, summarize what changed.`)
           : await deps.executor.propose(artifact, diff);
         emit({ type: 'propose', phase: label, ok: p.ok, agentId: actor?.id });
         if (!p.ok) {

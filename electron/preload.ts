@@ -108,7 +108,7 @@ contextBridge.exposeInMainWorld('api', {
     runMethod: (opts: { repo?: string; methodId: string; task: string; focus?: string; context?: string; seed?: { contract?: string; artifacts?: string[]; focus?: string } }) => invoke('council:runMethod', opts),
     methodResult: (runId: string) => invoke('council:methodResult', { runId }),
     roleEligibility: () => invoke('council:roleEligibility'),
-    startLoop: (opts: { repo: string; protocolId: string; assignment: any; goal: string; maxIterations?: number; costCeiling?: number; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number }; personas?: Record<string, string>; forceBlind?: boolean }) => invoke('council:startLoop', opts),
+    startLoop: (opts: { repo: string; protocolId: string; assignment: any; goal: string; maxIterations?: number; costCeiling?: number; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number }; personas?: Record<string, string>; forceBlind?: boolean; methodId?: string }) => invoke('council:startLoop', opts),
     answerQuestions: (runId: string, answers: string[]) => invoke('council:answerQuestions', { runId, answers }),
     detectEnv: (repo: string) => invoke('council:detectEnv', { repo }),
     resume: (runId: string) => invoke('council:resume', { runId }),

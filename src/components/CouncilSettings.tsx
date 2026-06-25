@@ -79,6 +79,9 @@ export default function CouncilSettings({ workspace }: { workspace: string }) {
   const [err, setErr] = useState('');
   const [loopGoal, setLoopGoal] = useState('');
   const [loopMax, setLoopMax] = useState(5);
+  const [loopMethod, setLoopMethod] = useState('');
+  const [methodList, setMethodList] = useState<{ id: string; name: string }[]>([]);
+  useEffect(() => { window.api.council.methods().then((r) => { if (r.ok) setMethodList(r.methods.map((m) => ({ id: m.id, name: m.name }))); }); }, []);
   const [probe, setProbe] = useState<Record<string, { ok: boolean; detail: string }>>({});
   const [dryRun, setDryRun] = useState(false);
   const [context, setContext] = useState('');
@@ -145,7 +148,7 @@ export default function CouncilSettings({ workspace }: { workspace: string }) {
 
   async function startLoop() {
     setErr(''); setBusy('Starting loop…');
-    const r = await window.api.council.startLoop({ repo: workspace, protocolId: cfg.protocolId, assignment: cfg.assignment, goal: loopGoal, maxIterations: loopMax, context, hot: hotConfig, personas, forceBlind });
+    const r = await window.api.council.startLoop({ repo: workspace, protocolId: cfg.protocolId, assignment: cfg.assignment, goal: loopGoal, maxIterations: loopMax, context, hot: hotConfig, personas, forceBlind, methodId: loopMethod || undefined });
     setBusy('');
     if (!r.ok || !r.runId) { setErr(r.error ?? 'failed to start loop'); return; }
     startRun(workspace, r.runId);
@@ -258,7 +261,13 @@ export default function CouncilSettings({ workspace }: { workspace: string }) {
       <div className="col" style={{ gap: 6, borderTop: '1px solid var(--border)', paddingTop: 8 }}>
         <label style={{ fontSize: 11, color: 'var(--muted)' }}>Autonomous goal loop — branch → run → checkpoint each iteration → goal-check → repeat (halts on success / cap / oscillation)</label>
         <textarea disabled={locked} placeholder="High-level goal to drive autonomously…" value={loopGoal} onChange={(e) => setLoopGoal(e.target.value)} rows={2} />
-        <div className="row">
+        <div className="row" style={{ flexWrap: 'wrap', gap: 6 }}>
+          <label style={{ fontSize: 12 }} title="Drive each iteration with the session protocol, or a full Fusion method (its build step auto-applies so iterations accumulate).">driver
+            <select disabled={locked} value={loopMethod} onChange={(e) => setLoopMethod(e.target.value)} style={{ marginLeft: 4 }}>
+              <option value="">Session protocol ({cfg.protocolId})</option>
+              {methodList.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+            </select>
+          </label>
           <label style={{ fontSize: 12 }}>max iterations <input disabled={locked} type="number" min={1} max={50} value={loopMax} onChange={(e) => setLoopMax(Math.max(1, Number(e.target.value) || 1))} style={{ width: 60 }} /></label>
           <button onClick={startLoop} disabled={!!busy || locked || !loopGoal.trim() || !cfg.assignment.panelists.length}>⟳ Start autonomous loop</button>
         </div>
