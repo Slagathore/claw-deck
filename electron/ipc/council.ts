@@ -91,6 +91,21 @@ function withContext(task: string, context?: string): string {
     : task;
 }
 
+// Prologue: a run that is paused after generating clarifying questions, waiting
+// for the user's answers before the real protocol launches. Held in memory until
+// answered (the prologue is interactive and resolved within the session).
+interface ProloguePending { repo?: string; protocol: Protocol; roster: RosterAgent[]; assignment: SessionAssignment; task: string; agentOptions?: Record<string, { temperature?: number; top_p?: number }>; questions: string[] }
+const pendingPrologue = new Map<string, ProloguePending>();
+
+/** Parse a consolidated questions reply into ≤6 clean question strings. */
+function parseQuestions(text: string): string[] {
+  const seen = new Set<string>();
+  return (text || '').split(/\r?\n/)
+    .map((l) => l.replace(/^\s*(?:\d+[.)]|[-*•])\s*/, '').trim())
+    .filter((l) => l.length > 3 && !seen.has(l.toLowerCase()) && (seen.add(l.toLowerCase()), true))
+    .slice(0, 6);
+}
+
 /** Build a per-agent sampling map from a "run hot" selection (raised temperature). */
 function buildAgentOptions(hot?: { agents?: string[]; temperature?: number; top_p?: number }): Record<string, { temperature?: number; top_p?: number }> | undefined {
   if (!hot?.agents?.length) return undefined;
@@ -383,12 +398,68 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
       .finally(() => signals.delete(runId));
   }
 
+  // Prologue: panel proposes clarifying questions, consolidates to ≤6, then the
+  // run PAUSES (status awaiting-answers) until the user answers. Does NOT skip the
+  // chosen protocol's round 1 — answers are injected and the full protocol runs.
+  function startPrologue(runId: string, ctx: Omit<ProloguePending, 'questions'>) {
+    const controller = new AbortController();
+    const signal = { aborted: false, controller };
+    signals.set(runId, signal);
+    const transport = makeTransport(transportConfig(ctx.repo, controller.signal, ctx.agentOptions));
+    send(runId, { type: 'phase', phase: 'Prologue — clarifying questions', kind: 'prologue' });
+    const askEmit = async (agent: RosterAgent, system: string, user: string): Promise<string | null> => {
+      try {
+        send(runId, { type: 'agent-start', phase: 'Prologue', agentId: agent.id });
+        const out = await transport(agent, [{ role: 'system', content: system }, { role: 'user', content: user }], (d) => send(runId, { type: 'agent-delta', phase: 'Prologue', agentId: agent.id, content: d }));
+        send(runId, { type: 'agent', phase: 'Prologue', agentId: agent.id, content: out });
+        return out;
+      } catch (e: any) { send(runId, { type: 'agent-error', phase: 'Prologue', agentId: agent.id, content: String(e?.message ?? e) }); return null; }
+    };
+    void (async () => {
+      try {
+        const panelists = resolveAgents(ctx.roster, ['@panelists'], ctx.assignment);
+        const qsys = 'You are about to start work. Propose up to 6 SPECIFIC clarifying questions whose answers would most change how you approach this task — consider the environment facts already given. One question per line. Ask only what genuinely matters; do not pad.';
+        const proposals = await Promise.allSettled(panelists.map((a) => askEmit(a, qsys, `Task:\n${ctx.task}`)));
+        if (signal.aborted) { getDb().prepare('UPDATE council_runs SET status=?, finished=? WHERE run_id=?').run('aborted', Date.now(), runId); send(runId, { type: 'finished', status: 'aborted' }); return; }
+        const pooled = proposals.filter((p) => p.status === 'fulfilled' && p.value).map((p: any) => p.value).join('\n');
+        const consolidator = resolveAgents(ctx.roster, ['@scribe'], ctx.assignment)[0] ?? panelists[0];
+        const csys = 'Consolidate the panel\'s proposed questions into the single most useful set of AT MOST 6 distinct questions to ask the user before starting. Output ONLY the questions, one per line, numbered 1-6. No preamble.';
+        const consolidated = consolidator ? await askEmit(consolidator, csys, `Proposed questions:\n${pooled}`) : pooled;
+        const questions = parseQuestions(consolidated ?? pooled);
+        if (!questions.length) { // nothing to ask → just run
+          launchCouncilRun(runId, { ...ctx });
+          return;
+        }
+        pendingPrologue.set(runId, { ...ctx, questions });
+        getDb().prepare('UPDATE council_runs SET status=?, result=? WHERE run_id=?').run('awaiting-answers', JSON.stringify({ questions }), runId);
+        appendAudit('council:prologue', { runId, questionCount: questions.length });
+        send(runId, { type: 'questions', questions });
+      } catch (err: any) {
+        getDb().prepare('UPDATE council_runs SET status=?, finished=? WHERE run_id=?').run('error', Date.now(), runId);
+        send(runId, { type: 'error', content: String(err?.message ?? err) });
+      } finally { signals.delete(runId); }
+    })();
+  }
+
+  ipcMain.handle('council:answerQuestions', (_e, opts: { runId: string; answers: string[] }) => {
+    const p = pendingPrologue.get(opts.runId);
+    if (!p) return { ok: false, error: 'no pending prologue for this run' };
+    const qa = p.questions.map((q, i) => `Q${i + 1}: ${q}\nA${i + 1}: ${(opts.answers?.[i] ?? '').trim() || '(no answer given)'}`).join('\n\n');
+    const task = `${p.task}\n\n[CLARIFYING ANSWERS FROM THE USER — authoritative]\n${qa}`;
+    pendingPrologue.delete(opts.runId);
+    getDb().prepare('UPDATE council_runs SET status=?, task=? WHERE run_id=?').run('running', task, opts.runId);
+    appendAudit('council:answers', { runId: opts.runId, answered: (opts.answers ?? []).filter(Boolean).length });
+    trace('council:answers', { runId: opts.runId, questions: p.questions.length });
+    launchCouncilRun(opts.runId, { repo: p.repo, protocol: p.protocol, roster: p.roster, assignment: p.assignment, task, agentOptions: p.agentOptions });
+    return { ok: true, runId: opts.runId };
+  });
+
   ipcMain.handle('council:detectEnv', (_e, opts: { repo: string }) => {
     if (!opts?.repo) return { ok: false, facts: '' };
     try { return { ok: true, facts: detectEnv(opts.repo) }; } catch (e: any) { return { ok: false, facts: '', error: e?.message }; }
   });
 
-  ipcMain.handle('council:start', (_e, opts: { repo?: string; protocolId: string; assignment: SessionAssignment; task: string; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number } }) => {
+  ipcMain.handle('council:start', (_e, opts: { repo?: string; protocolId: string; assignment: SessionAssignment; task: string; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number }; prologue?: boolean }) => {
     const protocol = PROTOCOLS[opts.protocolId];
     if (!protocol) return { ok: false, error: `unknown protocol: ${opts.protocolId}` };
     const roster = getSetting<RosterAgent[]>('fusionRoster', []);
@@ -397,12 +468,17 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
 
     const runId = `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
     const task = withContext(opts.task, opts.context);
+    const agentOptions = buildAgentOptions(opts.hot);
     getDb().prepare('INSERT INTO council_runs(run_id, repo, protocol, task, assignment, status, started) VALUES(?,?,?,?,?,?,?)')
-      .run(runId, opts.repo ?? null, protocol.id, task, JSON.stringify(opts.assignment), 'running', Date.now());
-    appendAudit('council:start', { runId, protocol: protocol.id, repo: opts.repo ?? null });
-    trace('council:start', { runId, protocol: protocol.id, repo: opts.repo ?? null, assignment: opts.assignment, taskBytes: task.length, hot: opts.hot?.agents });
+      .run(runId, opts.repo ?? null, protocol.id, task, JSON.stringify(opts.assignment), opts.prologue ? 'prologue' : 'running', Date.now());
+    appendAudit('council:start', { runId, protocol: protocol.id, repo: opts.repo ?? null, prologue: !!opts.prologue });
+    trace('council:start', { runId, protocol: protocol.id, repo: opts.repo ?? null, assignment: opts.assignment, taskBytes: task.length, hot: opts.hot?.agents, prologue: !!opts.prologue });
 
-    launchCouncilRun(runId, { repo: opts.repo, protocol, roster, assignment: opts.assignment, task, agentOptions: buildAgentOptions(opts.hot) });
+    if (opts.prologue) {
+      startPrologue(runId, { repo: opts.repo, protocol, roster, assignment: opts.assignment, task, agentOptions });
+      return { ok: true, runId, awaiting: true };
+    }
+    launchCouncilRun(runId, { repo: opts.repo, protocol, roster, assignment: opts.assignment, task, agentOptions });
     return { ok: true, runId };
   });
 

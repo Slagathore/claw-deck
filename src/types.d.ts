@@ -96,8 +96,9 @@ declare global {
         mcp: () => Promise<{ name: string; command: string; args?: string[] }[]>;
       };
       council: {
-        start: (opts: { repo?: string; protocolId: string; assignment: import('../electron/council/agents').SessionAssignment; task: string; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number } }) => Promise<{ ok: boolean; runId?: string; error?: string }>;
+        start: (opts: { repo?: string; protocolId: string; assignment: import('../electron/council/agents').SessionAssignment; task: string; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number }; prologue?: boolean }) => Promise<{ ok: boolean; runId?: string; awaiting?: boolean; error?: string }>;
         startLoop: (opts: { repo: string; protocolId: string; assignment: import('../electron/council/agents').SessionAssignment; goal: string; maxIterations?: number; costCeiling?: number; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number } }) => Promise<{ ok: boolean; runId?: string; error?: string }>;
+        answerQuestions: (runId: string, answers: string[]) => Promise<{ ok: boolean; runId?: string; error?: string }>;
         detectEnv: (repo: string) => Promise<{ ok: boolean; facts: string; error?: string }>;
         resume: (runId: string) => Promise<{ ok: boolean; runId?: string; fromPhase?: number; error?: string }>;
         cancel: (runId: string) => Promise<{ ok: boolean }>;

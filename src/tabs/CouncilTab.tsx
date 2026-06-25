@@ -8,7 +8,7 @@ import { useCouncil } from '../store/council';
 
 export default function CouncilTab() {
   const { active } = useWorkspaces();
-  const { runByWs, events, live, running, startRun, appendEvent, finishRun } = useCouncil();
+  const { runByWs, events, live, questions, running, startRun, appendEvent, clearQuestions, markRunning, finishRun } = useCouncil();
 
   // single subscription to the council event stream
   useEffect(() => {
@@ -44,6 +44,7 @@ export default function CouncilTab() {
                 <button onClick={() => window.api.council.cancel(runId)} style={{ borderColor: 'var(--bad)', color: 'var(--bad)' }}>Cancel run</button>
               </div>
             )}
+            {runId && (questions[runId]?.length ?? 0) > 0 && <ProloguePanel key={runId} runId={runId} questions={questions[runId]} onSubmitted={() => { clearQuestions(runId); markRunning(runId); }} />}
             <DebateTheater events={runId ? (events[runId] ?? []) : []} live={runId ? live[runId] : undefined} running={runId ? running[runId] : false} />
           </div>
         </div>
@@ -107,6 +108,30 @@ function BridgeBadge() {
   return connected
     ? <span className="badge ok" title={`${folders} folder(s)`}>VS Code bridge · {lm} lm · {diag} problems</span>
     : <span className="badge" style={{ color: 'var(--muted)' }} title="Open VS Code with the claw-bridge extension for live diagnostics + vscode.lm models">bridge offline</span>;
+}
+
+/** Prologue: the panel's clarifying questions, paused for the user's answers. */
+function ProloguePanel({ runId, questions, onSubmitted }: { runId: string; questions: string[]; onSubmitted: () => void }) {
+  const [answers, setAnswers] = useState<string[]>(() => questions.map(() => ''));
+  const [busy, setBusy] = useState(false);
+  async function submit() {
+    setBusy(true);
+    const r = await window.api.council.answerQuestions(runId, answers);
+    setBusy(false);
+    if (r.ok) onSubmitted();
+  }
+  return (
+    <div className="card col" style={{ gap: 8, border: '1px solid var(--accent)' }}>
+      <strong style={{ color: 'var(--accent)' }}>🧭 Prologue — answer to begin the session</strong>
+      {questions.map((q, i) => (
+        <div key={i} className="col" style={{ gap: 2 }}>
+          <label style={{ fontSize: 12 }}>{i + 1}. {q}</label>
+          <textarea value={answers[i] ?? ''} onChange={(e) => setAnswers((a) => { const n = [...a]; n[i] = e.target.value; return n; })} rows={2} style={{ fontSize: 12 }} placeholder="(leave blank to skip)" />
+        </div>
+      ))}
+      <div className="row"><button onClick={submit} disabled={busy} style={{ borderColor: 'var(--good)', color: 'var(--good)' }}>{busy ? 'Starting…' : '▶ Submit answers & run'}</button></div>
+    </div>
+  );
 }
 
 /** Animated braille spinner — shows the session is alive even while an agent thinks silently. */

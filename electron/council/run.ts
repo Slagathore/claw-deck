@@ -10,7 +10,7 @@ import { Protocol, Phase, parseGateVerdict, parseBlindVerdict, isConverged, extr
 
 export type TransportFn = (agent: RosterAgent, messages: Msg[], onDelta?: (chunk: string) => void) => Promise<string>;
 
-export interface CouncilEvent { type: string; phase?: string; kind?: string; agentId?: string; content?: string; verdict?: string; round?: number; ok?: boolean; status?: string }
+export interface CouncilEvent { type: string; phase?: string; kind?: string; agentId?: string; content?: string; verdict?: string; round?: number; ok?: boolean; status?: string; questions?: string[] }
 
 export interface ExecutorHooks {
   propose: (plan: string, diff?: string) => Promise<{ ok: boolean; diff?: string; error?: string }>;

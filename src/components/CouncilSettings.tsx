@@ -80,6 +80,7 @@ export default function CouncilSettings({ workspace }: { workspace: string }) {
   const [hot, setHot] = useState(false);
   const [hotAgents, setHotAgents] = useState<string[]>([]);
   const [hotTemp, setHotTemp] = useState(1.15);
+  const [prologue, setPrologue] = useState(false);
 
   useEffect(() => { window.api.settings.get().then((s) => { setRoster(s.fusionRoster ?? []); const saved = s.councilEnvByWorkspace?.[workspace]; if (saved) setContext(saved); }); }, [workspace]);
   useEffect(() => { if (roster.length && !configs[workspace]) setConfig(workspace, defaultConfig(roster)); }, [roster, workspace, configs, setConfig]);
@@ -104,7 +105,7 @@ export default function CouncilSettings({ workspace }: { workspace: string }) {
     const ready = await preflight();
     if (!ready) return;
     setErr(''); setBusy('Starting…');
-    const r = await window.api.council.start({ repo: dryRun ? undefined : workspace, protocolId: cfg.protocolId, assignment: cfg.assignment, task: cfg.task, context, hot: hotConfig });
+    const r = await window.api.council.start({ repo: dryRun ? undefined : workspace, protocolId: cfg.protocolId, assignment: cfg.assignment, task: cfg.task, context, hot: hotConfig, prologue });
     setBusy('');
     if (!r.ok || !r.runId) { setErr(r.error ?? 'failed to start'); return; }
     startRun(workspace, r.runId);
@@ -208,8 +209,11 @@ export default function CouncilSettings({ workspace }: { workspace: string }) {
           })}
         </div>
       )}
-      <div className="row">
+      <div className="row" style={{ flexWrap: 'wrap' }}>
         <label className="label"><input type="checkbox" checked={dryRun} disabled={locked} onChange={e => setDryRun(e.target.checked)} /> dry-run (no merge)</label>
+        <label className="label" title="Before round 1, the panel agrees on up to 6 clarifying questions, then PAUSES for you to answer. Your answers are injected as authoritative context; the chosen mode then runs in full (nothing is skipped).">
+          <input type="checkbox" checked={prologue} disabled={locked} onChange={e => setPrologue(e.target.checked)} /> 🧭 Prologue (ask me questions first)
+        </label>
         <button onClick={preflight} disabled={!!busy}>Check agents</button>
         <button onClick={start} disabled={!!busy || locked || !cfg.task.trim() || !cfg.assignment.panelists.length}>▶ Start session</button>
         <button onClick={() => window.api.app.openTraceLog()}>Open trace log</button>

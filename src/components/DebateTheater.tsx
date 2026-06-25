@@ -27,6 +27,7 @@ export default function DebateTheater({ events, live, running }: { events: Counc
           case 'loop:goal-check': return <div key={i}><span className={`badge ${e.status === 'met' ? 'ok' : 'warn'}`}>goal {e.status}</span></div>;
           case 'loop:halt': return <div key={i}><span className={`badge ${e.status === 'met' ? 'ok' : e.status === 'oscillation' || e.status === 'cost' || e.status === 'cap' ? 'warn' : 'bad'}`}>loop halted: {e.status}</span></div>;
           case 'loop:done': return <div key={i}><span className={`badge ${e.ok ? 'ok' : 'warn'}`}>loop finished: {e.status}</span></div>;
+          case 'questions': return <div key={i}><span className="badge warn">🧭 awaiting your answers — {(e.questions ?? []).length} question(s)</span></div>;
           case 'phase': return <div key={i} style={{ borderTop: '1px solid var(--border)', paddingTop: 6, marginTop: 4 }}><strong style={{ color: 'var(--accent)' }}>▸ {e.phase}</strong> <span style={{ color: 'var(--muted)', fontSize: 11 }}>{e.kind}</span></div>;
           case 'debate-round': return <div key={i} style={{ fontSize: 11, color: 'var(--muted)' }}>round {e.round}</div>;
           case 'agent': return <div key={i} style={{ fontSize: 12 }}><span style={{ color: laneColor(e.agentId), fontWeight: 600 }}>{e.agentId}</span>: <span style={{ whiteSpace: 'pre-wrap' }}>{(e.content ?? '').slice(0, 6000)}</span></div>;
