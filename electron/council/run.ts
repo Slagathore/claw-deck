@@ -7,6 +7,7 @@
 
 import { RosterAgent, SessionAssignment, Msg, GateVerdict, resolveAgents } from './agents';
 import { Protocol, Phase, parseGateVerdict, parseBlindVerdict, isConverged, extractDiff } from './protocol';
+import { lintArtifact, formatFindings } from './fusionLint';
 
 export type TransportFn = (agent: RosterAgent, messages: Msg[], onDelta?: (chunk: string) => void) => Promise<string>;
 
@@ -183,12 +184,18 @@ export async function runProtocol(protocol: Protocol, deps: RunDeps): Promise<Ru
     else if (phase.kind === 'gate') {
       const gate = resolveAgents(deps.roster, [phase.by ?? '@qa-gate'], deps.assignment)[0];
       if (!gate) continue;
+      // §1.4 pre-gate: deterministic, free lint runs BEFORE the QA model call. It
+      // catches the truncation/dead-code/imbalance defects (incl. the bounce cause)
+      // and surfaces them to the judge so it never false-bounces a plumbing error.
+      const lint = lintArtifact(artifact);
+      if (lint.findings.length) emit({ type: 'lint', phase: label, content: formatFindings(lint), ok: lint.passed });
+      const lintNote = lint.passed ? '' : `\n\n[DETERMINISTIC PRE-GATE — free lint, not a content verdict]\n${formatFindings(lint)}\nIf a finding is pure truncation/plumbing, judge the work itself, not the cut.`;
       // blind: judge sees ONLY (task + the patch), never the discussion/consensus.
       const blind = phase.blind || deps.forceBlind;
       const diff = extractDiff(artifact);
-      const reviewBody = blind
+      const reviewBody = (blind
         ? `Original task:\n${deps.task}\n\nProposed change:\n${diff ?? `(no diff fenced; proposal text follows)\n${artifact.slice(0, 6000)}`}`
-        : `Proposal to review:\n${artifact}`;
+        : `Proposal to review:\n${artifact}`) + lintNote;
       const reply = await ask(deps, gate, blind ? SYS.blindJudge : SYS.gate, reviewBody, label);
       if (!reply) {
         const verdict: GateVerdict = { verdict: 'major', notes: `${gate.displayName} failed to respond; see agent-error event above.` };

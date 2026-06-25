@@ -35,6 +35,7 @@ export default function DebateTheater({ events, live, running, nameOf = (id) => 
           case 'loop:done': return <div key={i}><span className={`badge ${e.ok ? 'ok' : 'warn'}`}>loop finished: {e.status}</span></div>;
           case 'questions': return <div key={i}><span className="badge warn">🧭 awaiting your answers — {(e.questions ?? []).length} question(s)</span></div>;
           case 'tools': return <div key={i} style={{ fontSize: 11, color: 'var(--muted)' }}>🔧 panelist tools: {e.content}</div>;
+          case 'lint': return <div key={i} className={`banner ${e.ok ? '' : 'warn'}`} style={{ fontSize: 11, ...WRAP }}><strong>🧪 pre-gate lint</strong> <span className={`badge ${e.ok ? 'ok' : 'bad'}`}>{e.ok ? 'clean' : 'findings'}</span>{!e.ok && <pre style={{ margin: '4px 0 0', fontSize: 11, ...WRAP }}>{e.content}</pre>}</div>;
           case 'phase': return <div key={i} style={{ borderTop: '1px solid var(--border)', paddingTop: 6, marginTop: 4 }}><strong style={{ color: 'var(--accent)' }}>▸ {e.phase}</strong> <span style={{ color: 'var(--muted)', fontSize: 11 }}>{e.kind}</span></div>;
           case 'debate-round': return <div key={i} style={{ fontSize: 11, color: 'var(--muted)' }}>round {e.round}</div>;
           case 'agent': return <div key={i} style={{ fontSize: 12 }}><span style={{ color: laneColor(e.agentId), fontWeight: 600 }}>{nameOf(e.agentId)}</span>: <span style={WRAP}>{e.content ?? ''}</span></div>;

@@ -129,6 +129,26 @@ describe('runProtocol', () => {
     expect(res.status).toBe('completed');                                // blind LGTM → approve
   });
 
+  it('runs the deterministic pre-gate lint before the gate model call and emits findings', async () => {
+    // independent → gate. The panelist returns a truncated artifact (unclosed fence)
+    // so the lint must fire a blocking finding BEFORE the judge is consulted.
+    const proto: Protocol = { id: 'L', name: 'l', phases: [
+      { kind: 'independent', agents: ['@panelists'], label: 'Draft' },
+      { kind: 'gate', by: '@judge', label: 'Gate' },
+    ] };
+    const { evs, emit } = collect();
+    let gateSawLint = false;
+    const transport = stub((_id, system, user) => {
+      if (/verdict word|BLIND reviewer/.test(system)) { gateSawLint = /PRE-GATE/.test(user); return 'approve'; }
+      return 'Here is the code:\n```ts\nfunction f() {\n  return 1;'; // unclosed fence
+    });
+    await runProtocol(proto, { roster: ROSTER, assignment: ASSIGN, task: 't', transport, emit });
+    const lintEv = evs.find((e) => e.type === 'lint');
+    expect(lintEv).toBeTruthy();
+    expect(lintEv!.ok).toBe(false);                     // blocking finding (unclosed fence)
+    expect(gateSawLint).toBe(true);                     // findings folded into the gate prompt
+  });
+
   it('CRUCIBLE alternates steelman⇄red-team ×3, then synthesize/harden/QA/blind/build', () => {
     const c = PROTOCOLS.CRUCIBLE;
     expect(c).toBeTruthy();
