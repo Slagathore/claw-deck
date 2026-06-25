@@ -377,10 +377,17 @@ function Spinner() {
 
 /** Past council sessions for this workspace (from council_runs) with a one-click Re-run. */
 function SessionHistory({ repo, onRerun }: { repo: string; onRerun: (runId: string) => void }) {
+  const { loadRun } = useCouncil();
   const [rows, setRows] = useState<any[]>([]);
   const [busy, setBusy] = useState('');
   async function refresh() { const r = await window.api.council.list(); if (r.ok) setRows(r.runs.filter((x: any) => x.repo === repo)); }
   useEffect(() => { refresh(); const t = setInterval(refresh, 5000); return () => clearInterval(t); }, [repo]);
+  async function view(row: any) {
+    setBusy(row.runId);
+    const r = await window.api.council.events(row.runId);
+    setBusy('');
+    loadRun(repo, row.runId, r.ok ? (r.events ?? []) : []);
+  }
   async function rerun(row: any) {
     let assignment: any;
     try { assignment = JSON.parse(row.assignment); } catch { return; }
@@ -412,6 +419,7 @@ function SessionHistory({ repo, onRerun }: { repo: string; onRerun: (runId: stri
             <div className="label">{new Date(r.started).toLocaleString()}</div>
           </div>
           <div className="col" style={{ gap: 4 }}>
+            {!!r.hasEvents && <button disabled={!!busy} onClick={() => view(r)} title="Open this past session in the debate theater (full transcript replay)">{busy === r.runId ? '…' : '👁 View'}</button>}
             {canResume(r) && <button disabled={!!busy} onClick={() => resume(r)} title="Continue this session from the phase it stopped at (mid-protocol resume)" style={{ borderColor: 'var(--good)', color: 'var(--good)' }}>{busy === r.runId ? '…' : '▶ Resume'}</button>}
             <button disabled={!!busy || r.status === 'running'} onClick={() => rerun(r)} title="Restart this session from scratch with the same protocol, agents, and task">{busy === r.runId ? '…' : '↻ Re-run'}</button>
           </div>

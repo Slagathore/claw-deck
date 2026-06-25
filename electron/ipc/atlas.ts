@@ -60,7 +60,7 @@ async function runEnrichment(workspace: string, emit: (p: unknown) => void): Pro
     const db = asQueryable(h);
     const baseUrl = getSetting<string>('ollamaUrl', 'http://localhost:11434');
     const embedModel = getSetting<string>('embedModel', 'nomic-embed-text');
-    const chatModel = getSetting<string>('chatModel', 'llama3.2');
+    const chatModel = getSetting<string>('summaryModel', 'qwen2.5:3b');
     // Drain embeddings in efficient batches (each call embeds up to `max` with internal
     // batching + concurrency), then run the near-duplicate pass ONCE — not per batch.
     let embedded = 0;
@@ -174,7 +174,7 @@ export function registerAtlasHandlers(getWindow: () => BrowserWindow | null) {
       emit({ kind: 'enriched', workspace: opts.workspace, pass: 'embed', ...r, superseded });
       return { ...r, superseded };
     }
-    const model = getSetting<string>('chatModel', 'llama3.2');
+    const model = getSetting<string>('summaryModel', 'qwen2.5:3b');
     const r = await summarizePending(db, { baseUrl, model });
     emit({ kind: 'enriched', workspace: opts.workspace, pass: 'summarize', ...r });
     return { ...r };

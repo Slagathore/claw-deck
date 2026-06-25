@@ -14,6 +14,7 @@ interface CouncilState {
   running: Record<string, boolean>;                                // by runId
   setConfig: (ws: string, c: SessionConfig) => void;
   startRun: (ws: string, runId: string) => void;
+  loadRun: (ws: string, runId: string, events: CouncilEvt[]) => void;   // replay a past session in the theater
   appendEvent: (ev: CouncilEvt) => void;
   clearQuestions: (runId: string) => void;
   markRunning: (runId: string) => void;
@@ -30,6 +31,7 @@ export const useCouncil = create<CouncilState>((set) => ({
   running: {},
   setConfig: (ws, c) => set((s) => ({ configs: { ...s.configs, [ws]: c } })),
   startRun: (ws, runId) => set((s) => ({ runByWs: { ...s.runByWs, [ws]: runId }, events: { ...s.events, [runId]: [] }, live: { ...s.live, [runId]: {} }, questions: { ...s.questions, [runId]: [] }, running: { ...s.running, [runId]: true } })),
+  loadRun: (ws, runId, events) => set((s) => ({ runByWs: { ...s.runByWs, [ws]: runId }, events: { ...s.events, [runId]: events }, live: { ...s.live, [runId]: {} }, questions: { ...s.questions, [runId]: [] }, running: { ...s.running, [runId]: false } })),
   clearQuestions: (runId) => set((s) => ({ questions: { ...s.questions, [runId]: [] } })),
   markRunning: (runId) => set((s) => ({ running: { ...s.running, [runId]: true } })),
   newSession: (ws) => set((s) => { const runByWs = { ...s.runByWs }; delete runByWs[ws]; return { runByWs }; }),

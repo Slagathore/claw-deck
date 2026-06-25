@@ -447,7 +447,26 @@ function makeExecutorHooks(repo: string, runId: string, abortSignal?: AbortSigna
 }
 
 export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
-  const send = (runId: string, ev: CouncilEvent) => { try { getWindow()?.webContents.send('council:event', { runId, ...ev }); } catch { /* gone */ } };
+  // Buffer the event stream per run so a past session can be replayed in the theater.
+  // Persisted to council_runs.events on terminal events; pruned to the last 10 per repo.
+  const eventLog = new Map<string, CouncilEvent[]>();
+  const persistEvents = (runId: string) => {
+    const buf = eventLog.get(runId);
+    if (!buf) return;
+    try {
+      const db = getDb();
+      db.prepare('UPDATE council_runs SET events=? WHERE run_id=?').run(JSON.stringify(buf), runId);
+      const row = db.prepare('SELECT repo FROM council_runs WHERE run_id=?').get(runId) as { repo: string | null } | undefined;
+      if (row) db.prepare('UPDATE council_runs SET events=NULL WHERE events IS NOT NULL AND repo IS ? AND run_id NOT IN (SELECT run_id FROM council_runs WHERE repo IS ? ORDER BY started DESC LIMIT 10)').run(row.repo, row.repo);
+    } catch { /* best-effort */ }
+    eventLog.delete(runId);
+  };
+  const send = (runId: string, ev: CouncilEvent) => {
+    try { getWindow()?.webContents.send('council:event', { runId, ...ev }); } catch { /* gone */ }
+    let buf = eventLog.get(runId); if (!buf) { buf = []; eventLog.set(runId, buf); }
+    if (buf.length < 5000) buf.push({ ...ev });
+    if (ev.type === 'finished' || ev.type === 'error' || ev.type === 'loop:done') persistEvents(runId);
+  };
 
   // Shared launcher for a fresh start AND a resume (resumeFrom set). Persists a
   // checkpoint after every phase so an aborted/errored run can be continued.
@@ -586,7 +605,7 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
   });
 
   // Autonomous goal loop (Phase 5): branch → run protocol → checkpoint → goal-check → repeat.
-  ipcMain.handle('council:startLoop', (_e, opts: { repo: string; protocolId: string; assignment: SessionAssignment; goal: string; maxIterations?: number; costCeiling?: number; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number } }) => {
+  ipcMain.handle('council:startLoop', (_e, opts: { repo: string; protocolId: string; assignment: SessionAssignment; goal: string; maxIterations?: number; costCeiling?: number; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number }; personas?: Record<string, string>; forceBlind?: boolean }) => {
     if (!opts?.repo) return { ok: false, error: 'autonomous loop needs a workspace (for checkpoints)' };
     const protocol = PROTOCOLS[opts.protocolId];
     if (!protocol) return { ok: false, error: `unknown protocol: ${opts.protocolId}` };
@@ -599,7 +618,7 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
     const controller = new AbortController();
     const signal = { aborted: false, controller };
     signals.set(runId, signal);
-    const transport = makeTransport(transportConfig(opts.repo, controller.signal, buildAgentOptions(opts.hot)));
+    const transport = makeTransport(transportConfig(opts.repo, controller.signal, buildAgentOptions(opts.hot), undefined, buildAgentPersonas(opts.personas)));
     const checker = resolveAgents(roster, ['@judge'], opts.assignment)[0];
     const db = getDb();
     db.prepare('INSERT INTO council_runs(run_id, repo, protocol, task, assignment, status, started) VALUES(?,?,?,?,?,?,?)')
@@ -614,7 +633,7 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
       costCeiling: opts.costCeiling,
       signal,
       emit: (ev) => send(runId, { ...ev, type: `loop:${ev.type}` } as any),
-      runIteration: (task, iter) => runProtocol(protocol, { roster, assignment: opts.assignment, task, transport, executor: makeExecutorHooks(opts.repo, `${runId}-i${iter}`, controller.signal), signal, emit: (ev) => send(runId, ev) }),
+      runIteration: (task, iter) => runProtocol(protocol, { roster, assignment: opts.assignment, task, transport, executor: makeExecutorHooks(opts.repo, `${runId}-i${iter}`, controller.signal), signal, forceBlind: opts.forceBlind, emit: (ev) => send(runId, ev) }),
       checkpoint: async (iter) => {
         await git(opts.repo, ['add', '-A']);
         await git(opts.repo, ['commit', '-m', `fusion autoloop ${runId} iter ${iter}`, '--allow-empty', '--no-verify']);
@@ -717,7 +736,7 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
   });
 
   ipcMain.handle('council:list', () => {
-    const rows = getDb().prepare('SELECT run_id AS runId, repo, protocol, task, assignment, status, approved, phase_index AS phaseIndex, resumable, started, finished FROM council_runs ORDER BY started DESC LIMIT 50').all();
+    const rows = getDb().prepare('SELECT run_id AS runId, repo, protocol, task, assignment, status, approved, phase_index AS phaseIndex, resumable, (events IS NOT NULL) AS hasEvents, started, finished FROM council_runs ORDER BY started DESC LIMIT 50').all();
     return { ok: true, runs: rows };
   });
 
@@ -854,6 +873,14 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
       } finally { signals.delete(runId); }
     })();
     return { ok: true, runId };
+  });
+
+  // Full event stream of a past run → replay it in the debate theater.
+  ipcMain.handle('council:events', (_e, opts: { runId: string }) => {
+    const row = getDb().prepare('SELECT events FROM council_runs WHERE run_id=?').get(opts.runId) as { events?: string } | undefined;
+    let events: CouncilEvent[] = [];
+    try { events = row?.events ? JSON.parse(row.events) : []; } catch { /* none */ }
+    return { ok: true, events };
   });
 
   // Per-phase artifact snapshots for the replay timeline.

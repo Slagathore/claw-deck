@@ -9,6 +9,7 @@ export const DEFAULTS = {
   chatModel: 'llama3.2',
   reasoningModel: 'deepseek-r1',
   embedModel: 'nomic-embed-text',          // Atlas embeddings (768-dim, locked)
+  summaryModel: 'qwen2.5:3b',              // Atlas symbol summaries — fast + terse (≈4× quicker than llama3.2 at comparable quality)
   openclawPath: '',
   claudeCodePath: 'claude',
   codexPath: 'codex',                          // Fusion QA-gate actor (Cole is installing the CLI)

@@ -99,6 +99,7 @@ export async function initDb() {
   migrate('council_runs', 'verdicts', 'TEXT');
   migrate('council_runs', 'resumable', 'INTEGER');
   migrate('council_runs', 'snapshots', 'TEXT');   // per-phase artifact snapshots for the replay timeline
+  migrate('council_runs', 'events', 'TEXT');      // full event stream → click a past session to replay it in the theater
 }
 
 function migrate(table: string, col: string, type: string) {

@@ -145,7 +145,7 @@ export default function CouncilSettings({ workspace }: { workspace: string }) {
 
   async function startLoop() {
     setErr(''); setBusy('Starting loop…');
-    const r = await window.api.council.startLoop({ repo: workspace, protocolId: cfg.protocolId, assignment: cfg.assignment, goal: loopGoal, maxIterations: loopMax, context, hot: hotConfig });
+    const r = await window.api.council.startLoop({ repo: workspace, protocolId: cfg.protocolId, assignment: cfg.assignment, goal: loopGoal, maxIterations: loopMax, context, hot: hotConfig, personas, forceBlind });
     setBusy('');
     if (!r.ok || !r.runId) { setErr(r.error ?? 'failed to start loop'); return; }
     startRun(workspace, r.runId);
