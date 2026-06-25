@@ -1,7 +1,7 @@
 // Protocols & phase primitives (BOOTSTRAP §4.3). Pure data + parsing helpers.
 import { GateVerdict } from './agents';
 
-export type PhaseKind = 'independent' | 'debate' | 'gauntlet' | 'synthesize' | 'gate' | 'relay' | 'vote' | 'propose' | 'execute';
+export type PhaseKind = 'independent' | 'debate' | 'gauntlet' | 'steelman' | 'select' | 'synthesize' | 'gate' | 'relay' | 'vote' | 'propose' | 'execute';
 
 export interface Phase {
   kind: PhaseKind;
@@ -100,7 +100,45 @@ const SOLO: Protocol = {
   ],
 };
 
-export const PROTOCOLS: Record<string, Protocol> = { COUNCIL, GAUNTLET, REDTEAM, PCRSR, GCRJ, PAIR, SOLO };
+// TOURNAMENT = divergent. Panelists each propose independently; the judge PICKS
+// the single strongest candidate (no merging/averaging) → execute.
+const TOURNAMENT: Protocol = {
+  id: 'TOURNAMENT', name: 'Tournament (pick-best)',
+  phases: [
+    { kind: 'independent', agents: ['@panelists'], label: 'Proposals' },
+    { kind: 'select', by: '@judge', label: 'Judge picks winner' },
+    { kind: 'execute', by: '@judge', editPolicy: 'review-each', label: 'Execute' },
+  ],
+};
+
+// STEELMAN = constructive-adversarial. Each round, agents first STRENGTHEN the
+// current proposal (add what's missing, fix weak spots) THEN flag any remaining
+// flaw → synthesize → blind judge → execute.
+const STEELMAN: Protocol = {
+  id: 'STEELMAN', name: 'Steelman (strengthen-then-attack)',
+  phases: [
+    { kind: 'independent', agents: ['@panelists'], label: 'Draft' },
+    { kind: 'steelman', agents: ['@panelists'], rounds: 2, label: 'Steelman rounds' },
+    { kind: 'synthesize', by: '@scribe', label: 'Synthesize' },
+    { kind: 'gate', by: '@judge', blind: true, onMinor: 'apply-forward', onMajor: 'bounce', label: 'Blind judge' },
+    { kind: 'execute', by: '@judge', editPolicy: 'review-each', label: 'Execute' },
+  ],
+};
+
+// DEVIL = one fixed adversary (the QA agent) attacks the whole panel's proposal
+// across turns; blind judge ratifies → execute.
+const DEVIL: Protocol = {
+  id: 'DEVIL', name: "Devil's Advocate (one adversary)",
+  phases: [
+    { kind: 'independent', agents: ['@panelists'], label: 'Proposal' },
+    { kind: 'gauntlet', agents: ['@qa-gate'], maxTurns: 5, label: 'Devil attacks' },
+    { kind: 'synthesize', by: '@scribe', label: 'Harden' },
+    { kind: 'gate', by: '@judge', blind: true, onMinor: 'apply-forward', onMajor: 'bounce', label: 'Blind judge' },
+    { kind: 'execute', by: '@judge', editPolicy: 'review-each', label: 'Execute' },
+  ],
+};
+
+export const PROTOCOLS: Record<string, Protocol> = { COUNCIL, GAUNTLET, DEVIL, STEELMAN, TOURNAMENT, REDTEAM, PCRSR, GCRJ, PAIR, SOLO };
 
 /** Parse a gate agent's free-text reply into a structured verdict. Default safe = 'major'. */
 export function parseGateVerdict(text: string): GateVerdict {

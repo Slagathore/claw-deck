@@ -10,7 +10,7 @@ import { registerScreenshotHandlers } from './ipc/screenshot';
 import { registerSettingsHandlers } from './ipc/settings';
 import { registerHistoryHandlers } from './ipc/history';
 import { registerPromptHandlers } from './ipc/prompts';
-import { registerMcpHandlers, stopAllMcp } from './ipc/mcp';
+import { registerMcpHandlers, stopAllMcp, ensureWellKnownMcpServers } from './ipc/mcp';
 import { registerTerminalHandlers } from './ipc/terminal';
 import { registerAuditHandlers } from './ipc/audit';
 import { registerExtensionHandlers } from './ipc/extensions';
@@ -191,6 +191,7 @@ app.whenReady().then(async () => {
   registerScreenshotHandlers(desktopCapturer, screen);
   registerPromptHandlers();
   registerMcpHandlers();
+  ensureWellKnownMcpServers();
   registerTerminalHandlers();
   registerAuditHandlers();
   registerExtensionHandlers();

@@ -70,8 +70,8 @@ function detectEnv(repo: string): string {
     const feat = projGodot.match(/config\/features\s*=\s*PackedStringArray\(([^)]*)\)/);
     const ver = feat?.[1].match(/"(\d+\.\d+)"/)?.[1];
     facts.push(ver
-      ? `Engine: Godot ${ver}. Use ONLY GDScript/Godot APIs that exist in ${ver}; do NOT use APIs deprecated or removed before ${ver} (e.g. methods dropped after 4.0–4.2). Assume GDScript 2.0.`
-      : 'Engine: Godot (project.godot present).');
+      ? `Engine: Godot ${ver} (detected from project.godot). Use ONLY GDScript/Godot APIs that exist in ${ver}; do NOT use APIs deprecated or removed before ${ver}.`
+      : 'Engine: Godot (project.godot present; version not detected — set it here).');
     const addons = lsdir('addons');
     if (addons.length) facts.push(`Godot addons/plugins installed: ${addons.join(', ')}.`);
   }
@@ -91,7 +91,16 @@ function withContext(task: string, context?: string): string {
     : task;
 }
 
-function transportConfig(repo?: string, abortSignal?: AbortSignal): TransportConfig {
+/** Build a per-agent sampling map from a "run hot" selection (raised temperature). */
+function buildAgentOptions(hot?: { agents?: string[]; temperature?: number; top_p?: number }): Record<string, { temperature?: number; top_p?: number }> | undefined {
+  if (!hot?.agents?.length) return undefined;
+  const temperature = hot.temperature ?? 1.15;
+  const map: Record<string, { temperature?: number; top_p?: number }> = {};
+  for (const id of hot.agents) map[id] = { temperature, ...(hot.top_p != null ? { top_p: hot.top_p } : {}) };
+  return map;
+}
+
+function transportConfig(repo?: string, abortSignal?: AbortSignal, agentOptions?: Record<string, { temperature?: number; top_p?: number }>): TransportConfig {
   // Local Ollama serves *:cloud models itself (no key). ollamaCloudUrl is an
   // OPTIONAL override for a genuinely remote OpenAI-compat endpoint; blank → local.
   const localV1 = getSetting('ollamaUrl', 'http://localhost:11434').replace(/\/$/, '') + '/v1';
@@ -108,6 +117,7 @@ function transportConfig(repo?: string, abortSignal?: AbortSignal): TransportCon
     claudeUnsetEnv: getSetting('claudeUseApiKey', false) ? undefined : ['ANTHROPIC_API_KEY'],
     claudeExtraArgs: claudeExtraArgs(repo),
     actorTimeoutMs: getSetting('actorTimeoutMs', 600000),
+    agentOptions,
     cwd: repo,
   };
 }
@@ -337,13 +347,13 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
 
   // Shared launcher for a fresh start AND a resume (resumeFrom set). Persists a
   // checkpoint after every phase so an aborted/errored run can be continued.
-  function launchCouncilRun(runId: string, opts: { repo?: string; protocol: Protocol; roster: RosterAgent[]; assignment: SessionAssignment; task: string; resumeFrom?: ResumeState }) {
+  function launchCouncilRun(runId: string, opts: { repo?: string; protocol: Protocol; roster: RosterAgent[]; assignment: SessionAssignment; task: string; resumeFrom?: ResumeState; agentOptions?: Record<string, { temperature?: number; top_p?: number }> }) {
     const db = getDb();
     const controller = new AbortController();
     const signal = { aborted: false, controller };
     signals.set(runId, signal);
     const execId = opts.resumeFrom ? `${runId}-r${Date.now().toString(36)}` : runId; // fresh worktree per resume attempt
-    const transport = makeTransport(transportConfig(opts.repo, controller.signal));
+    const transport = makeTransport(transportConfig(opts.repo, controller.signal, opts.agentOptions));
     const executor = opts.repo ? makeExecutorHooks(opts.repo, execId, controller.signal) : undefined;
 
     void runProtocol(opts.protocol, {
@@ -378,7 +388,7 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
     try { return { ok: true, facts: detectEnv(opts.repo) }; } catch (e: any) { return { ok: false, facts: '', error: e?.message }; }
   });
 
-  ipcMain.handle('council:start', (_e, opts: { repo?: string; protocolId: string; assignment: SessionAssignment; task: string; context?: string }) => {
+  ipcMain.handle('council:start', (_e, opts: { repo?: string; protocolId: string; assignment: SessionAssignment; task: string; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number } }) => {
     const protocol = PROTOCOLS[opts.protocolId];
     if (!protocol) return { ok: false, error: `unknown protocol: ${opts.protocolId}` };
     const roster = getSetting<RosterAgent[]>('fusionRoster', []);
@@ -390,14 +400,14 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
     getDb().prepare('INSERT INTO council_runs(run_id, repo, protocol, task, assignment, status, started) VALUES(?,?,?,?,?,?,?)')
       .run(runId, opts.repo ?? null, protocol.id, task, JSON.stringify(opts.assignment), 'running', Date.now());
     appendAudit('council:start', { runId, protocol: protocol.id, repo: opts.repo ?? null });
-    trace('council:start', { runId, protocol: protocol.id, repo: opts.repo ?? null, assignment: opts.assignment, taskBytes: task.length });
+    trace('council:start', { runId, protocol: protocol.id, repo: opts.repo ?? null, assignment: opts.assignment, taskBytes: task.length, hot: opts.hot?.agents });
 
-    launchCouncilRun(runId, { repo: opts.repo, protocol, roster, assignment: opts.assignment, task });
+    launchCouncilRun(runId, { repo: opts.repo, protocol, roster, assignment: opts.assignment, task, agentOptions: buildAgentOptions(opts.hot) });
     return { ok: true, runId };
   });
 
   // Autonomous goal loop (Phase 5): branch → run protocol → checkpoint → goal-check → repeat.
-  ipcMain.handle('council:startLoop', (_e, opts: { repo: string; protocolId: string; assignment: SessionAssignment; goal: string; maxIterations?: number; costCeiling?: number; context?: string }) => {
+  ipcMain.handle('council:startLoop', (_e, opts: { repo: string; protocolId: string; assignment: SessionAssignment; goal: string; maxIterations?: number; costCeiling?: number; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number } }) => {
     if (!opts?.repo) return { ok: false, error: 'autonomous loop needs a workspace (for checkpoints)' };
     const protocol = PROTOCOLS[opts.protocolId];
     if (!protocol) return { ok: false, error: `unknown protocol: ${opts.protocolId}` };
@@ -410,7 +420,7 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
     const controller = new AbortController();
     const signal = { aborted: false, controller };
     signals.set(runId, signal);
-    const transport = makeTransport(transportConfig(opts.repo, controller.signal));
+    const transport = makeTransport(transportConfig(opts.repo, controller.signal, buildAgentOptions(opts.hot)));
     const checker = resolveAgents(roster, ['@judge'], opts.assignment)[0];
     const db = getDb();
     db.prepare('INSERT INTO council_runs(run_id, repo, protocol, task, assignment, status, started) VALUES(?,?,?,?,?,?,?)')

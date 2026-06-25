@@ -14,6 +14,8 @@ export const DEFAULTS = {
   codexPath: 'codex',                          // Fusion QA-gate actor (Cole is installing the CLI)
   claudeUseApiKey: false,                      // false = drop ANTHROPIC_API_KEY when spawning claude → use the claude-login subscription (not API credits)
   actorTimeoutMs: 600000,                      // per-call timeout for agentic CLI actors (claude/codex/openclaw); they do full turns and can take minutes
+  actorExtraDirs: [] as string[],              // extra dirs granted to claude via --add-dir (e.g. a Blender project folder)
+  councilEnvByWorkspace: {} as Record<string, string>, // persisted "environment / ground truth" facts per workspace
   clawhubPath: 'clawhub',
   ollamaCloudUrl: '',                          // blank = use local Ollama (it serves *:cloud models itself); set only for a remote OpenAI-compat endpoint
   ollamaCloudKey: '',                          // usually blank — local Ollama needs no key

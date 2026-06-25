@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useCouncil, Assignment, SessionConfig } from '../store/council';
 
 interface RosterAgent { id: string; displayName: string; transport: string; model?: string; binary?: string; capabilities: { canEdit: boolean; canRunTools: boolean; costTier: string } }
-const PROTOCOLS = ['COUNCIL', 'GAUNTLET', 'REDTEAM', 'PCRSR', 'GCRJ', 'PAIR', 'SOLO'];
+const PROTOCOLS = ['COUNCIL', 'GAUNTLET', 'DEVIL', 'STEELMAN', 'TOURNAMENT', 'REDTEAM', 'PCRSR', 'GCRJ', 'PAIR', 'SOLO'];
 
 /** What each session protocol does, how it works, and what it's best at (hover tooltips + inline). */
 const PROTOCOL_INFO: Record<string, { name: string; how: string; best: string }> = {
@@ -41,6 +41,21 @@ const PROTOCOL_INFO: Record<string, { name: string; how: string; best: string }>
     how: 'One actor, no panel: the judge proposes a fix and executes it directly.',
     best: 'Trivial/mechanical changes where you just want one capable agent to do it. Cheapest and fastest.',
   },
+  DEVIL: {
+    name: "Devil's Advocate",
+    how: 'Panel proposes → ONE fixed adversary (your QA agent) hammers it across turns until it finds nothing new → harden → blind judge → execute.',
+    best: 'When you want a single dedicated skeptic relentlessly attacking the panel’s consensus, rather than a diffuse group.',
+  },
+  STEELMAN: {
+    name: 'Steelman (strengthen-then-attack)',
+    how: 'Each round agents first STRENGTHEN the proposal (add what’s missing, fix weak spots, add genuinely useful functions) THEN flag remaining flaws → synthesize → blind judge → execute.',
+    best: 'Turning a rough idea into something solid — constructive and critical, not just teardown. Pairs well with “run hot”.',
+  },
+  TOURNAMENT: {
+    name: 'Tournament (pick-best)',
+    how: 'Panelists each propose independently; the judge PICKS the single strongest candidate (no merging or averaging) → execute.',
+    best: 'Generating diverse options and choosing one clear winner. Great with “run hot” for divergent first drafts.',
+  },
 };
 const protocolTitle = (p: string) => `${PROTOCOL_INFO[p]?.name}\n\nHow: ${PROTOCOL_INFO[p]?.how}\n\nBest for: ${PROTOCOL_INFO[p]?.best}`;
 
@@ -62,8 +77,11 @@ export default function CouncilSettings({ workspace }: { workspace: string }) {
   const [probe, setProbe] = useState<Record<string, { ok: boolean; detail: string }>>({});
   const [dryRun, setDryRun] = useState(false);
   const [context, setContext] = useState('');
+  const [hot, setHot] = useState(false);
+  const [hotAgents, setHotAgents] = useState<string[]>([]);
+  const [hotTemp, setHotTemp] = useState(1.15);
 
-  useEffect(() => { window.api.settings.get().then((s) => setRoster(s.fusionRoster ?? [])); }, []);
+  useEffect(() => { window.api.settings.get().then((s) => { setRoster(s.fusionRoster ?? []); const saved = s.councilEnvByWorkspace?.[workspace]; if (saved) setContext(saved); }); }, [workspace]);
   useEffect(() => { if (roster.length && !configs[workspace]) setConfig(workspace, defaultConfig(roster)); }, [roster, workspace, configs, setConfig]);
 
   const cfg = configs[workspace] ?? defaultConfig(roster);
@@ -73,11 +91,20 @@ export default function CouncilSettings({ workspace }: { workspace: string }) {
   const updateAssign = (patch: Partial<Assignment>) => update({ assignment: { ...cfg.assignment, ...patch } });
   const togglePanelist = (id: string) => updateAssign({ panelists: cfg.assignment.panelists.includes(id) ? cfg.assignment.panelists.filter((x) => x !== id) : [...cfg.assignment.panelists, id] });
 
+  const assignedIds = [...new Set([...cfg.assignment.panelists, cfg.assignment.judge, cfg.assignment.qaGate, cfg.assignment.scribe].filter(Boolean) as string[])];
+  const hotConfig = hot && hotAgents.length ? { agents: hotAgents.filter((id) => assignedIds.includes(id)), temperature: hotTemp } : undefined;
+  const toggleHot = (id: string) => setHotAgents((h) => h.includes(id) ? h.filter((x) => x !== id) : [...h, id]);
+  async function saveEnv() {
+    const s = await window.api.settings.get();
+    window.api.settings.set({ councilEnvByWorkspace: { ...(s.councilEnvByWorkspace ?? {}), [workspace]: context } });
+  }
+  const nameOf = (id: string) => roster.find((a) => a.id === id)?.displayName ?? id;
+
   async function start() {
     const ready = await preflight();
     if (!ready) return;
     setErr(''); setBusy('Starting…');
-    const r = await window.api.council.start({ repo: dryRun ? undefined : workspace, protocolId: cfg.protocolId, assignment: cfg.assignment, task: cfg.task, context });
+    const r = await window.api.council.start({ repo: dryRun ? undefined : workspace, protocolId: cfg.protocolId, assignment: cfg.assignment, task: cfg.task, context, hot: hotConfig });
     setBusy('');
     if (!r.ok || !r.runId) { setErr(r.error ?? 'failed to start'); return; }
     startRun(workspace, r.runId);
@@ -108,7 +135,7 @@ export default function CouncilSettings({ workspace }: { workspace: string }) {
 
   async function startLoop() {
     setErr(''); setBusy('Starting loop…');
-    const r = await window.api.council.startLoop({ repo: workspace, protocolId: cfg.protocolId, assignment: cfg.assignment, goal: loopGoal, maxIterations: loopMax, context });
+    const r = await window.api.council.startLoop({ repo: workspace, protocolId: cfg.protocolId, assignment: cfg.assignment, goal: loopGoal, maxIterations: loopMax, context, hot: hotConfig });
     setBusy('');
     if (!r.ok || !r.runId) { setErr(r.error ?? 'failed to start loop'); return; }
     startRun(workspace, r.runId);
@@ -153,7 +180,22 @@ export default function CouncilSettings({ workspace }: { workspace: string }) {
           <label style={{ fontSize: 11, color: 'var(--muted)' }} title="Authoritative facts the models can't infer (engine/lib versions, plugins, OS). Injected as ground truth so they don't suggest deprecated/removed APIs.">Environment / ground truth</label>
           <button onClick={detectEnv} disabled={!!busy} title="Probe the workspace (project.godot, package.json, …) to prefill version + plugin facts">Detect</button>
         </div>
-        <textarea disabled={locked} placeholder="e.g. Godot 4.4, GDScript 2.0; addons: X, Y. Don't use APIs removed before 4.3." value={context} onChange={(e) => setContext(e.target.value)} rows={3} style={{ fontSize: 12 }} />
+        <textarea disabled={locked} placeholder="e.g. Godot 4.x (set your version), GDScript 2.0; addons: …. Authoritative — agents must not contradict it." value={context} onChange={(e) => setContext(e.target.value)} onBlur={saveEnv} rows={3} style={{ fontSize: 12 }} />
+      </div>
+
+      <div className="col" style={{ gap: 4 }}>
+        <label style={{ fontSize: 12 }} title="Raise temperature for the chosen agents (more divergent / creative). Great for first drafts; pair with Tournament/Steelman. Other dials like top_p help less — temperature is the main lever.">
+          <input type="checkbox" disabled={locked} checked={hot} onChange={(e) => setHot(e.target.checked)} /> 🌡️ Run hot (raise temperature)
+        </label>
+        {hot && (
+          <div className="row" style={{ flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+            <span style={{ fontSize: 11, color: 'var(--muted)' }}>hot agents:</span>
+            {assignedIds.map((id) => (
+              <label key={id} style={{ fontSize: 12 }}><input type="checkbox" checked={hotAgents.includes(id)} onChange={() => toggleHot(id)} /> {nameOf(id)}</label>
+            ))}
+            <label style={{ fontSize: 12 }}>temp <input type="number" step={0.05} min={0.1} max={2} value={hotTemp} onChange={(e) => setHotTemp(Math.min(2, Math.max(0.1, Number(e.target.value) || 1.15)))} style={{ width: 60 }} /></label>
+          </div>
+        )}
       </div>
 
       <textarea disabled={locked} placeholder="Task / goal for the council…" value={cfg.task} onChange={(e) => update({ task: e.target.value })} rows={3} />

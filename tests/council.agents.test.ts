@@ -30,11 +30,14 @@ describe('agent resolution', () => {
 });
 
 describe('protocol helpers', () => {
-  it('ships the protocol presets incl. adversarial ones', () => {
-    for (const id of ['COUNCIL', 'GAUNTLET', 'REDTEAM', 'PCRSR', 'GCRJ', 'PAIR', 'SOLO']) expect(PROTOCOLS[id]).toBeTruthy();
+  it('ships the protocol presets incl. adversarial + new ones', () => {
+    for (const id of ['COUNCIL', 'GAUNTLET', 'DEVIL', 'STEELMAN', 'TOURNAMENT', 'REDTEAM', 'PCRSR', 'GCRJ', 'PAIR', 'SOLO']) expect(PROTOCOLS[id]).toBeTruthy();
     expect(PROTOCOLS.PAIR.phases.map((p) => p.kind)).toEqual(['relay', 'execute']);
     expect(PROTOCOLS.GAUNTLET.phases.some((p) => p.kind === 'gauntlet')).toBe(true);
     expect(PROTOCOLS.GAUNTLET.phases.some((p) => p.kind === 'gate' && p.blind)).toBe(true);
+    expect(PROTOCOLS.TOURNAMENT.phases.some((p) => p.kind === 'select')).toBe(true);
+    expect(PROTOCOLS.STEELMAN.phases.some((p) => p.kind === 'steelman')).toBe(true);
+    expect(PROTOCOLS.DEVIL.phases.find((p) => p.kind === 'gauntlet')?.agents).toEqual(['@qa-gate']);
   });
   it('parseBlindVerdict approves only on a clean LGTM, else major', () => {
     expect(parseBlindVerdict('LGTM').verdict).toBe('approve');

@@ -103,8 +103,8 @@ contextBridge.exposeInMainWorld('api', {
     mcp: () => invoke('bridge:mcp')
   },
   council: {
-    start: (opts: { repo?: string; protocolId: string; assignment: any; task: string; context?: string }) => invoke('council:start', opts),
-    startLoop: (opts: { repo: string; protocolId: string; assignment: any; goal: string; maxIterations?: number; costCeiling?: number; context?: string }) => invoke('council:startLoop', opts),
+    start: (opts: { repo?: string; protocolId: string; assignment: any; task: string; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number } }) => invoke('council:start', opts),
+    startLoop: (opts: { repo: string; protocolId: string; assignment: any; goal: string; maxIterations?: number; costCeiling?: number; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number } }) => invoke('council:startLoop', opts),
     detectEnv: (repo: string) => invoke('council:detectEnv', { repo }),
     resume: (runId: string) => invoke('council:resume', { runId }),
     cancel: (runId: string) => invoke('council:cancel', { runId }),

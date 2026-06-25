@@ -22,23 +22,29 @@ export interface TransportConfig {
   claudeUnsetEnv?: string[]; // env vars to drop for claude-code (e.g. ANTHROPIC_API_KEY → use the subscription)
   claudeExtraArgs?: string[];// extra claude flags (--mcp-config <file>, --add-dir <dir>…) → tool + fs access
   actorTimeoutMs?: number;   // per-call timeout for agentic CLI actors (default 10 min — they do full turns)
+  agentOptions?: Record<string, { temperature?: number; top_p?: number }>; // per-agent sampling dials (e.g. run hot)
   cwd?: string;
 }
+
+interface SampleOpts { temperature?: number; top_p?: number }
 
 const CLI_TIMEOUT_DEFAULT = 600000;
 
 export type OnDelta = (chunk: string) => void;
 
-async function chatCompat(baseUrl: string, key: string | undefined, model: string, messages: Msg[], signal?: AbortSignal, onDelta?: OnDelta): Promise<string> {
+async function chatCompat(baseUrl: string, key: string | undefined, model: string, messages: Msg[], signal?: AbortSignal, onDelta?: OnDelta, sample?: SampleOpts): Promise<string> {
   const url = `${baseUrl.replace(/\/$/, '')}/chat/completions`;
   const started = Date.now();
   const auth = key || (/(^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?\/v1\/?$)/i.test(baseUrl) ? 'ollama' : undefined);
   const stream = !!onDelta;
-  trace('council:transport:start', { transport: 'openai-compat', url, model, stream, messages: messages.map(m => ({ role: m.role, bytes: m.content.length })) });
+  const body: Record<string, unknown> = { model, messages, stream };
+  if (sample?.temperature != null) body.temperature = sample.temperature;
+  if (sample?.top_p != null) body.top_p = sample.top_p;
+  trace('council:transport:start', { transport: 'openai-compat', url, model, stream, temperature: sample?.temperature, top_p: sample?.top_p, messages: messages.map(m => ({ role: m.role, bytes: m.content.length })) });
   const r = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(auth ? { Authorization: `Bearer ${auth}` } : {}) },
-    body: JSON.stringify({ model, messages, stream }),
+    body: JSON.stringify(body),
     signal,
   });
   if (!r.ok) {
@@ -119,10 +125,11 @@ async function openclawPrompt(binary: string, model: string | undefined, message
 
 export function makeTransport(cfg: TransportConfig): (agent: RosterAgent, messages: Msg[], onDelta?: OnDelta) => Promise<string> {
   return async (agent, messages, onDelta) => {
+    const sample = cfg.agentOptions?.[agent.id];
     switch (agent.transport) {
-      case 'ollama-cloud': return chatCompat(cfg.ollamaCloudUrl ?? 'https://ollama.com/v1', cfg.ollamaCloudKey, agent.model ?? '', messages, cfg.abortSignal, onDelta);
-      case 'ollama-local': return chatCompat(cfg.ollamaLocalUrl ?? 'http://localhost:11434/v1', undefined, agent.model ?? '', messages, cfg.abortSignal, onDelta);
-      case 'openai-compat': return chatCompat(cfg.openaiCompatUrl ?? 'http://localhost:11434/v1', cfg.openaiCompatKey, agent.model ?? '', messages, cfg.abortSignal, onDelta);
+      case 'ollama-cloud': return chatCompat(cfg.ollamaCloudUrl ?? 'https://ollama.com/v1', cfg.ollamaCloudKey, agent.model ?? '', messages, cfg.abortSignal, onDelta, sample);
+      case 'ollama-local': return chatCompat(cfg.ollamaLocalUrl ?? 'http://localhost:11434/v1', undefined, agent.model ?? '', messages, cfg.abortSignal, onDelta, sample);
+      case 'openai-compat': return chatCompat(cfg.openaiCompatUrl ?? 'http://localhost:11434/v1', cfg.openaiCompatKey, agent.model ?? '', messages, cfg.abortSignal, onDelta, sample);
       case 'claude-code': return cliPrompt(cfg.paths?.claude ?? agent.binary ?? 'claude', ['--print', '--input-format', 'text', '--permission-mode', 'bypassPermissions', '--no-session-persistence', ...(cfg.claudeExtraArgs ?? [])], messages, cfg.cwd, cfg.abortSignal, onDelta, cfg.claudeUnsetEnv, cfg.actorTimeoutMs);
       case 'codex': return cliPrompt(cfg.paths?.codex ?? agent.binary ?? 'codex', ['exec', '--sandbox', 'workspace-write', '--skip-git-repo-check', '--color', 'never', '-'], messages, cfg.cwd, cfg.abortSignal, onDelta, undefined, cfg.actorTimeoutMs);
       case 'openclaw': return openclawPrompt(cfg.paths?.openclaw ?? agent.binary ?? 'openclaw', agent.model, messages, cfg.cwd, cfg.abortSignal, onDelta, cfg.actorTimeoutMs);

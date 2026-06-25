@@ -56,10 +56,15 @@ const SYS = {
   gate: 'You are a QA/judge gate. Reply with exactly one verdict word first — approve, minor, major, or veto — then a one-paragraph rationale. Include a fenced ```diff if you have concrete edits.',
   converge: 'Reply with exactly one word: CONVERGED if the panel substantially agrees and no new points remain, else CONTINUE.',
   relay: 'You are pairing on a fix. Build on the other agent\'s last message; move toward a concrete, minimal change. Include a fenced ```diff when you have one.',
-  // Adversarial: each turn must find a NEW flaw the others missed, or explicitly stop.
-  adversary: 'You are an ADVERSARIAL reviewer — your job is to find what is WRONG, not to agree. Given the current proposal and the issues already raised, find ONE NEW, concrete problem the others got wrong, covered inadequately, or missed entirely: bugs, removed/deprecated APIs, wrong version assumptions, missing edge cases, security holes, things that won\'t actually run. Be specific. Do NOT restate prior issues or agree for the sake of agreeing. If, after genuine analysis, there is truly nothing further, reply with EXACTLY: NO_FURTHER_ISSUES',
+  // Adversarial — but constructive too: find anything NEW that makes the result
+  // better, not only what's "wrong". Still requires NEW substance per turn or stop.
+  adversary: 'You are a rigorous reviewer on a council that must NOT simply agree. Examine the current proposal AND the prior responses and surface ONE NEW, substantive contribution the others missed — ANY of: a real bug / removed-or-deprecated API / wrong version assumption / missing edge case / security hole; OR something under-specified or not covered deeply enough; OR a needed clarification; OR a genuinely valuable addition (e.g. a helper/function/structure) that would make the app meaningfully better. Be specific and concrete. Do NOT restate prior points or pad. If, after genuine analysis, there is truly nothing of new value to add, reply with EXACTLY: NO_FURTHER_ISSUES',
+  // Steelman: strengthen the proposal first, then flag what still remains.
+  steelman: 'You are improving a proposal, not just critiquing it. FIRST, make it STRONGER: add what is missing, tighten weak spots, fill in under-specified parts, add a genuinely useful function/structure if it helps. THEN, briefly note any remaining real flaw. Output the improved proposal followed by a short "Remaining:" note. Be substantive — do not merely restate it.',
   // Blind judge: never shown the consensus — only the original task + the patch.
   blindJudge: 'You are a BLIND reviewer. You are NOT shown any prior discussion, agreement, or consensus — only the original task and the proposed change. Do not assume the change is correct because someone proposed it. Answer ONE question: what is STILL wrong, missing, or risky AFTER this change is applied? List concrete problems (and a corrected ```diff if you have one). If, after careful review, there is genuinely nothing wrong, reply with EXACTLY: LGTM',
+  // Tournament: pick one winner, no merging.
+  select: 'You are a judge selecting the single BEST proposal from several candidates. Choose exactly ONE — the most correct, complete, and runnable — and restate it IN FULL as the chosen proposal, with a one-line reason. Do NOT merge, average, or blend candidates.',
 };
 
 async function ask(deps: RunDeps, agent: RosterAgent, system: string, user: string, phase?: string): Promise<string | null> {
@@ -145,6 +150,28 @@ export async function runProtocol(protocol: Protocol, deps: RunDeps): Promise<Ru
         issues.push(`- (${agent.displayName}) ${reply.replace(/\s+/g, ' ').slice(0, 400)}`);
       }
       if (issues.length) artifact += `\n\n## Adversarial findings (must be addressed)\n${issues.join('\n')}`;
+    }
+
+    else if (phase.kind === 'steelman') {
+      // constructive rounds: each agent strengthens the proposal, then flags what remains
+      const agents = resolveAgents(deps.roster, phase.agents, deps.assignment);
+      const rounds = phase.rounds ?? 2;
+      for (let r = 0; r < rounds; r++) {
+        if (deps.signal?.aborted) break;
+        emit({ type: 'debate-round', phase: label, round: r + 1 });
+        const settled = await Promise.allSettled(agents.map((a) => ask(deps, a, SYS.steelman, `Task:\n${deps.task}\n\nCurrent proposal:\n${artifact}\n\nStrengthen it, then note what remains.`, label)));
+        const takes: string[] = [];
+        settled.forEach((s, i) => { if (s.status === 'fulfilled' && s.value) { takes.push(`### ${agents[i].displayName}\n${s.value}`); record(label, phase.kind, s.value, agents[i].id); } });
+        if (takes.length) artifact = takes.join('\n\n');
+      }
+    }
+
+    else if (phase.kind === 'select') {
+      const judge = resolveAgents(deps.roster, [phase.by ?? '@judge'], deps.assignment)[0];
+      if (judge) {
+        const out = await ask(deps, judge, SYS.select, `Task:\n${deps.task}\n\nCandidate proposals:\n${artifact}\n\nPick the single strongest and restate it in full.`, label);
+        if (out) { artifact = out; record(label, phase.kind, out, judge.id); }
+      }
     }
 
     else if (phase.kind === 'synthesize') {

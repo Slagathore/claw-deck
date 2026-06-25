@@ -87,13 +87,30 @@ describe('runProtocol', () => {
     let turn = 0;
     const transport = stub((_id, system) => {
       if (/BLIND reviewer/.test(system)) return 'LGTM';
-      if (/ADVERSARIAL reviewer/.test(system)) { turn++; return turn >= 2 ? 'NO_FURTHER_ISSUES' : `concrete bug ${turn}`; }
+      if (/must NOT simply agree/.test(system)) { turn++; return turn >= 2 ? 'NO_FURTHER_ISSUES' : `concrete bug ${turn}`; }
       return 'x';
     });
     const { evs, emit } = collect();
     const res = await runProtocol(proto, { roster: ROSTER, assignment: ASSIGN, task: 't', transport, emit });
     expect(res.status).toBe('completed');                       // blind LGTM → approve (no bounce)
     expect(evs.some((e) => e.type === 'converged')).toBe(true); // gauntlet stopped early
+  });
+
+  it('TOURNAMENT select picks one winner; STEELMAN runs steelman rounds', async () => {
+    const tour = await runProtocol(PROTOCOLS.TOURNAMENT, {
+      roster: ROSTER, assignment: ASSIGN, task: 't', executor: okExecutor(),
+      transport: stub((_id, system) => /selecting the single BEST/.test(system) ? 'WINNER: option B' : 'proposal'),
+    });
+    expect(tour.status).toBe('completed');
+    expect(tour.artifact).toContain('WINNER');
+
+    const { evs, emit } = collect();
+    const steel = await runProtocol(PROTOCOLS.STEELMAN, {
+      roster: ROSTER, assignment: ASSIGN, task: 't', executor: okExecutor(), emit,
+      transport: stub((_id, system) => /BLIND reviewer/.test(system) ? 'LGTM' : /improving a proposal/.test(system) ? 'stronger now' : 'x'),
+    });
+    expect(steel.status).toBe('completed');
+    expect(evs.filter((e) => e.type === 'debate-round').length).toBe(2);   // 2 steelman rounds
   });
 
   it('blind judge bounces when it still finds problems', async () => {

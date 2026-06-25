@@ -24,6 +24,28 @@ interface RunningMcp {
 
 const running = new Map<string, RunningMcp>();
 
+// Well-known MCP servers added to settings.mcpServers on boot (idempotent, by
+// name). Gives actors tools out of the box: docs (Context7), filesystem/terminal/
+// desktop (Desktop Commander), and 3D (Blender — disabled until uv + the Blender
+// addon are set up). Users can edit/disable these in Settings → MCP Servers.
+const WELL_KNOWN_MCP: McpServerConfig[] = [
+  { name: 'context7', command: 'npx', args: ['-y', '@upstash/context7-mcp@latest'], enabled: true },
+  { name: 'desktop-commander', command: 'npx', args: ['-y', '@wonderwhy-er/desktop-commander@latest'], enabled: true },
+  { name: 'blender', command: 'uvx', args: ['blender-mcp'], enabled: false },
+];
+
+/** Merge the well-known MCP servers into settings.mcpServers if missing (by name). */
+export function ensureWellKnownMcpServers(): void {
+  try {
+    const db = getDb();
+    const row = db.prepare("SELECT value FROM settings WHERE key='mcpServers'").get() as { value: string } | undefined;
+    const servers: McpServerConfig[] = row ? JSON.parse(row.value) : [];
+    let changed = false;
+    for (const w of WELL_KNOWN_MCP) if (!servers.some((s) => s?.name === w.name)) { servers.push({ ...w }); changed = true; }
+    if (changed) db.prepare("INSERT INTO settings(key,value) VALUES('mcpServers',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(JSON.stringify(servers));
+  } catch { /* best-effort */ }
+}
+
 function loadSettings(): any {
   const rows = getDb().prepare('SELECT key,value FROM settings').all() as { key: string; value: string }[];
   const out: any = {};
