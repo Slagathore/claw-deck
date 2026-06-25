@@ -19,6 +19,8 @@ import { PROTOCOLS, Protocol } from '../council/protocol';
 import { runProtocol, ExecutorHooks, CouncilEvent, ResumeState } from '../council/run';
 import { runAutoloop } from '../council/autoloop';
 import { makeTransport, TransportConfig } from '../council/transport';
+import { buildToolSet, ToolSet, McpServerSpec } from '../council/mcpClient';
+import { atlasDbPath } from '../atlas/db';
 import { RosterAgent, SessionAssignment, validateAssignment, resolveAgents } from '../council/agents';
 import { createWorktree, captureDiff, writeArtifacts, applyToLiveTree, removeWorktree, Worktree } from '../executor/worktree';
 import { applyDiffToWorktree } from '../executor/applyDiff';
@@ -115,7 +117,21 @@ function buildAgentOptions(hot?: { agents?: string[]; temperature?: number; top_
   return map;
 }
 
-function transportConfig(repo?: string, abortSignal?: AbortSignal, agentOptions?: Record<string, { temperature?: number; top_p?: number }>): TransportConfig {
+/** The READ-ONLY MCP servers a cloud panelist may use: Context7 (docs) + this
+ *  workspace's Atlas code-brain (code queries). Never the write/desktop servers. */
+function scopedReadOnlyServers(repo?: string): McpServerSpec[] {
+  const all = getSetting<McpServerCfg[]>('mcpServers', []);
+  const out: McpServerSpec[] = [];
+  const ctx7 = all.find((s) => s?.name === 'context7' && s.command && s.enabled !== false);
+  if (ctx7) out.push({ name: 'context7', command: ctx7.command, args: ctx7.args, env: ctx7.env });
+  if (repo) {
+    const dbPath = atlasDbPath(repo);
+    if (fs.existsSync(dbPath)) out.push({ name: 'code-brain', command: 'node', args: [path.join(__dirname, '..', 'atlas', 'codeBrainServer.js'), '--db', dbPath], cwd: repo });
+  }
+  return out;
+}
+
+function transportConfig(repo?: string, abortSignal?: AbortSignal, agentOptions?: Record<string, { temperature?: number; top_p?: number }>, toolset?: ToolSet): TransportConfig {
   // Local Ollama serves *:cloud models itself (no key). ollamaCloudUrl is an
   // OPTIONAL override for a genuinely remote OpenAI-compat endpoint; blank → local.
   const localV1 = getSetting('ollamaUrl', 'http://localhost:11434').replace(/\/$/, '') + '/v1';
@@ -133,6 +149,8 @@ function transportConfig(repo?: string, abortSignal?: AbortSignal, agentOptions?
     claudeExtraArgs: claudeExtraArgs(repo),
     actorTimeoutMs: getSetting('actorTimeoutMs', 600000),
     agentOptions,
+    tools: toolset?.tools,
+    callTool: toolset?.call,
     cwd: repo,
   };
 }
@@ -368,34 +386,45 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
     const signal = { aborted: false, controller };
     signals.set(runId, signal);
     const execId = opts.resumeFrom ? `${runId}-r${Date.now().toString(36)}` : runId; // fresh worktree per resume attempt
-    const transport = makeTransport(transportConfig(opts.repo, controller.signal, opts.agentOptions));
     const executor = opts.repo ? makeExecutorHooks(opts.repo, execId, controller.signal) : undefined;
 
-    void runProtocol(opts.protocol, {
-      roster: opts.roster, assignment: opts.assignment, task: opts.task, transport, executor, signal,
-      resumeFrom: opts.resumeFrom,
-      emit: (ev) => send(runId, ev),
-      onCheckpoint: (cp) => {
-        try {
-          db.prepare('UPDATE council_runs SET phase_index=?, artifact=?, transcript=?, verdicts=?, approved=?, resumable=1 WHERE run_id=?')
-            .run(cp.phaseIndex, cp.artifact, JSON.stringify(cp.transcript), JSON.stringify(cp.verdicts), cp.approved ? 1 : 0, runId);
-        } catch { /* checkpoint is best-effort */ }
-      },
-    })
-      .then((res) => {
+    void (async () => {
+      // scoped read-only toolset (Atlas code-brain + Context7) for cloud panelists
+      let toolset: ToolSet | undefined;
+      try {
+        if (getSetting('panelistTools', true)) {
+          const servers = scopedReadOnlyServers(opts.repo);
+          if (servers.length) { toolset = await buildToolSet(servers, controller.signal); if (toolset.tools.length) send(runId, { type: 'tools', content: toolset.tools.map((t) => t.function.name).join(', ') } as any); }
+        }
+      } catch { /* run without tools */ }
+      const transport = makeTransport(transportConfig(opts.repo, controller.signal, opts.agentOptions, toolset));
+      try {
+        const res = await runProtocol(opts.protocol, {
+          roster: opts.roster, assignment: opts.assignment, task: opts.task, transport, executor, signal,
+          resumeFrom: opts.resumeFrom,
+          emit: (ev) => send(runId, ev),
+          onCheckpoint: (cp) => {
+            try {
+              db.prepare('UPDATE council_runs SET phase_index=?, artifact=?, transcript=?, verdicts=?, approved=?, resumable=1 WHERE run_id=?')
+                .run(cp.phaseIndex, cp.artifact, JSON.stringify(cp.transcript), JSON.stringify(cp.verdicts), cp.approved ? 1 : 0, runId);
+            } catch { /* checkpoint is best-effort */ }
+          },
+        });
         const resumable = res.status === 'aborted' ? 1 : 0; // completed/bounced → not resumable
         db.prepare('UPDATE council_runs SET status=?, approved=?, finished=?, result=?, resumable=? WHERE run_id=?')
           .run(res.status, res.approved ? 1 : 0, Date.now(), JSON.stringify({ phasesRun: res.phasesRun, verdicts: res.verdicts, transcriptLen: res.transcript.length }), resumable, runId);
         appendAudit('council:finish', { runId, status: res.status, approved: res.approved });
         trace('council:finish', { runId, status: res.status, approved: res.approved, phasesRun: res.phasesRun });
         send(runId, { type: 'finished', status: res.status, ok: res.approved });
-      })
-      .catch((err) => {
+      } catch (err: any) {
         db.prepare('UPDATE council_runs SET status=?, finished=?, resumable=1 WHERE run_id=?').run('error', Date.now(), runId);
         trace('council:error', { runId, error: String(err?.message ?? err), stack: err?.stack });
         send(runId, { type: 'error', content: String(err?.message ?? err) });
-      })
-      .finally(() => signals.delete(runId));
+      } finally {
+        signals.delete(runId);
+        toolset?.dispose();
+      }
+    })();
   }
 
   // Prologue: panel proposes clarifying questions, consolidates to ≤6, then the

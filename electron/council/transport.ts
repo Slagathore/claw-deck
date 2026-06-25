@@ -9,6 +9,7 @@ import { RosterAgent, Msg } from './agents';
 import { runCaptured } from '../ipc/runner';
 import { bridgeLmInvoke } from '../bridge/client';
 import { trace } from '../ipc/trace';
+import { ToolDef } from './mcpClient';
 
 export interface TransportConfig {
   ollamaCloudUrl?: string;   // default https://ollama.com/v1
@@ -23,8 +24,12 @@ export interface TransportConfig {
   claudeExtraArgs?: string[];// extra claude flags (--mcp-config <file>, --add-dir <dir>…) → tool + fs access
   actorTimeoutMs?: number;   // per-call timeout for agentic CLI actors (default 10 min — they do full turns)
   agentOptions?: Record<string, { temperature?: number; top_p?: number }>; // per-agent sampling dials (e.g. run hot)
+  tools?: ToolDef[];         // read-only MCP tools offered to cloud agents (Atlas + Context7)
+  callTool?: (name: string, args: any) => Promise<string>;
   cwd?: string;
 }
+
+const localAuth = (baseUrl: string, key?: string) => key || (/(^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?\/v1\/?$)/i.test(baseUrl) ? 'ollama' : undefined);
 
 interface SampleOpts { temperature?: number; top_p?: number }
 
@@ -93,6 +98,41 @@ async function chatCompat(baseUrl: string, key: string | undefined, model: strin
   return text;
 }
 
+/** Tool-calling agent loop for cloud models (non-streaming per turn). Sends the
+ *  read-only tools, executes any tool_calls against the MCP servers, feeds results
+ *  back, and loops until the model answers (or the iteration cap). */
+async function chatCompatTools(baseUrl: string, key: string | undefined, model: string, messages: Msg[], signal: AbortSignal | undefined, onDelta: OnDelta | undefined, sample: SampleOpts | undefined, tools: ToolDef[], callTool: (n: string, a: any) => Promise<string>, maxIters = 6): Promise<string> {
+  const url = `${baseUrl.replace(/\/$/, '')}/chat/completions`;
+  const auth = localAuth(baseUrl, key);
+  const msgs: any[] = [...messages];
+  for (let iter = 0; iter < maxIters; iter++) {
+    const body: Record<string, unknown> = { model, messages: msgs, stream: false, tools, tool_choice: 'auto' };
+    if (sample?.temperature != null) body.temperature = sample.temperature;
+    if (sample?.top_p != null) body.top_p = sample.top_p;
+    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(auth ? { Authorization: `Bearer ${auth}` } : {}) }, body: JSON.stringify(body), signal });
+    if (!r.ok) throw new Error(`HTTP ${r.status} ${(await r.text().catch(() => '')).slice(0, 200)}`);
+    const j: any = await r.json();
+    const m = j.choices?.[0]?.message ?? {};
+    const calls = Array.isArray(m.tool_calls) ? m.tool_calls : [];
+    if (calls.length) {
+      msgs.push({ role: 'assistant', content: m.content ?? '', tool_calls: calls });
+      for (const tc of calls) {
+        let args: any = {}; try { args = JSON.parse(tc.function?.arguments || '{}'); } catch { /* tolerate */ }
+        const tname = tc.function?.name ?? '';
+        onDelta?.(`\n  🔧 ${tname}(${JSON.stringify(args).slice(0, 120)})\n`);
+        trace('council:tools:call', { tool: tname, model });
+        const result = await callTool(tname, args);
+        msgs.push({ role: 'tool', tool_call_id: tc.id, content: String(result).slice(0, 8000) });
+      }
+      continue;
+    }
+    const content = typeof m.content === 'string' ? m.content : Array.isArray(m.content) ? m.content.map((p: any) => p?.text ?? '').join('') : '';
+    if (onDelta && content) onDelta(content);
+    return content;
+  }
+  return '(tool loop hit the iteration cap)';
+}
+
 function renderPrompt(messages: Msg[]): string {
   return messages.map((m) => (m.role === 'system' ? `[system]\n${m.content}` : m.content)).join('\n\n');
 }
@@ -124,12 +164,15 @@ async function openclawPrompt(binary: string, model: string | undefined, message
 }
 
 export function makeTransport(cfg: TransportConfig): (agent: RosterAgent, messages: Msg[], onDelta?: OnDelta) => Promise<string> {
+  const tooled = !!(cfg.tools && cfg.tools.length && cfg.callTool);
+  const cloud = (baseUrl: string, key: string | undefined, model: string, messages: Msg[], onDelta?: OnDelta, sample?: SampleOpts) =>
+    tooled ? chatCompatTools(baseUrl, key, model, messages, cfg.abortSignal, onDelta, sample, cfg.tools!, cfg.callTool!) : chatCompat(baseUrl, key, model, messages, cfg.abortSignal, onDelta, sample);
   return async (agent, messages, onDelta) => {
     const sample = cfg.agentOptions?.[agent.id];
     switch (agent.transport) {
-      case 'ollama-cloud': return chatCompat(cfg.ollamaCloudUrl ?? 'https://ollama.com/v1', cfg.ollamaCloudKey, agent.model ?? '', messages, cfg.abortSignal, onDelta, sample);
-      case 'ollama-local': return chatCompat(cfg.ollamaLocalUrl ?? 'http://localhost:11434/v1', undefined, agent.model ?? '', messages, cfg.abortSignal, onDelta, sample);
-      case 'openai-compat': return chatCompat(cfg.openaiCompatUrl ?? 'http://localhost:11434/v1', cfg.openaiCompatKey, agent.model ?? '', messages, cfg.abortSignal, onDelta, sample);
+      case 'ollama-cloud': return cloud(cfg.ollamaCloudUrl ?? 'https://ollama.com/v1', cfg.ollamaCloudKey, agent.model ?? '', messages, onDelta, sample);
+      case 'ollama-local': return cloud(cfg.ollamaLocalUrl ?? 'http://localhost:11434/v1', undefined, agent.model ?? '', messages, onDelta, sample);
+      case 'openai-compat': return cloud(cfg.openaiCompatUrl ?? 'http://localhost:11434/v1', cfg.openaiCompatKey, agent.model ?? '', messages, onDelta, sample);
       case 'claude-code': return cliPrompt(cfg.paths?.claude ?? agent.binary ?? 'claude', ['--print', '--input-format', 'text', '--permission-mode', 'bypassPermissions', '--no-session-persistence', ...(cfg.claudeExtraArgs ?? [])], messages, cfg.cwd, cfg.abortSignal, onDelta, cfg.claudeUnsetEnv, cfg.actorTimeoutMs);
       case 'codex': return cliPrompt(cfg.paths?.codex ?? agent.binary ?? 'codex', ['exec', '--sandbox', 'workspace-write', '--skip-git-repo-check', '--color', 'never', '-'], messages, cfg.cwd, cfg.abortSignal, onDelta, undefined, cfg.actorTimeoutMs);
       case 'openclaw': return openclawPrompt(cfg.paths?.openclaw ?? agent.binary ?? 'openclaw', agent.model, messages, cfg.cwd, cfg.abortSignal, onDelta, cfg.actorTimeoutMs);

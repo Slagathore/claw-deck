@@ -106,6 +106,9 @@ export default function SettingsTab() {
         </label>
         <label className="label" title="Agentic CLI actors (Claude Code / Codex / OpenClaw) run a full turn per call — reading the repo, etc. — which can take minutes. Raise this if claude is being killed by [timeout].">Actor call timeout (ms) — claude/codex/openclaw do full turns; 180000 is often too short</label>
         <input type="number" value={draft.actorTimeoutMs ?? 600000} onChange={e => set('actorTimeoutMs', Math.max(30000, Number(e.target.value) || 600000))} />
+        <label className="label" title="Cloud panelists get READ-ONLY tools — your Atlas code-brain (code queries) + Context7 (live docs) — so they can look up real APIs instead of guessing. Read-only: no filesystem writes or desktop control (that stays with the actor).">
+          <input type="checkbox" checked={draft.panelistTools !== false} onChange={e => set('panelistTools', e.target.checked)} /> Give panelists read-only tools (Atlas code-brain + Context7)
+        </label>
 
         <label className="label" style={{ marginTop: 8 }}><strong>Agent Roster</strong> — the global pool each Council tab assigns from</label>
         {(draft.fusionRoster ?? []).map((a: any, i: number) => (
