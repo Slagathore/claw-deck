@@ -143,7 +143,7 @@ function scopedReadOnlyServers(repo?: string): McpServerSpec[] {
 /** Digest of the files changed in the latest commit (the iteration's checkpoint), with their
  *  contents capped, so the goal-checker can VERIFY what was actually produced — not just the
  *  proposal text. Returns '' when nothing changed or git is unavailable. */
-async function changedFilesDigest(repo: string, maxFiles = 8, perFileChars = 3000, totalChars = 14000): Promise<string> {
+async function changedFilesDigest(repo: string, maxFiles = 8, perFileChars = 12000, totalChars = 40000): Promise<string> {
   const safeGit = async (args: string[]) => { try { return (await git(repo, args)).stdout.trim(); } catch { return ''; } };
   let names = await safeGit(['diff', '--name-only', 'HEAD~1', 'HEAD']);
   if (!names) names = await safeGit(['show', '--name-only', '--pretty=format:', 'HEAD']);
@@ -154,8 +154,12 @@ async function changedFilesDigest(repo: string, maxFiles = 8, perFileChars = 300
     try {
       const abs = path.join(repo, f);
       if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) continue;
-      const block = `--- ${f} ---\n${fs.readFileSync(abs, 'utf8').slice(0, perFileChars)}`;
-      if (block.length > budget) break;
+      const full = fs.readFileSync(abs, 'utf8');
+      // CRITICAL: mark a display-clip explicitly, or the checker mistakes our clip for a
+      // truncated file and never accepts the goal as met.
+      const shown = full.length > perFileChars ? `${full.slice(0, perFileChars)}\n…[display-clipped here — file is ${full.length} chars total on disk, this is NOT a truncation]` : full;
+      const block = `--- ${f} (${full.length} chars) ---\n${shown}`;
+      if (block.length > budget && parts.length) break;
       budget -= block.length; parts.push(block);
     } catch { /* skip unreadable */ }
   }
