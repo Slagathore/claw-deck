@@ -184,7 +184,7 @@ function FusionMethods({ repo }: { repo: string }) {
  *  button that pre-seeds Foundry's P0 from this run (no re-ingest). */
 function MethodResultPanel({ runId, repo }: { runId: string; repo: string }) {
   const { startRun } = useCouncil();
-  const [data, setData] = useState<{ isMethod: boolean; methodId?: string; result?: { report?: string; scores?: { agentId: string; verdict: string }[]; endPrompt?: string; seed?: { task: string; focus?: string; contract: string; artifacts: string[] } } | null } | null>(null);
+  const [data, setData] = useState<{ isMethod: boolean; methodId?: string; result?: { report?: string; scores?: { agentId: string; verdict: string }[]; endPrompt?: string; confidence?: 'high' | 'low'; humanDecision?: string[]; seed?: { task: string; focus?: string; contract: string; artifacts: string[] } } | null } | null>(null);
   const [busy, setBusy] = useState(false);
   useEffect(() => { window.api.council.methodResult(runId).then((r) => setData(r.ok ? r : null)); }, [runId]);
   if (!data?.isMethod) return null;
@@ -198,7 +198,13 @@ function MethodResultPanel({ runId, repo }: { runId: string; repo: string }) {
   }
   return (
     <div className="card col" style={{ gap: 6 }}>
-      <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'wrap' }}><strong>⚗ Method result — {data.methodId}</strong>{res.scores?.length ? <span className="label">{res.scores.map((s) => s.verdict).join(' · ')}</span> : null}</div>
+      <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'wrap' }}><strong>⚗ Method result — {data.methodId}</strong>{res.scores?.length ? <span className="label">{res.scores.map((s) => s.verdict).join(' · ')}{res.confidence ? ` · ${res.confidence} confidence` : ''}</span> : null}</div>
+      {!!res.humanDecision?.length && (
+        <div className="banner warn" style={{ ...WRAP }}>
+          <strong>⚠ Human decision required ({res.humanDecision.length})</strong> — invariant blocker(s) survived auto-repair; the judges scored it anyway. Resolve before shipping:
+          <pre style={{ margin: '4px 0 0', fontSize: 11, ...WRAP }}>{res.humanDecision.join('\n')}</pre>
+        </div>
+      )}
       {res.report && <pre style={{ margin: 0, fontSize: 12, maxHeight: 360, overflow: 'auto', ...WRAP }}>{res.report}</pre>}
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
         <span className="label">{res.endPrompt}</span>

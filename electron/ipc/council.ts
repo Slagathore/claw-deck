@@ -908,7 +908,7 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
         const res = await runMethod(method, { task, focus: opts.focus ?? opts.seed?.focus, roster, transport, signal, emit: (ev) => send(runId, ev), build, atlasQuery, readFiles, runDir, seed: opts.seed });
         const status = res.degraded ? 'completed-degraded' : 'completed';
         db.prepare('UPDATE council_runs SET status=?, finished=?, artifact=?, result=? WHERE run_id=?')
-          .run(status, Date.now(), res.artifact, JSON.stringify({ report: res.report, scores: res.scores, warnings: res.warnings, findings: res.findings, seed: res.seed, endPrompt: method.endPrompt }), runId);
+          .run(status, Date.now(), res.artifact, JSON.stringify({ report: res.report, scores: res.scores, warnings: res.warnings, findings: res.findings, seed: res.seed, endPrompt: method.endPrompt, confidence: res.confidence, humanDecision: res.humanDecision }), runId);
         appendAudit('council:methodFinish', { runId, method: method.id, degraded: res.degraded });
         send(runId, { type: 'finished', status, ok: !res.degraded });
       } catch (err: any) {

@@ -83,6 +83,8 @@ export interface MethodResult {
   warnings: string[];
   scores: { agentId: string; verdict: string }[];
   diff?: string;
+  confidence: 'high' | 'low';
+  humanDecision: string[];   // unresolved invariant blockers needing a human call; [] when none
   seed: { task: string; focus?: string; contract: string; artifacts: string[] };  // §5 chaining
 }
 
@@ -97,8 +99,8 @@ const SYS = {
   consolidate: 'You are the consolidator. Merge the drafts into ONE canonical artifact — take the strongest parts of each, resolve conflicts, drop redundancy. Output the single consolidated artifact only.',
   cluster: 'You are the consolidator. Cluster these candidates into 2–4 coherent themes/directions. For each: a name, what it is, why it matters, a how-to-build sketch, effort, and risks. Rank by value × feasibility. Output a ranked board.',
   ingest: 'You are mapping a repository. From the provided context, summarize what the repo IS: architecture, key modules, roadmap/TODOs, and gaps. Build a concise function/call map. No preamble.',
-  qaWhole: 'You are reviewing the FULL artifact for blocking problems (correctness, completeness, contract violations). List blocking issues with locations; if none, reply EXACTLY: NO_BLOCKING_ISSUES.',
-  qaCode: 'You are a code-correctness reviewer. Check the code in the artifact compiles in principle and matches the contract. List blocking defects with locations; if none, reply EXACTLY: NO_BLOCKING_ISSUES.',
+  qaWhole: 'You are reviewing the FULL artifact for blocking problems (correctness, completeness, contract violations). List each blocking issue on its own line with a location, and END that line with a severity tag: write [GATE] if it breaks one of the contract invariant laws, otherwise write [FIX]. If you are unsure which, use [GATE]. If there are none, reply EXACTLY: NO_BLOCKING_ISSUES.',
+  qaCode: 'You are a code-correctness reviewer. Check the code in the artifact compiles in principle and matches the contract. List each blocking defect on its own line with a location, and END that line with a severity tag: write [GATE] if it breaks a contract invariant law, otherwise write [FIX] for a mechanical defect (will not compile, wrong call, type mismatch). If you are unsure which, use [GATE]. If there are none, reply EXACTLY: NO_BLOCKING_ISSUES.',
   verify: 'You are verifying findings against the ACTUAL code. For each finding, mark CONFIRMED or PHANTOM with a one-line reason. Drop phantoms. Output only confirmed findings.',
   judge: 'You are a BLIND judge. You see only the task/contract and the artifact — no discussion. Score it 0–10 against the contract and give a one-line justification. Start your reply with "SCORE: <n>".',
 };
@@ -147,9 +149,18 @@ async function askVerified(deps: MethodDeps, budget: Budget, agent: RosterAgent,
 export async function runMethod(method: Method, deps: MethodDeps): Promise<MethodResult> {
   const budget = deps.budget ?? makeBudget();
   const warnings: string[] = [];
+  let confidence: 'high' | 'low' | null = null;
+  const humanDecision: string[] = [];
   const onWarn = (m: string) => warnings.push(m);
-  // capture downgrade/coverage warnings emitted by call()/assign() into the result
-  const emit = (ev: CouncilEvent) => { if (ev.type === 'warn' && ev.content) warnings.push(ev.content); deps.emit?.(ev); };
+  // capture downgrade/coverage warnings emitted by call()/assign() into the result; a
+  // truncated-handoff re-feed drops confidence (a re-fed verdict is not fully trustworthy).
+  const emit = (ev: CouncilEvent) => {
+    if (ev.type === 'warn' && ev.content) {
+      warnings.push(ev.content);
+      if (ev.content.includes('did not echo REVIEWING')) confidence = 'low';
+    }
+    deps.emit?.(ev);
+  };
   const ldeps: MethodDeps = { ...deps, emit };
   const store = deps.runDir ? artifactStore(deps.runDir) : undefined;
   let degraded = false;
@@ -272,12 +283,51 @@ export async function runMethod(method: Method, deps: MethodDeps): Promise<Metho
         }
         case 'qa': {
           const whole = assign(ldeps, 'qa-wholedoc', 1, [], warnings, step.label);
-          const code = assign(ldeps, 'qa-code', 1, [], warnings, step.label);
-          const base = `Task:\n${deps.task}\n\nArtifact:\n${artifact}`;
+          const code  = assign(ldeps, 'qa-code', 1, [], warnings, step.label);
           const reviewers = [...whole, ...code];
-          const replies = await Promise.all(reviewers.map((a, i) => askVerified(ldeps, budget, a, i < whole.length ? SYS.qaWhole : SYS.qaCode, artifact, base, step.label)));
-          const blocking = replies.map((r, i) => r && !/NO_BLOCKING_ISSUES/i.test(r) ? `- (${reviewers[i].displayName}) ${r.trim().slice(0, 10000)}` : '').filter(Boolean);
-          if (blocking.length) { findings.push(...blocking); artifact += `\n\n## QA blocking (one bounce-fix)\n${blocking.join('\n')}`; }
+
+          // Run the QA panel over an artifact; return tagged blocker lines.
+          const noBlock = (r: string) => r.toUpperCase().includes('NO_BLOCKING_ISSUES');
+          const panel = async (art: string): Promise<string[]> => {
+            const replies = await Promise.all(reviewers.map((a, i) =>
+              askVerified(ldeps, budget, a, i < whole.length ? SYS.qaWhole : SYS.qaCode,
+                art, `Task:\n${deps.task}\n\nArtifact:\n${art}`, step.label)));
+            return replies
+              .map((r, i) => r && !noBlock(r) ? `- (${reviewers[i].displayName}) ${r.trim().slice(0, 10000)}` : '')
+              .filter(Boolean);
+          };
+
+          const blocking = await panel(artifact);
+          if (!blocking.length) return;
+
+          // One bounded auto-repair pass (maxRounds 2, matching the lint-gate). Recheck = re-run the panel.
+          const [hand] = assign(ldeps, 'repair-hand', 1, [], warnings, step.label);
+          let residual = blocking;
+          if (hand) {
+            const rr = await boundedRepair(artifact,
+              { passed: false, findings: blocking, report: blocking.join('\n') },
+              async (art, report) => (await call(ldeps, budget, hand, SYS.repair,
+                `Artifact:\n${art}\n\nQA blockers to fix (do not redesign or add scope):\n${report}\n\nReturn the complete corrected artifact.`,
+                step.label)) || art,
+              async (art) => { const b = await panel(art); return { passed: b.length === 0, findings: b, report: b.join('\n') }; },
+              { maxRounds: 2 });
+            artifact = rr.artifact;     // keep the repaired artifact; never append blocker text to it
+            residual = rr.residual;
+          }
+
+          // Partition survivors by the reviewer's own tag — no text inference.
+          // [FIX] = mechanical (auto-repairable). Anything else, including untagged, routes to the human (safe default).
+          const isFix = (f: string) => f.includes('[FIX]') && !f.includes('[GATE]');
+          const mechLeft = residual.filter(isFix);
+          const gateLeft = residual.filter((f) => !isFix(f));
+
+          if (mechLeft.length) findings.push(`QA (UNRESOLVED after ≤ 2 repair rounds):\n${mechLeft.join('\n')}`);
+          if (gateLeft.length) {
+            findings.push(`GATE — human decision required (invariant blocker survived auto-repair):\n${gateLeft.join('\n')}`);
+            humanDecision.push(...gateLeft);
+            confidence = 'low';
+          }
+          if (residual.length && confidence === null) confidence = 'low';
           return;
         }
         case 'verify': {
@@ -324,16 +374,21 @@ export async function runMethod(method: Method, deps: MethodDeps): Promise<Metho
     deps.emit?.({ type: step.kind === 'lint-gate' ? 'lint' : 'agent', phase: `${step.label} ✓`, kind: step.kind, content: '' });
   }
 
-  const report = buildReport(method, { contract, artifact, findings, scores, warnings, degraded });
+  const report = buildReport(method, { contract, artifact, findings, scores, warnings, degraded, confidence: confidence ?? 'high', humanDecision });
   deps.emit?.({ type: 'done', status: degraded ? 'completed-degraded' : 'completed' });
+  // TODO(run.ts): when result.humanDecision.length, prompt the user to resolve before offering the bootstrap.
   return {
     methodId: method.id, artifact, contract, findings, report, degraded, warnings, scores, diff,
+    confidence: confidence ?? 'high',
+    humanDecision,
     seed: { task: deps.task, focus: deps.focus, contract, artifacts: [artifact] },
   };
 }
 
-function buildReport(method: Method, r: { contract: string; artifact: string; findings: string[]; scores: { agentId: string; verdict: string }[]; warnings: string[]; degraded: boolean }): string {
+function buildReport(method: Method, r: { contract: string; artifact: string; findings: string[]; scores: { agentId: string; verdict: string }[]; warnings: string[]; degraded: boolean; confidence: 'high' | 'low'; humanDecision: string[] }): string {
   const parts = [`# ${method.name} — report`];
+  // Lead with the JUDGES' verdict (not the artifact's self-score), plus confidence + any human gate.
+  if (r.scores.length) parts.push(`## Verdict\nScore: ${r.scores.map((s) => s.verdict).join(', ')} · confidence: ${r.confidence}` + (r.humanDecision.length ? ` · HUMAN DECISION REQUIRED (${r.humanDecision.length})` : ''));
   if (r.degraded) parts.push('> ⚠ DEGRADED — one or more phases fell back; results may be partial.');
   if (r.contract) parts.push(`## Contract / rubric\n${r.contract}`);
   parts.push(`## Final artifact\n${r.artifact || '(none)'}`);
@@ -357,6 +412,7 @@ export const METHODS: Record<string, Method> = {
       { kind: 'repair', label: 'Repair', role: 'repair-hand' },
       { kind: 'consolidate', label: 'Consolidate', role: 'consolidator' },
       { kind: 'lint-gate', label: 'Hard gate' },
+      { kind: 'verify', label: 'Verify' },
       { kind: 'qa', label: 'Panel QA' },
       { kind: 'judge', label: 'Blind judge', judges: 1, tiebreak: true, blind: true },
       { kind: 'build', label: 'Build', role: 'builder' },
@@ -373,6 +429,7 @@ export const METHODS: Record<string, Method> = {
       { kind: 'repair', label: 'Repair', role: 'repair-hand' },
       { kind: 'consolidate', label: 'Consolidate', role: 'consolidator' },
       { kind: 'lint-gate', label: 'Consistency lint' },
+      { kind: 'verify', label: 'Verify' },
       { kind: 'qa', label: 'Panel QA' },
       { kind: 'judge', label: 'Triple blind judge', judges: 3, tiebreak: true, blind: true },
     ],

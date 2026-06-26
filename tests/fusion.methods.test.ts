@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { METHODS, printMethodCard, runMethod, MethodDeps } from '../electron/council/methods';
+import { METHODS, printMethodCard, runMethod, MethodDeps, Method } from '../electron/council/methods';
 import { TransportFn } from '../electron/council/run';
 import { RosterAgent } from '../electron/council/agents';
 
@@ -119,6 +119,59 @@ describe('§3 runMethod engine', () => {
     const readFiles = async () => ({ 'scripts/core/foo.gd': 'func foo():\n\treturn SECRET_MARKER_42' });
     await runMethod(METHODS.assay, deps({ transport: t, atlasQuery, readFiles }));
     expect(criticSawSource).toBe(true);  // the critic audited actual source, not just the summary
+  });
+
+  // Post-QA repair gate: every QA reviewer/judge must echo REVIEWING:<sha> (extracted from
+  // the prompt's header) so askVerified does not re-feed and drop confidence.
+  const QA_JUDGE: Method = { id: 't', name: 'T', use: '', summary: '', endPrompt: '', budget: '', phases: [{ kind: 'qa', label: 'Panel QA' }, { kind: 'judge', label: 'Judge', judges: 1 }] };
+  const echoOf = (user: string) => `REVIEWING: ${(user.match(/REVIEWING:\s*([0-9a-f]{12})/i) || [])[1] ?? '000000000000'}`;
+
+  it('QA gate auto-resolves a [FIX] blocker (clean findings, repaired artifact, confidence kept)', async () => {
+    const t: TransportFn = async (_a, m) => {
+      const sys = m[0]?.content ?? ''; const user = m[m.length - 1]?.content ?? ''; const e = echoOf(user);
+      if (/repair hand/i.test(sys)) return 'FIXED_ARTIFACT_V2 — corrected';
+      if (/reviewing the FULL/i.test(sys)) return /FIXED_ARTIFACT_V2/.test(user) ? `${e}\nNO_BLOCKING_ISSUES` : `${e}\n- missing return at L3 [FIX]`;
+      if (/code-correctness/i.test(sys)) return `${e}\nNO_BLOCKING_ISSUES`;
+      if (/BLIND judge/i.test(sys)) return `${e}\nSCORE: 8 ok`;
+      return 'x';
+    };
+    const r = await runMethod(QA_JUDGE, deps({ transport: t, seed: { artifacts: ['initial broken artifact'] } }));
+    expect(r.findings.some((f) => /UNRESOLVED|GATE/.test(f))).toBe(false);   // nothing left over
+    expect(r.artifact).toContain('FIXED_ARTIFACT_V2');                        // genuinely patched
+    expect(r.confidence).not.toBe('low');                                     // no truncation re-feed
+    expect(r.humanDecision).toHaveLength(0);
+  });
+
+  it('QA gate: a surviving [GATE] blocker → low confidence + human decision, judged anyway', async () => {
+    const t: TransportFn = async (_a, m) => {
+      const sys = m[0]?.content ?? ''; const user = m[m.length - 1]?.content ?? ''; const e = echoOf(user);
+      if (/repair hand/i.test(sys)) return 'attempted fix, invariant still broken';
+      if (/reviewing the FULL/i.test(sys)) return `${e}\n- violates invariant X at L9 [GATE]`;   // never clears
+      if (/code-correctness/i.test(sys)) return `${e}\nNO_BLOCKING_ISSUES`;
+      if (/BLIND judge/i.test(sys)) return `${e}\nSCORE: 3 weak`;
+      return 'x';
+    };
+    const r = await runMethod(QA_JUDGE, deps({ transport: t, seed: { artifacts: ['broken'] } }));
+    expect(r.confidence).toBe('low');
+    expect(r.humanDecision).toHaveLength(1);
+    expect(r.scores.length).toBeGreaterThanOrEqual(1);                        // judged regardless
+    expect(r.findings.some((f) => /GATE — human decision/.test(f))).toBe(true);
+    expect(r.artifact).not.toContain('[GATE]');                               // blockers never re-stapled to the artifact
+  });
+
+  it('QA gate: an UNTAGGED surviving blocker defaults to the human-decision bucket', async () => {
+    const t: TransportFn = async (_a, m) => {
+      const sys = m[0]?.content ?? ''; const user = m[m.length - 1]?.content ?? ''; const e = echoOf(user);
+      if (/repair hand/i.test(sys)) return 'tried';
+      if (/reviewing the FULL/i.test(sys)) return `${e}\n- something is off at L2`;   // NO tag
+      if (/code-correctness/i.test(sys)) return `${e}\nNO_BLOCKING_ISSUES`;
+      if (/BLIND judge/i.test(sys)) return `${e}\nSCORE: 5`;
+      return 'x';
+    };
+    const r = await runMethod(QA_JUDGE, deps({ transport: t, seed: { artifacts: ['broken'] } }));
+    expect(r.humanDecision).toHaveLength(1);                                  // untagged → human (safe default)
+    expect(r.findings.some((f) => /GATE — human decision/.test(f))).toBe(true);
+    expect(r.findings.some((f) => /QA \(UNRESOLVED/.test(f))).toBe(false);    // not the mechanical [FIX] bucket
   });
 
   it('respects the trusted-call budget: an exhausted Claude budget downgrades the consolidate step', async () => {
