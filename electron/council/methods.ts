@@ -70,6 +70,7 @@ export interface MethodDeps {
   goldenTests?: (artifact: string, contract: string) => Promise<{ ok: boolean; output: string }>;
   atlasQuery?: (q: string) => Promise<string | null>;
   readFiles?: (paths: string[]) => Promise<Record<string, string>>; // real-code grounding for assay/prospect
+  groundInRepo?: boolean;            // prepend a repo-ingest phase to methods that lack one (foundry, etc.)
   build?: (artifact: string, builder: RosterAgent) => Promise<{ ok: boolean; diff?: string; error?: string }>;
 }
 
@@ -174,11 +175,18 @@ export async function runMethod(method: Method, deps: MethodDeps): Promise<Metho
   let lastAuthors: string[] = [];
   let lastWritten = '';
   let diff: string | undefined;
+  const repoGround = () => [codeContext && `Actual source of key files:\n${codeContext}`, map && `Repo map:\n${map}`].filter(Boolean).join('\n\n');
   if (deps.seed) emit({ type: 'agent', phase: method.name, kind: 'seed', content: `Seeded from a prior run — skipping re-ingest. ${deps.seed.contract ? 'Contract carried forward.' : ''}` });
 
   deps.emit?.({ type: 'phase', phase: method.name, kind: 'method' });
 
-  for (const step of method.phases) {
+  // §1 (opt-in): ground build-oriented methods in the real code by prepending an ingest
+  // phase when the method doesn't already have one (assay/prospect always do).
+  const phases = deps.groundInRepo && !method.phases.some((p) => p.kind === 'ingest')
+    ? [{ kind: 'ingest' as StepKind, label: 'Ingest (repo grounding)' }, ...method.phases]
+    : method.phases;
+
+  for (const step of phases) {
     if (aborted(deps)) break;
     if (deps.seed && step.kind === 'ingest') { emit({ type: 'agent', phase: step.label, kind: 'skip', content: '(skipped — seeded from prior run)' }); continue; }
     deps.emit?.({ type: 'phase', phase: step.label, kind: step.kind });
@@ -188,7 +196,8 @@ export async function runMethod(method: Method, deps: MethodDeps): Promise<Metho
         case 'frame': {
           const [framer] = assign(ldeps, step.role ?? 'framer', 1, [], warnings, step.label);
           if (!framer) return;
-          const out = await call(ldeps, budget, framer, step.role === 'framer' ? SYS.frame : SYS.rubric, `Task:\n${deps.task}`, step.label);
+          const g = repoGround();
+          const out = await call(ldeps, budget, framer, step.role === 'framer' ? SYS.frame : SYS.rubric, `Task:\n${deps.task}${g ? `\n\nExisting repo context (ground the contract in what is actually there):\n${g}` : ''}`, step.label);
           if (out) contract = out;
           return;
         }
@@ -221,7 +230,8 @@ export async function runMethod(method: Method, deps: MethodDeps): Promise<Metho
         case 'ideate': {
           const n = step.count ?? 4;
           const advisors = assign(ldeps, step.role ?? (step.kind === 'ideate' ? 'ideator' : 'diverger'), n, [], warnings, step.label);
-          const base = `Task:\n${deps.task}${contract ? `\n\nContract/Rubric:\n${contract}` : ''}${map ? `\n\nRepo map:\n${map}` : ''}${artifact ? `\n\nCurrent material:\n${artifact}` : ''}`;
+          const ground = repoGround();
+          const base = `Task:\n${deps.task}${contract ? `\n\nContract/Rubric:\n${contract}` : ''}${ground ? `\n\nRepo context:\n${ground}` : ''}${artifact ? `\n\nCurrent material:\n${artifact}` : ''}`;
           const settled = await Promise.all(advisors.map((a) => call(ldeps, budget, a, step.kind === 'ideate' ? SYS.ideate : SYS.diverge, base, step.label)));
           const got = advisors.map((a, i) => settled[i] ? `### ${a.displayName}\n${settled[i]}` : '').filter(Boolean);
           if (got.length < advisors.length) deps.emit?.({ type: 'warn', phase: step.label, content: `${advisors.length - got.length} advisor(s) dropped; quorum ${got.length}/${advisors.length}`, ok: got.length > 0 });

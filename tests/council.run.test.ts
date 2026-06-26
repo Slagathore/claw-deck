@@ -120,6 +120,19 @@ describe('runProtocol', () => {
     expect(res.status).toBe('bounced');
   });
 
+  it('ingest phase grounds the panel: repo context reaches the deliberation prompt', async () => {
+    const proto: Protocol = { id: 'IG', name: 'ig', phases: [
+      { kind: 'ingest', label: 'Ingest' },
+      { kind: 'independent', agents: ['@panelists'], label: 'Draft' },
+    ] };
+    let sawSource = false;
+    const transport = stub((_id, system, user) => { if (/expert engineer/.test(system)) sawSource = /SECRET_MARKER_88/.test(user); return 'take'; });
+    const atlasQuery = async () => 'src/foo.ts:3 — foo (function, active)';
+    const readFiles = async () => ({ 'src/foo.ts': 'export function foo(){ return SECRET_MARKER_88; }' });
+    await runProtocol(proto, { roster: ROSTER, assignment: ASSIGN, task: 't', transport, atlasQuery, readFiles });
+    expect(sawSource).toBe(true);
+  });
+
   it('forceBlind makes a normal (non-blind) gate use the blind judge prompt + parser', async () => {
     const proto: Protocol = { id: 'FB', name: 'fb', phases: [{ kind: 'gate', by: '@judge', onMajor: 'bounce', label: 'Gate' }] };
     const systems: string[] = [];

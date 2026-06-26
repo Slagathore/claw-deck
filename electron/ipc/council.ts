@@ -105,7 +105,7 @@ function withContext(task: string, context?: string): string {
 // Prologue: a run that is paused after generating clarifying questions, waiting
 // for the user's answers before the real protocol launches. Held in memory until
 // answered (the prologue is interactive and resolved within the session).
-interface ProloguePending { repo?: string; protocol: Protocol; roster: RosterAgent[]; assignment: SessionAssignment; task: string; agentOptions?: Record<string, { temperature?: number; top_p?: number }>; agentPersonas?: Record<string, string>; forceBlind?: boolean; questions: string[] }
+interface ProloguePending { repo?: string; protocol: Protocol; roster: RosterAgent[]; assignment: SessionAssignment; task: string; agentOptions?: Record<string, { temperature?: number; top_p?: number }>; agentPersonas?: Record<string, string>; forceBlind?: boolean; groundInRepo?: boolean; questions: string[] }
 const pendingPrologue = new Map<string, ProloguePending>();
 
 /** Parse a consolidated questions reply into ≤6 clean question strings. */
@@ -534,13 +534,18 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
 
   // Shared launcher for a fresh start AND a resume (resumeFrom set). Persists a
   // checkpoint after every phase so an aborted/errored run can be continued.
-  function launchCouncilRun(runId: string, opts: { repo?: string; protocol: Protocol; roster: RosterAgent[]; assignment: SessionAssignment; task: string; resumeFrom?: ResumeState; agentOptions?: Record<string, { temperature?: number; top_p?: number }>; agentPersonas?: Record<string, string>; forceBlind?: boolean }) {
+  function launchCouncilRun(runId: string, opts: { repo?: string; protocol: Protocol; roster: RosterAgent[]; assignment: SessionAssignment; task: string; resumeFrom?: ResumeState; agentOptions?: Record<string, { temperature?: number; top_p?: number }>; agentPersonas?: Record<string, string>; forceBlind?: boolean; groundInRepo?: boolean }) {
     const db = getDb();
     const controller = new AbortController();
     const signal = { aborted: false, controller };
     signals.set(runId, signal);
     const execId = opts.resumeFrom ? `${runId}-r${Date.now().toString(36)}` : runId; // fresh worktree per resume attempt
     const executor = opts.repo ? makeExecutorHooks(opts.repo, execId, controller.signal) : undefined;
+    const caps = methodCaps(opts.repo, runId, controller, false);   // Atlas query + file-read for the 'ingest' phase
+    // §1 (opt-in): prepend an ingest phase so the panel is grounded in the real code.
+    const protocol = opts.groundInRepo && !opts.protocol.phases.some((p) => p.kind === 'ingest')
+      ? { ...opts.protocol, phases: [{ kind: 'ingest' as const, label: 'Ingest (repo grounding)' }, ...opts.protocol.phases] }
+      : opts.protocol;
     const snaps: { phaseIndex: number; label: string; artifact: string }[] = []; // replay timeline
 
     void (async () => {
@@ -554,13 +559,13 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
       } catch { /* run without tools */ }
       const transport = makeTransport(transportConfig(opts.repo, controller.signal, opts.agentOptions, toolset, opts.agentPersonas));
       try {
-        const res = await runProtocol(opts.protocol, {
+        const res = await runProtocol(protocol, {
           roster: opts.roster, assignment: opts.assignment, task: opts.task, transport, executor, signal,
-          resumeFrom: opts.resumeFrom, forceBlind: opts.forceBlind,
+          resumeFrom: opts.resumeFrom, forceBlind: opts.forceBlind, atlasQuery: caps.atlasQuery, readFiles: caps.readFiles,
           emit: (ev) => send(runId, ev),
           onCheckpoint: (cp) => {
             try {
-              snaps.push({ phaseIndex: cp.phaseIndex, label: opts.protocol.phases[cp.phaseIndex - 1]?.label ?? `phase ${cp.phaseIndex}`, artifact: cp.artifact.slice(0, 20000) });
+              snaps.push({ phaseIndex: cp.phaseIndex, label: protocol.phases[cp.phaseIndex - 1]?.label ?? `phase ${cp.phaseIndex}`, artifact: cp.artifact.slice(0, 20000) });
               db.prepare('UPDATE council_runs SET phase_index=?, artifact=?, transcript=?, verdicts=?, approved=?, snapshots=?, resumable=1 WHERE run_id=?')
                 .run(cp.phaseIndex, cp.artifact, JSON.stringify(cp.transcript), JSON.stringify(cp.verdicts), cp.approved ? 1 : 0, JSON.stringify(snaps), runId);
             } catch { /* checkpoint is best-effort */ }
@@ -635,7 +640,7 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
     getDb().prepare('UPDATE council_runs SET status=?, task=? WHERE run_id=?').run('running', task, opts.runId);
     appendAudit('council:answers', { runId: opts.runId, answered: (opts.answers ?? []).filter(Boolean).length });
     trace('council:answers', { runId: opts.runId, questions: p.questions.length });
-    launchCouncilRun(opts.runId, { repo: p.repo, protocol: p.protocol, roster: p.roster, assignment: p.assignment, task, agentOptions: p.agentOptions, agentPersonas: p.agentPersonas, forceBlind: p.forceBlind });
+    launchCouncilRun(opts.runId, { repo: p.repo, protocol: p.protocol, roster: p.roster, assignment: p.assignment, task, agentOptions: p.agentOptions, agentPersonas: p.agentPersonas, forceBlind: p.forceBlind, groundInRepo: p.groundInRepo });
     return { ok: true, runId: opts.runId };
   });
 
@@ -644,7 +649,7 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
     try { return { ok: true, facts: detectEnv(opts.repo) }; } catch (e: any) { return { ok: false, facts: '', error: e?.message }; }
   });
 
-  ipcMain.handle('council:start', (_e, opts: { repo?: string; protocolId: string; assignment: SessionAssignment; task: string; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number }; prologue?: boolean; personas?: Record<string, string>; forceBlind?: boolean }) => {
+  ipcMain.handle('council:start', (_e, opts: { repo?: string; protocolId: string; assignment: SessionAssignment; task: string; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number }; prologue?: boolean; personas?: Record<string, string>; forceBlind?: boolean; groundInRepo?: boolean }) => {
     const protocol = PROTOCOLS[opts.protocolId];
     if (!protocol) return { ok: false, error: `unknown protocol: ${opts.protocolId}` };
     const roster = getSetting<RosterAgent[]>('fusionRoster', []);
@@ -661,15 +666,15 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
     trace('council:start', { runId, protocol: protocol.id, repo: opts.repo ?? null, assignment: opts.assignment, taskBytes: task.length, hot: opts.hot?.agents, prologue: !!opts.prologue });
 
     if (opts.prologue) {
-      startPrologue(runId, { repo: opts.repo, protocol, roster, assignment: opts.assignment, task, agentOptions, agentPersonas, forceBlind: opts.forceBlind });
+      startPrologue(runId, { repo: opts.repo, protocol, roster, assignment: opts.assignment, task, agentOptions, agentPersonas, forceBlind: opts.forceBlind, groundInRepo: opts.groundInRepo });
       return { ok: true, runId, awaiting: true };
     }
-    launchCouncilRun(runId, { repo: opts.repo, protocol, roster, assignment: opts.assignment, task, agentOptions, agentPersonas, forceBlind: opts.forceBlind });
+    launchCouncilRun(runId, { repo: opts.repo, protocol, roster, assignment: opts.assignment, task, agentOptions, agentPersonas, forceBlind: opts.forceBlind, groundInRepo: opts.groundInRepo });
     return { ok: true, runId };
   });
 
   // Autonomous goal loop (Phase 5): branch → run protocol → checkpoint → goal-check → repeat.
-  ipcMain.handle('council:startLoop', (_e, opts: { repo: string; protocolId: string; assignment: SessionAssignment; goal: string; maxIterations?: number; costCeiling?: number; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number }; personas?: Record<string, string>; forceBlind?: boolean; methodId?: string }) => {
+  ipcMain.handle('council:startLoop', (_e, opts: { repo: string; protocolId: string; assignment: SessionAssignment; goal: string; maxIterations?: number; costCeiling?: number; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number }; personas?: Record<string, string>; forceBlind?: boolean; methodId?: string; groundInRepo?: boolean }) => {
     if (!opts?.repo) return { ok: false, error: 'autonomous loop needs a workspace (for checkpoints)' };
     const protocol = PROTOCOLS[opts.protocolId];
     if (!protocol) return { ok: false, error: `unknown protocol: ${opts.protocolId}` };
@@ -684,7 +689,6 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
     const controller = new AbortController();
     const signal = { aborted: false, controller };
     signals.set(runId, signal);
-    const transport = makeTransport(transportConfig(opts.repo, controller.signal, buildAgentOptions(opts.hot, roster), undefined, buildAgentPersonas(opts.personas)));
     const checker = resolveAgents(roster, ['@judge'], opts.assignment)[0];
     const db = getDb();
     db.prepare('INSERT INTO council_runs(run_id, repo, protocol, task, assignment, status, started) VALUES(?,?,?,?,?,?,?)')
@@ -692,47 +696,59 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
     appendAudit('council:loopStart', { runId, protocol: protocol.id, repo: opts.repo, maxIterations: opts.maxIterations ?? 5 });
 
     const CHECKER_SYS = 'You verify whether a coding goal is satisfied. Reply MET only with concrete evidence; otherwise reply NOT MET and the single most useful next step. Default to NOT MET when uncertain.';
+    const loopCaps = methodCaps(opts.repo, runId, controller, false);   // Atlas/file-read for protocol-loop ingest
+    const loopProtocol = opts.groundInRepo && !protocol.phases.some((p) => p.kind === 'ingest')
+      ? { ...protocol, phases: [{ kind: 'ingest' as const, label: 'Ingest (repo grounding)' }, ...protocol.phases] }
+      : protocol;
 
-    void runAutoloop({
-      goal,
-      maxIterations: opts.maxIterations ?? 5,
-      costCeiling: opts.costCeiling,
-      signal,
-      emit: (ev) => send(runId, { ...ev, type: `loop:${ev.type}` } as any),
-      runIteration: method
-        // Method-driven loop: run the fusion method each iteration; its build step auto-applies
-        // to the live tree so iterations accumulate. Adapt MethodResult → RunResult for the loop.
-        ? async (task, iter) => {
-            const caps = methodCaps(opts.repo, `${runId}-i${iter}`, controller, true);
-            const m = await runMethod(method, { task, roster, transport, signal, emit: (ev) => send(runId, ev), ...caps });
-            return { status: 'completed', phasesRun: [method.name], transcript: [], artifact: m.artifact, verdicts: [], approved: !!m.diff } as RunResult;
-          }
-        : (task, iter) => runProtocol(protocol, { roster, assignment: opts.assignment, task, transport, executor: makeExecutorHooks(opts.repo, `${runId}-i${iter}`, controller.signal), signal, forceBlind: opts.forceBlind, emit: (ev) => send(runId, ev) }),
-      checkpoint: async (iter) => {
-        await git(opts.repo, ['add', '-A']);
-        await git(opts.repo, ['commit', '-m', `fusion autoloop ${runId} iter ${iter}`, '--allow-empty', '--no-verify']);
-        const t = await git(opts.repo, ['rev-parse', 'HEAD^{tree}']);
-        return { signature: t.stdout.trim() || `iter-${iter}` };
-      },
-      checkGoal: async (goal, _iter, last) => {
-        if (!checker) return { met: false, reason: 'no checker agent' };
-        // Read the files this iteration actually produced (committed at HEAD) so the checker
-        // verifies real output, not just the proposal text.
-        const produced = await changedFilesDigest(opts.repo).catch(() => '');
-        const body = `Goal:\n${goal}\n\nLatest proposal (approved=${last.approved}):\n${last.artifact.slice(0, 2000)}${produced ? `\n\nFiles produced/changed this iteration — INSPECT THESE to verify the goal is actually met:\n${produced}` : ''}`;
-        const reply = await transport(checker, [{ role: 'system', content: CHECKER_SYS }, { role: 'user', content: body }]).catch(() => 'NOT MET');
-        const met = /\bmet\b/i.test(reply) && !/not\s*met/i.test(reply);
-        return { met, reason: reply.slice(0, 300), nextSubtask: met ? undefined : reply.slice(0, 600) };
-      },
-    }).then((res) => {
-      db.prepare('UPDATE council_runs SET status=?, approved=?, finished=?, result=? WHERE run_id=?')
-        .run(res.status, res.status === 'met' ? 1 : 0, Date.now(), JSON.stringify({ iterations: res.iterations, signatures: res.signatures }), runId);
-      appendAudit('council:loopFinish', { runId, status: res.status, iterations: res.iterations });
-      send(runId, { type: 'loop:done', status: res.status, ok: res.status === 'met' });
-    }).catch((err) => {
-      db.prepare('UPDATE council_runs SET status=?, finished=? WHERE run_id=?').run('error', Date.now(), runId);
-      send(runId, { type: 'error', content: String(err?.message ?? err) });
-    }).finally(() => signals.delete(runId));
+    void (async () => {
+      let toolset: ToolSet | undefined;
+      try {
+        if (getSetting('panelistTools', true)) { const servers = scopedReadOnlyServers(opts.repo); if (servers.length) { toolset = await buildToolSet(servers, controller.signal); if (toolset.tools.length) send(runId, { type: 'tools', content: toolset.tools.map((t) => t.function.name).join(', ') } as any); } }
+      } catch { /* run without tools */ }
+      const transport = makeTransport(transportConfig(opts.repo, controller.signal, buildAgentOptions(opts.hot, roster), toolset, buildAgentPersonas(opts.personas)));
+      try {
+        const res = await runAutoloop({
+          goal,
+          maxIterations: opts.maxIterations ?? 5,
+          costCeiling: opts.costCeiling,
+          signal,
+          emit: (ev) => send(runId, { ...ev, type: `loop:${ev.type}` } as any),
+          runIteration: method
+            // Method-driven loop: run the fusion method each iteration; its build step auto-applies
+            // to the live tree so iterations accumulate. Adapt MethodResult → RunResult for the loop.
+            ? async (task, iter) => {
+                const c = methodCaps(opts.repo, `${runId}-i${iter}`, controller, true);
+                const m = await runMethod(method, { task, roster, transport, signal, emit: (ev) => send(runId, ev), ...c, groundInRepo: opts.groundInRepo });
+                return { status: 'completed', phasesRun: [method.name], transcript: [], artifact: m.artifact, verdicts: [], approved: !!m.diff } as RunResult;
+              }
+            : (task, iter) => runProtocol(loopProtocol, { roster, assignment: opts.assignment, task, transport, executor: makeExecutorHooks(opts.repo, `${runId}-i${iter}`, controller.signal), signal, forceBlind: opts.forceBlind, atlasQuery: loopCaps.atlasQuery, readFiles: loopCaps.readFiles, emit: (ev) => send(runId, ev) }),
+          checkpoint: async (iter) => {
+            await git(opts.repo, ['add', '-A']);
+            await git(opts.repo, ['commit', '-m', `fusion autoloop ${runId} iter ${iter}`, '--allow-empty', '--no-verify']);
+            const t = await git(opts.repo, ['rev-parse', 'HEAD^{tree}']);
+            return { signature: t.stdout.trim() || `iter-${iter}` };
+          },
+          checkGoal: async (g, _iter, last) => {
+            if (!checker) return { met: false, reason: 'no checker agent' };
+            // Read the files this iteration actually produced (committed at HEAD) so the checker
+            // verifies real output, not just the proposal text.
+            const produced = await changedFilesDigest(opts.repo).catch(() => '');
+            const body = `Goal:\n${g}\n\nLatest proposal (approved=${last.approved}):\n${last.artifact.slice(0, 2000)}${produced ? `\n\nFiles produced/changed this iteration — INSPECT THESE to verify the goal is actually met:\n${produced}` : ''}`;
+            const reply = await transport(checker, [{ role: 'system', content: CHECKER_SYS }, { role: 'user', content: body }]).catch(() => 'NOT MET');
+            const met = /\bmet\b/i.test(reply) && !/not\s*met/i.test(reply);
+            return { met, reason: reply.slice(0, 300), nextSubtask: met ? undefined : reply.slice(0, 600) };
+          },
+        });
+        db.prepare('UPDATE council_runs SET status=?, approved=?, finished=?, result=? WHERE run_id=?')
+          .run(res.status, res.status === 'met' ? 1 : 0, Date.now(), JSON.stringify({ iterations: res.iterations, signatures: res.signatures }), runId);
+        appendAudit('council:loopFinish', { runId, status: res.status, iterations: res.iterations });
+        send(runId, { type: 'loop:done', status: res.status, ok: res.status === 'met' });
+      } catch (err: any) {
+        db.prepare('UPDATE council_runs SET status=?, finished=? WHERE run_id=?').run('error', Date.now(), runId);
+        send(runId, { type: 'error', content: String(err?.message ?? err) });
+      } finally { signals.delete(runId); toolset?.dispose(); }
+    })();
 
     return { ok: true, runId };
   });
@@ -881,7 +897,7 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
   });
 
   // §3 — run a fusion method (foundry / foundry-design / assay / prospect / relay / scatter).
-  ipcMain.handle('council:runMethod', (_e, opts: { repo?: string; methodId: string; task: string; focus?: string; context?: string; seed?: { contract?: string; artifacts?: string[]; focus?: string } }) => {
+  ipcMain.handle('council:runMethod', (_e, opts: { repo?: string; methodId: string; task: string; focus?: string; context?: string; seed?: { contract?: string; artifacts?: string[]; focus?: string }; groundInRepo?: boolean }) => {
     const method = METHODS[opts.methodId];
     if (!method) return { ok: false, error: `unknown method: ${opts.methodId}` };
     const roster = getSetting<RosterAgent[]>('fusionRoster', []);
@@ -900,12 +916,21 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
     void (async () => {
       send(runId, { type: 'phase', phase: method.name, kind: 'method' });
       send(runId, { type: 'agent', phase: method.name, content: printMethodCard(method) });
-      const transport = makeTransport(transportConfig(opts.repo, controller.signal, buildAgentOptions(undefined, roster)));
+      // scoped read-only toolset (Atlas code-brain + Context7) so method agents can navigate
+      // the real code on demand — same surface the council panelists get.
+      let toolset: ToolSet | undefined;
+      try {
+        if (getSetting('panelistTools', true)) {
+          const servers = scopedReadOnlyServers(opts.repo);
+          if (servers.length) { toolset = await buildToolSet(servers, controller.signal); if (toolset.tools.length) send(runId, { type: 'tools', content: toolset.tools.map((t) => t.function.name).join(', ') } as any); }
+        }
+      } catch { /* run without tools */ }
+      const transport = makeTransport(transportConfig(opts.repo, controller.signal, buildAgentOptions(undefined, roster), toolset));
       // Atlas-first ingest + file-read grounding + build (one-shot: build is NOT auto-applied;
       // it lands in a worktree the user can review/apply from the Run ledger).
       const { atlasQuery, readFiles, build, runDir } = methodCaps(opts.repo, `method-${runId}`, controller, false);
       try {
-        const res = await runMethod(method, { task, focus: opts.focus ?? opts.seed?.focus, roster, transport, signal, emit: (ev) => send(runId, ev), build, atlasQuery, readFiles, runDir, seed: opts.seed });
+        const res = await runMethod(method, { task, focus: opts.focus ?? opts.seed?.focus, roster, transport, signal, emit: (ev) => send(runId, ev), build, atlasQuery, readFiles, runDir, seed: opts.seed, groundInRepo: opts.groundInRepo });
         const status = res.degraded ? 'completed-degraded' : 'completed';
         db.prepare('UPDATE council_runs SET status=?, finished=?, artifact=?, result=? WHERE run_id=?')
           .run(status, Date.now(), res.artifact, JSON.stringify({ report: res.report, scores: res.scores, warnings: res.warnings, findings: res.findings, seed: res.seed, endPrompt: method.endPrompt, confidence: res.confidence, humanDecision: res.humanDecision }), runId);
@@ -914,7 +939,7 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
       } catch (err: any) {
         db.prepare('UPDATE council_runs SET status=?, finished=? WHERE run_id=?').run('error', Date.now(), runId);
         send(runId, { type: 'error', content: String(err?.message ?? err) });
-      } finally { signals.delete(runId); }
+      } finally { signals.delete(runId); toolset?.dispose(); }
     })();
     return { ok: true, runId };
   });

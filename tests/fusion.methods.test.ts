@@ -174,6 +174,22 @@ describe('§3 runMethod engine', () => {
     expect(r.findings.some((f) => /QA \(UNRESOLVED/.test(f))).toBe(false);    // not the mechanical [FIX] bucket
   });
 
+  it('§1 groundInRepo prepends an ingest phase so a build-method panel sees real code', async () => {
+    let divergerSawSource = false;
+    const t: TransportFn = async (_a, m) => {
+      const sys = m[0]?.content ?? '';
+      const user = m[m.length - 1]?.content ?? '';
+      if (/drafting INDEPENDENTLY/.test(sys)) { divergerSawSource = /SECRET_MARKER_77/.test(user); return 'draft'; }
+      if (/mapping a repository/.test(sys)) return 'repo map';   // the ingest extractor
+      return 'ok';
+    };
+    const atlasQuery = async () => 'scripts/core/foo.gd:10 — foo (function, active)';
+    const readFiles = async () => ({ 'scripts/core/foo.gd': 'func foo():\n\treturn SECRET_MARKER_77' });
+    const M: Method = { id: 'g', name: 'G', use: '', summary: '', endPrompt: '', budget: '', phases: [{ kind: 'diverge', label: 'Diverge', count: 2 }] };
+    await runMethod(M, deps({ transport: t, atlasQuery, readFiles, groundInRepo: true }));
+    expect(divergerSawSource).toBe(true);   // a foundry-style method with no ingest now sees the source
+  });
+
   it('respects the trusted-call budget: an exhausted Claude budget downgrades the consolidate step', async () => {
     // pre-exhaust Claude so the consolidator (Claude) is skipped, not errored
     const { makeBudget } = await import('../electron/council/roles');

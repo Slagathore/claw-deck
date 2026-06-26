@@ -51,6 +51,8 @@ export interface RunDeps {
   resumeFrom?: ResumeState;                 // continue a prior run from this checkpoint
   onCheckpoint?: (cp: ResumeState) => void; // called after each phase completes (persist to resume later)
   forceBlind?: boolean;                     // make EVERY gate blind (judge never sees the consensus)
+  atlasQuery?: (q: string) => Promise<string | null>;          // 'ingest' phase: Atlas code-brain lookup
+  readFiles?: (paths: string[]) => Promise<Record<string, string>>; // 'ingest' phase: read the surfaced files
 }
 
 const SYS = {
@@ -92,6 +94,7 @@ export async function runProtocol(protocol: Protocol, deps: RunDeps): Promise<Ru
   const phasesRun: string[] = [];
   const minAdvisors = deps.minAdvisors ?? 1;
   let artifact = deps.resumeFrom?.artifact ?? '';
+  let repoMap = '';   // populated by an 'ingest' phase; threaded into deliberation prompts
   let approved = deps.resumeFrom?.approved ?? false;
   const startIndex = deps.resumeFrom?.phaseIndex ?? 0;
 
@@ -107,9 +110,26 @@ export async function runProtocol(protocol: Protocol, deps: RunDeps): Promise<Ru
     phasesRun.push(label);
     emit({ type: 'phase', phase: label, kind: phase.kind });
 
-    if (phase.kind === 'independent') {
+    if (phase.kind === 'ingest') {
+      // Ground the panel in the real code: Atlas symbols for the task + source of the top
+      // files it surfaces. Deterministic (no model call); threaded into deliberation prompts.
+      const parts: string[] = [];
+      let atlas: string | null = null;
+      if (deps.atlasQuery) { try { atlas = await deps.atlasQuery(deps.task); } catch { /* none */ } }
+      if (atlas) {
+        parts.push(`## Atlas — relevant symbols\n${atlas}`);
+        if (deps.readFiles) {
+          const files = [...new Set(atlas.split('\n').map((l) => l.split(' — ')[0].replace(/:\d+$/, '').trim()).filter(Boolean))].slice(0, 6);
+          try { const contents = await deps.readFiles(files); const fp = Object.entries(contents).filter(([, c]) => c).map(([f, c]) => `### ${f}\n${c.slice(0, 6000)}`); if (fp.length) parts.push(`## Source of key files\n${fp.join('\n\n')}`); } catch { /* skip */ }
+        }
+      }
+      repoMap = parts.join('\n\n');
+      emit({ type: 'agent', phase: label, kind: 'ingest', content: repoMap ? `Grounded the panel in ${(atlas ?? '').split('\n').filter(Boolean).length} symbol(s) + the source of the key files.` : 'No Atlas index for this workspace — run Project Brain → Index to ground the panel. Proceeding without it.' });
+    }
+
+    else if (phase.kind === 'independent') {
       const agents = resolveAgents(deps.roster, phase.agents, deps.assignment);
-      const settled = await Promise.allSettled(agents.map((a) => ask(deps, a, SYS.panelist, `Task:\n${deps.task}\n\nCurrent artifact:\n${artifact || '(none yet)'}`, label)));
+      const settled = await Promise.allSettled(agents.map((a) => ask(deps, a, SYS.panelist, `Task:\n${deps.task}${repoMap ? `\n\nRepo context:\n${repoMap}` : ''}\n\nCurrent artifact:\n${artifact || '(none yet)'}`, label)));
       const takes: string[] = [];
       settled.forEach((s, i) => {
         if (s.status === 'fulfilled' && s.value) { takes.push(`### ${agents[i].displayName}\n${s.value}`); record(label, phase.kind, s.value, agents[i].id); }
@@ -125,7 +145,7 @@ export async function runProtocol(protocol: Protocol, deps: RunDeps): Promise<Ru
       for (let r = 0; r < rounds; r++) {
         if (deps.signal?.aborted) break;
         emit({ type: 'debate-round', phase: label, round: r + 1 });
-        const settled = await Promise.allSettled(agents.map((a) => ask(deps, a, SYS.panelist, `Task:\n${deps.task}\n\nDiscussion so far:\n${artifact}\n\nYour refined take:`, label)));
+        const settled = await Promise.allSettled(agents.map((a) => ask(deps, a, SYS.panelist, `Task:\n${deps.task}${repoMap ? `\n\nRepo context:\n${repoMap}` : ''}\n\nDiscussion so far:\n${artifact}\n\nYour refined take:`, label)));
         const takes: string[] = [];
         settled.forEach((s, i) => { if (s.status === 'fulfilled' && s.value) { takes.push(`### ${agents[i].displayName}\n${s.value}`); record(label, phase.kind, s.value, agents[i].id); } });
         if (takes.length) artifact = takes.join('\n\n');
@@ -148,7 +168,7 @@ export async function runProtocol(protocol: Protocol, deps: RunDeps): Promise<Ru
         if (deps.signal?.aborted) break;
         const agent = agents[t % agents.length];
         const prior = issues.length ? `Issues already raised (do NOT repeat these):\n${issues.join('\n')}` : '(no issues raised yet)';
-        const reply = await ask(deps, agent, SYS.adversary, `Task:\n${deps.task}\n\nCurrent proposal:\n${artifact}\n\n${prior}\n\nFind a NEW concrete problem, or reply NO_FURTHER_ISSUES.`, label);
+        const reply = await ask(deps, agent, SYS.adversary, `Task:\n${deps.task}${repoMap ? `\n\nRepo context:\n${repoMap}` : ''}\n\nCurrent proposal:\n${artifact}\n\n${prior}\n\nFind a NEW concrete problem, or reply NO_FURTHER_ISSUES.`, label);
         if (!reply) continue;
         record(label, phase.kind, reply, agent.id);
         if (/NO_FURTHER_ISSUES/i.test(reply)) { if (++clears >= 1) { emit({ type: 'converged', phase: label, round: t + 1 }); break; } continue; }
@@ -165,7 +185,7 @@ export async function runProtocol(protocol: Protocol, deps: RunDeps): Promise<Ru
       for (let r = 0; r < rounds; r++) {
         if (deps.signal?.aborted) break;
         emit({ type: 'debate-round', phase: label, round: r + 1 });
-        const settled = await Promise.allSettled(agents.map((a) => ask(deps, a, SYS.steelman, `Task:\n${deps.task}\n\nCurrent proposal:\n${artifact}\n\nStrengthen it, then note what remains.`, label)));
+        const settled = await Promise.allSettled(agents.map((a) => ask(deps, a, SYS.steelman, `Task:\n${deps.task}${repoMap ? `\n\nRepo context:\n${repoMap}` : ''}\n\nCurrent proposal:\n${artifact}\n\nStrengthen it, then note what remains.`, label)));
         const takes: string[] = [];
         settled.forEach((s, i) => { if (s.status === 'fulfilled' && s.value) { takes.push(`### ${agents[i].displayName}\n${s.value}`); record(label, phase.kind, s.value, agents[i].id); } });
         if (takes.length < agents.length) emit({ type: 'warn', phase: label, content: `${agents.length - takes.length} advisor(s) dropped this round; quorum ${takes.length}/${agents.length}`, ok: takes.length > 0 });
@@ -176,7 +196,7 @@ export async function runProtocol(protocol: Protocol, deps: RunDeps): Promise<Ru
     else if (phase.kind === 'select') {
       const judge = resolveAgents(deps.roster, [phase.by ?? '@judge'], deps.assignment)[0];
       if (judge) {
-        const out = await ask(deps, judge, SYS.select, `Task:\n${deps.task}\n\nCandidate proposals:\n${artifact}\n\nPick the single strongest and restate it in full.`, label);
+        const out = await ask(deps, judge, SYS.select, `Task:\n${deps.task}${repoMap ? `\n\nRepo context:\n${repoMap}` : ''}\n\nCandidate proposals:\n${artifact}\n\nPick the single strongest and restate it in full.`, label);
         if (out) { artifact = out; record(label, phase.kind, out, judge.id); }
       }
     }
@@ -237,7 +257,7 @@ export async function runProtocol(protocol: Protocol, deps: RunDeps): Promise<Ru
     else if (phase.kind === 'relay') {
       const pair = resolveAgents(deps.roster, phase.agents, deps.assignment);
       const turns = phase.maxTurns ?? 4;
-      let msg = `Task:\n${deps.task}\n\nStarting point:\n${artifact || '(none)'}`;
+      let msg = `Task:\n${deps.task}${repoMap ? `\n\nRepo context:\n${repoMap}` : ''}\n\nStarting point:\n${artifact || '(none)'}`;
       for (let t = 0; t < turns && pair.length >= 1; t++) {
         if (deps.signal?.aborted) break;
         const speaker = pair[t % pair.length];
@@ -267,7 +287,7 @@ export async function runProtocol(protocol: Protocol, deps: RunDeps): Promise<Ru
         // diff-apply only when the actor can't edit (or there's no delegate hook).
         const useDelegate = phase.kind === 'execute' && actor && deps.executor.delegate && actor.capabilities?.canEdit;
         const p = useDelegate
-          ? await deps.executor.delegate!(actor!, `Task:\n${deps.task}\n\nCouncil proposal:\n${artifact}\n\nImplement this in the working tree. Create/overwrite whatever files are needed. Keep changes focused. When done, summarize what changed.`)
+          ? await deps.executor.delegate!(actor!, `Task:\n${deps.task}${repoMap ? `\n\nRepo context:\n${repoMap}` : ''}\n\nCouncil proposal:\n${artifact}\n\nImplement this in the working tree. Create/overwrite whatever files are needed. Keep changes focused. When done, summarize what changed.`)
           : await deps.executor.propose(artifact, diff);
         emit({ type: 'propose', phase: label, ok: p.ok, agentId: actor?.id });
         if (!p.ok) {

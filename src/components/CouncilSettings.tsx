@@ -90,6 +90,7 @@ export default function CouncilSettings({ workspace }: { workspace: string }) {
   const [hotTemp, setHotTemp] = useState(1.15);
   const [prologue, setPrologue] = useState(false);
   const [forceBlind, setForceBlind] = useState(false);
+  const [groundInRepo, setGroundInRepo] = useState(false);
   const [personaDefs, setPersonaDefs] = useState<{ id: string; name: string; prompt: string }[]>([]);
   const [personas, setPersonas] = useState<Record<string, string>>({});
   const [showPersonas, setShowPersonas] = useState(false);
@@ -117,7 +118,7 @@ export default function CouncilSettings({ workspace }: { workspace: string }) {
     const ready = await preflight();
     if (!ready) return;
     setErr(''); setBusy('Starting…');
-    const r = await window.api.council.start({ repo: dryRun ? undefined : workspace, protocolId: cfg.protocolId, assignment: cfg.assignment, task: cfg.task, context, hot: hotConfig, prologue, personas, forceBlind });
+    const r = await window.api.council.start({ repo: dryRun ? undefined : workspace, protocolId: cfg.protocolId, assignment: cfg.assignment, task: cfg.task, context, hot: hotConfig, prologue, personas, forceBlind, groundInRepo });
     setBusy('');
     if (!r.ok || !r.runId) { setErr(r.error ?? 'failed to start'); return; }
     startRun(workspace, r.runId);
@@ -148,7 +149,7 @@ export default function CouncilSettings({ workspace }: { workspace: string }) {
 
   async function startLoop() {
     setErr(''); setBusy('Starting loop…');
-    const r = await window.api.council.startLoop({ repo: workspace, protocolId: cfg.protocolId, assignment: cfg.assignment, goal: loopGoal, maxIterations: loopMax, context, hot: hotConfig, personas, forceBlind, methodId: loopMethod || undefined });
+    const r = await window.api.council.startLoop({ repo: workspace, protocolId: cfg.protocolId, assignment: cfg.assignment, goal: loopGoal, maxIterations: loopMax, context, hot: hotConfig, personas, forceBlind, groundInRepo, methodId: loopMethod || undefined });
     setBusy('');
     if (!r.ok || !r.runId) { setErr(r.error ?? 'failed to start loop'); return; }
     startRun(workspace, r.runId);
@@ -249,6 +250,9 @@ export default function CouncilSettings({ workspace }: { workspace: string }) {
         </label>
         <label className="label" title="Force EVERY judge gate to be blind — the judge sees only the task + the patch, never the panel's discussion or consensus, and is asked 'what is still wrong?'. Gauntlet/Red-team/Steelman/Devil/Crucible are already blind; this adds it to Council/PCRSR/GCRJ/etc.">
           <input type="checkbox" checked={forceBlind} disabled={locked} onChange={e => setForceBlind(e.target.checked)} /> 🙈 Blind judge
+        </label>
+        <label className="label" title="Add an ingest phase first: query the Atlas (code-brain) for symbols relevant to the task + read the top files, and feed that to the panel so it reasons about the REAL code, not just your description. Needs the workspace indexed (Project Brain → Index).">
+          <input type="checkbox" checked={groundInRepo} disabled={locked} onChange={e => setGroundInRepo(e.target.checked)} /> 🔎 Ground in repo
         </label>
         <button onClick={preflight} disabled={!!busy}>Check agents</button>
         <button onClick={start} disabled={!!busy || locked || !cfg.task.trim() || !cfg.assignment.panelists.length}>▶ Start session</button>

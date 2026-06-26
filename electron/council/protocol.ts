@@ -1,7 +1,7 @@
 // Protocols & phase primitives (BOOTSTRAP §4.3). Pure data + parsing helpers.
 import { GateVerdict } from './agents';
 
-export type PhaseKind = 'independent' | 'debate' | 'gauntlet' | 'steelman' | 'select' | 'synthesize' | 'gate' | 'relay' | 'vote' | 'propose' | 'execute';
+export type PhaseKind = 'ingest' | 'independent' | 'debate' | 'gauntlet' | 'steelman' | 'select' | 'synthesize' | 'gate' | 'relay' | 'vote' | 'propose' | 'execute';
 
 export interface Phase {
   kind: PhaseKind;

@@ -151,16 +151,17 @@ function FusionMethods({ repo }: { repo: string }) {
   const [focus, setFocus] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [groundInRepo, setGroundInRepo] = useState(false);
   const [showElig, setShowElig] = useState(false);
   const [elig, setElig] = useState<{ id: string; displayName: string; key: string; eligible: string[]; notEligible: string[]; maxCalls?: number; optional: boolean }[]>([]);
   useEffect(() => { window.api.council.methods().then((r) => { if (r.ok) setMethods(r.methods); }); }, []);
   useEffect(() => { if (showElig && !elig.length) window.api.council.roleEligibility().then((r) => { if (r.ok) setElig(r.rows); }); }, [showElig, elig.length]);
   const sel = methods.find((m) => m.id === methodId);
-  const needsFocus = methodId === 'assay' || methodId === 'prospect';
+  const needsFocus = methodId === 'assay' || methodId === 'prospect';   // these already ingest the repo
   async function run() {
     if (!task.trim()) { setErr('describe the task first'); return; }
     setBusy(true); setErr('');
-    const r = await window.api.council.runMethod({ repo, methodId, task, focus: focus.trim() || undefined });
+    const r = await window.api.council.runMethod({ repo, methodId, task, focus: focus.trim() || undefined, groundInRepo });
     setBusy(false);
     if (r.ok && r.runId) startRun(repo, r.runId); else setErr(r.error ?? 'failed to start');
   }
@@ -172,6 +173,11 @@ function FusionMethods({ repo }: { repo: string }) {
       </select>
       {sel && <div className="label" style={{ ...WRAP }}>{sel.use}</div>}
       <textarea placeholder={needsFocus ? 'What to audit / brainstorm about this repo…' : 'Describe the task / problem…'} value={task} onChange={(e) => setTask(e.target.value)} rows={3} style={{ fontSize: 12 }} />
+      {needsFocus
+        ? <div className="label">✓ ingests the repo automatically (Atlas + reads the key files)</div>
+        : <label className="label" title="Prepend an ingest phase: query the Atlas + read the top files so the panel frames/diverges from the REAL code, not just your description. Needs the workspace indexed (Project Brain → Index).">
+            <input type="checkbox" checked={groundInRepo} disabled={busy} onChange={(e) => setGroundInRepo(e.target.checked)} /> 🔎 Ground in repo first
+          </label>}
       {needsFocus && <input placeholder='optional focus: e.g. "auth flow, version detection"' value={focus} onChange={(e) => setFocus(e.target.value)} style={{ fontSize: 12 }} />}
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
         <span className="label" title="shown to you when the run finishes">Ends: {sel?.endPrompt}</span>
