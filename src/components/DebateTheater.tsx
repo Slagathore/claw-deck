@@ -80,7 +80,7 @@ export default function DebateTheater({ events, live, running, nameOf = (id) => 
   };
 
   return (
-    <div ref={containerRef} className="card col" style={{ gap: 6, overflowY: 'auto', overflowX: 'hidden', minHeight: 0, position: 'relative' }}>
+    <div ref={containerRef} className="card col" style={{ gap: 6, overflowY: 'auto', overflowX: 'hidden', flex: 1, minHeight: 0, position: 'relative' }}>
       {findOpen && (
         <div className="row" style={{ position: 'sticky', top: 0, zIndex: 3, background: 'var(--panel, #1b1d24)', padding: 4, gap: 6, borderBottom: '1px solid var(--border)', alignItems: 'center' }}>
           <input ref={inputRef} placeholder="Find in transcript…" value={query} onChange={(e) => setQuery(e.target.value)}

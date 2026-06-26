@@ -11,6 +11,8 @@ export default function CouncilTab() {
   const { runByWs, events, live, questions, running, startRun, appendEvent, clearQuestions, markRunning, newSession, finishRun } = useCouncil();
   const [roster, setRoster] = useState<{ id: string; displayName: string }[]>([]);
   const [expanded, setExpanded] = useState(false);
+  const [theaterTab, setTheaterTab] = useState<'theater' | 'result' | 'ask' | 'pr' | 'replay'>('theater');
+  const [isMethodRun, setIsMethodRun] = useState(false);
 
   // single subscription to the council event stream
   useEffect(() => {
@@ -26,6 +28,14 @@ export default function CouncilTab() {
   const nameOf = (id?: string) => roster.find((a) => a.id === id)?.displayName ?? id ?? '';
 
   const runId = active ? runByWs[active] : undefined;
+  // reset to the live theater on a new run, and learn whether it's a method (→ Result tab)
+  useEffect(() => { setTheaterTab('theater'); setIsMethodRun(false); if (runId) window.api.council.methodResult(runId).then((r) => setIsMethodRun(!!r.isMethod)); }, [runId]);
+
+  const terminated = !!runId && !running[runId] && isTerminated(events[runId]);
+  const tabs: { id: 'theater' | 'result' | 'ask' | 'pr' | 'replay'; label: string }[] = [{ id: 'theater', label: '🎭 Theater' }];
+  if (terminated && isMethodRun) tabs.push({ id: 'result', label: '⚗ Result' });
+  if (terminated) tabs.push({ id: 'ask', label: '💬 Ask' }, { id: 'pr', label: '📝 PR' }, { id: 'replay', label: '⏮ Replay' });
+  const activeTab = tabs.some((t) => t.id === theaterTab) ? theaterTab : 'theater';
 
   return (
     <div className="col" style={{ height: '100%' }}>
@@ -47,7 +57,13 @@ export default function CouncilTab() {
             </div>
           )}
           <div className="col" style={{ flex: 1, minHeight: 0 }}>
-            <div className="row" style={{ justifyContent: 'flex-end', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <div className="row" style={{ gap: 4, flexWrap: 'wrap', flex: 1 }}>
+                {tabs.map((t) => (
+                  <button key={t.id} onClick={() => setTheaterTab(t.id)}
+                    style={{ fontWeight: activeTab === t.id ? 700 : 400, borderColor: activeTab === t.id ? 'var(--accent)' : undefined, color: activeTab === t.id ? 'var(--accent)' : undefined }}>{t.label}</button>
+                ))}
+              </div>
               {runId && running[runId] && <span style={{ color: 'var(--muted)', fontSize: 12 }}><Spinner /> running…</span>}
               {runId && running[runId] && <button onClick={() => window.api.council.cancel(runId)} style={{ borderColor: 'var(--bad)', color: 'var(--bad)' }}>Cancel</button>}
               <button onClick={() => newSession(active)} title="Clear this view and configure a fresh session (past runs stay in Session history)">＋ New session</button>
@@ -55,9 +71,9 @@ export default function CouncilTab() {
             </div>
             {runId && (questions[runId]?.length ?? 0) > 0 && <ProloguePanel key={runId} runId={runId} questions={questions[runId]} onSubmitted={() => { clearQuestions(runId); markRunning(runId); }} />}
             {runId && !running[runId] && lastFinishedStatus(events[runId]) === 'bounced' && <BounceRecovery runId={runId} onSent={() => markRunning(runId)} />}
-            {runId && !running[runId] && isTerminated(events[runId]) && <MethodResultPanel runId={runId} repo={active} />}
-            {runId && !running[runId] && isTerminated(events[runId]) && <PostRunPanel runId={runId} roster={roster} />}
-            <DebateTheater events={runId ? (events[runId] ?? []) : []} live={runId ? live[runId] : undefined} running={runId ? running[runId] : false} nameOf={nameOf} />
+            {activeTab === 'theater' && <DebateTheater events={runId ? (events[runId] ?? []) : []} live={runId ? live[runId] : undefined} running={runId ? running[runId] : false} nameOf={nameOf} />}
+            {activeTab === 'result' && runId && <MethodResultPanel runId={runId} repo={active} />}
+            {(activeTab === 'ask' || activeTab === 'pr' || activeTab === 'replay') && runId && <PostRunView runId={runId} roster={roster} view={activeTab} />}
           </div>
         </div>
       )}
@@ -197,7 +213,7 @@ function MethodResultPanel({ runId, repo }: { runId: string; repo: string }) {
     if (r.ok && r.runId) startRun(repo, r.runId);
   }
   return (
-    <div className="card col" style={{ gap: 6 }}>
+    <div className="card col" style={{ gap: 6, flex: 1, minHeight: 0 }}>
       <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'wrap' }}><strong>⚗ Method result — {data.methodId}</strong>{res.scores?.length ? <span className="label">{res.scores.map((s) => s.verdict).join(' · ')}{res.confidence ? ` · ${res.confidence} confidence` : ''}</span> : null}</div>
       {!!res.humanDecision?.length && (
         <div className="banner warn" style={{ ...WRAP }}>
@@ -205,7 +221,7 @@ function MethodResultPanel({ runId, repo }: { runId: string; repo: string }) {
           <pre style={{ margin: '4px 0 0', fontSize: 11, ...WRAP }}>{res.humanDecision.join('\n')}</pre>
         </div>
       )}
-      {res.report && <pre style={{ margin: 0, fontSize: 12, maxHeight: 360, overflow: 'auto', ...WRAP }}>{res.report}</pre>}
+      {res.report && <pre style={{ margin: 0, fontSize: 12, flex: 1, minHeight: 0, overflow: 'auto', ...WRAP }}>{res.report}</pre>}
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
         <span className="label">{res.endPrompt}</span>
         <div className="row" style={{ gap: 6 }}>
@@ -217,10 +233,10 @@ function MethodResultPanel({ runId, repo }: { runId: string; repo: string }) {
   );
 }
 
-/** Post-run tools: ask an agent a follow-up, generate a PR description, or replay
- *  the proposal's evolution across phases. */
-function PostRunPanel({ runId, roster }: { runId: string; roster: { id: string; displayName: string }[] }) {
-  const [tab, setTab] = useState<'ask' | 'pr' | 'replay' | null>(null);
+/** Post-run views (full-height, tab-driven): ask an agent/room, generate a PR
+ *  description, or replay the proposal's evolution. The `view` prop comes from the
+ *  theater tab bar so each is read full-width instead of squeezed beside the theater. */
+function PostRunView({ runId, roster, view }: { runId: string; roster: { id: string; displayName: string }[]; view: 'ask' | 'pr' | 'replay' }) {
   const [agentId, setAgentId] = useState(roster[0]?.id ?? '');
   const [target, setTarget] = useState<'agent' | 'room'>('agent');
   const [q, setQ] = useState('');
@@ -228,10 +244,16 @@ function PostRunPanel({ runId, roster }: { runId: string; roster: { id: string; 
   const [pr, setPr] = useState('');
   const [snaps, setSnaps] = useState<{ phaseIndex: number; label: string; artifact: string }[]>([]);
   const [snapIdx, setSnapIdx] = useState(0);
+  const [loaded, setLoaded] = useState({ pr: false, replay: false });
   const [busy, setBusy] = useState('');
 
   const nameOf = (id: string) => roster.find((a) => a.id === id)?.displayName ?? id;
   useEffect(() => { if (!agentId && roster[0]) setAgentId(roster[0].id); }, [roster, agentId]);
+  const genPr = React.useCallback(async () => { setBusy('pr'); setLoaded((l) => ({ ...l, pr: true })); const r = await window.api.council.prDescription(runId); setBusy(''); setPr(r.ok ? (r.markdown ?? '') : `error: ${r.error}`); }, [runId]);
+  const loadReplay = React.useCallback(async () => { setBusy('replay'); setLoaded((l) => ({ ...l, replay: true })); const r = await window.api.council.snapshots(runId); setBusy(''); setSnaps(r.snapshots ?? []); setSnapIdx(Math.max(0, (r.snapshots?.length ?? 1) - 1)); }, [runId]);
+  // lazy-load the active view's data the first time it's opened
+  useEffect(() => { if (view === 'pr' && !loaded.pr) genPr(); if (view === 'replay' && !loaded.replay) loadReplay(); }, [view, loaded.pr, loaded.replay, genPr, loadReplay]);
+
   async function ask() {
     if (!q.trim()) return;
     setBusy('ask');
@@ -246,62 +268,46 @@ function PostRunPanel({ runId, roster }: { runId: string; roster: { id: string; 
     setQ('');
     setBusy('');
   }
-  async function genPr() { setBusy('pr'); setPr(''); const r = await window.api.council.prDescription(runId); setBusy(''); setPr(r.ok ? (r.markdown ?? '') : `error: ${r.error}`); }
-  async function loadReplay() { setBusy('replay'); const r = await window.api.council.snapshots(runId); setBusy(''); setSnaps(r.snapshots ?? []); setSnapIdx(Math.max(0, (r.snapshots?.length ?? 1) - 1)); setTab('replay'); }
 
   return (
-    <div className="card col" style={{ gap: 8 }}>
-      <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-        <strong>Post-run</strong>
-        <button onClick={() => setTab(tab === 'ask' ? null : 'ask')}>💬 Ask</button>
-        <button onClick={() => { setTab('pr'); if (!pr && busy !== 'pr') genPr(); }}>📝 PR description</button>
-        <button onClick={loadReplay}>⏮ Replay timeline</button>
-      </div>
-
-      {tab === 'ask' && (
-        <div className="col" style={{ gap: 6 }}>
-          <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
-            <select value={target} onChange={(e) => setTarget(e.target.value as any)}>
-              <option value="agent">one agent</option>
-              <option value="room">the whole room</option>
-            </select>
-            {target === 'agent' && <select value={agentId} onChange={(e) => setAgentId(e.target.value)}>{roster.map((a) => <option key={a.id} value={a.id}>{a.displayName}</option>)}</select>}
-            <input style={{ flex: 1, minWidth: 160 }} placeholder={target === 'room' ? 'Ask everyone who spoke…' : 'Ask this agent about its statement…'} value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && ask()} />
-            <button onClick={ask} disabled={busy === 'ask'}>{busy === 'ask' ? '…' : 'Ask'}</button>
-          </div>
-          {thread.length > 0 && (
-            <div className="col" style={{ gap: 8, maxHeight: 380, overflow: 'auto' }}>
-              {thread.map((t, i) => (
-                <div key={i} className="col" style={{ gap: 4, borderTop: '1px solid var(--border)', paddingTop: 6 }}>
-                  <div style={{ fontSize: 12 }}><span style={{ color: 'var(--accent)' }}>You → {t.who}:</span> {t.q}</div>
-                  {t.entries.map((e, j) => (
-                    <div key={j} className="col" style={{ gap: 2 }}>
-                      {t.entries.length > 1 && <div className="label" style={{ color: 'var(--muted)' }}>{e.name}</div>}
-                      <pre style={{ margin: 0, fontSize: 12, ...WRAP }}>{e.answer}</pre>
-                    </div>
-                  ))}
+    <div className="card col" style={{ gap: 8, flex: 1, minHeight: 0 }}>
+      {view === 'ask' && (<>
+        <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+          <select value={target} onChange={(e) => setTarget(e.target.value as any)}>
+            <option value="agent">one agent</option>
+            <option value="room">the whole room</option>
+          </select>
+          {target === 'agent' && <select value={agentId} onChange={(e) => setAgentId(e.target.value)}>{roster.map((a) => <option key={a.id} value={a.id}>{a.displayName}</option>)}</select>}
+          <input style={{ flex: 1, minWidth: 160 }} placeholder={target === 'room' ? 'Ask everyone who spoke…' : 'Ask this agent about its statement…'} value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && ask()} />
+          <button onClick={ask} disabled={busy === 'ask'}>{busy === 'ask' ? '…' : 'Ask'}</button>
+        </div>
+        <div className="col" style={{ gap: 8, flex: 1, minHeight: 0, overflow: 'auto' }}>
+          {thread.length === 0 && <div className="label">Ask an agent — or the whole room — about anything from this session.</div>}
+          {thread.map((t, i) => (
+            <div key={i} className="col" style={{ gap: 4, borderTop: '1px solid var(--border)', paddingTop: 6 }}>
+              <div style={{ fontSize: 12 }}><span style={{ color: 'var(--accent)' }}>You → {t.who}:</span> {t.q}</div>
+              {t.entries.map((e, j) => (
+                <div key={j} className="col" style={{ gap: 2 }}>
+                  {t.entries.length > 1 && <div className="label" style={{ color: 'var(--muted)' }}>{e.name}</div>}
+                  <pre style={{ margin: 0, fontSize: 12, ...WRAP }}>{e.answer}</pre>
                 </div>
               ))}
             </div>
-          )}
+          ))}
         </div>
-      )}
+      </>)}
 
-      {tab === 'pr' && (
-        <div className="col" style={{ gap: 4 }}>
-          <div className="row" style={{ gap: 6 }}><button onClick={genPr} disabled={busy === 'pr'}>{busy === 'pr' ? 'Generating…' : 'Regenerate'}</button>{pr && <button onClick={() => navigator.clipboard.writeText(pr)}>Copy</button>}</div>
-          {pr && <pre style={{ margin: 0, fontSize: 12, maxHeight: 360, overflow: 'auto', ...WRAP }}>{pr}</pre>}
-        </div>
-      )}
+      {view === 'pr' && (<>
+        <div className="row" style={{ gap: 6 }}><button onClick={genPr} disabled={busy === 'pr'}>{busy === 'pr' ? 'Generating…' : 'Regenerate'}</button>{pr && <button onClick={() => navigator.clipboard.writeText(pr)}>Copy</button>}</div>
+        <pre style={{ margin: 0, fontSize: 12, flex: 1, minHeight: 0, overflow: 'auto', ...WRAP }}>{busy === 'pr' ? 'Generating PR description…' : pr || '(no PR description)'}</pre>
+      </>)}
 
-      {tab === 'replay' && (snaps.length > 0 ? (
-        <div className="col" style={{ gap: 6 }}>
-          <input type="range" min={0} max={snaps.length - 1} value={snapIdx} onChange={(e) => setSnapIdx(Number(e.target.value))} />
-          <div className="row" style={{ flexWrap: 'wrap', gap: 4 }}>{snaps.map((s, i) => <button key={i} onClick={() => setSnapIdx(i)} style={{ opacity: i === snapIdx ? 1 : 0.5, fontSize: 11 }}>{s.label}</button>)}</div>
-          <div className="label">After <strong>{snaps[snapIdx]?.label}</strong>:</div>
-          <pre style={{ margin: 0, fontSize: 12, maxHeight: 320, overflow: 'auto', ...WRAP }}>{snaps[snapIdx]?.artifact}</pre>
-        </div>
-      ) : <div className="label">No phase snapshots for this run.</div>)}
+      {view === 'replay' && (snaps.length > 0 ? (<>
+        <input type="range" min={0} max={snaps.length - 1} value={snapIdx} onChange={(e) => setSnapIdx(Number(e.target.value))} />
+        <div className="row" style={{ flexWrap: 'wrap', gap: 4 }}>{snaps.map((s, i) => <button key={i} onClick={() => setSnapIdx(i)} style={{ opacity: i === snapIdx ? 1 : 0.5, fontSize: 11 }}>{s.label}</button>)}</div>
+        <div className="label">After <strong>{snaps[snapIdx]?.label}</strong>:</div>
+        <pre style={{ margin: 0, fontSize: 12, flex: 1, minHeight: 0, overflow: 'auto', ...WRAP }}>{snaps[snapIdx]?.artifact}</pre>
+      </>) : <div className="label">{busy === 'replay' ? 'Loading…' : 'No phase snapshots for this run.'}</div>)}
     </div>
   );
 }
