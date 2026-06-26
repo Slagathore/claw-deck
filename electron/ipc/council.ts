@@ -17,17 +17,23 @@ import { getSetting } from './settings';
 import { appendAudit } from './security';
 import { PROTOCOLS, Protocol } from '../council/protocol';
 import { runProtocol, ExecutorHooks, CouncilEvent, ResumeState, RunResult } from '../council/run';
-import { METHODS, runMethod, printMethodCard } from '../council/methods';
+import { METHODS, runMethod, printMethodCard, buildForgeCycle, buildCharter } from '../council/methods';
 import { runAutoloop } from '../council/autoloop';
+import * as gdd from '../council/gdd';
 import { makeTransport, TransportConfig } from '../council/transport';
 import { buildToolSet, ToolSet, McpServerSpec, ToolDef } from '../council/mcpClient';
 import { atlasDbPath, openAtlas, asQueryable } from '../atlas/db';
+import { scanWorkspace, writeIndex } from '../atlas/index';
 import { locate } from '../atlas/query';
-import { advisorKey, ADVISOR_ELIGIBILITY, advisorTemp } from '../council/roles';
+import { advisorKey, ADVISOR_ELIGIBILITY, advisorTemp, FusionRole } from '../council/roles';
+import { looksLikeProviderError } from '../council/providerError';
+import { assetGuidance, rankEditors, ProbedCaps } from '../council/capabilities';
+import { probeCapabilities } from '../council/capabilityProbe';
 import { RosterAgent, SessionAssignment, validateAssignment, resolveAgents } from '../council/agents';
 import { createWorktree, captureDiff, writeArtifacts, applyToLiveTree, removeWorktree, Worktree } from '../executor/worktree';
 import { applyDiffToWorktree } from '../executor/applyDiff';
 import { validateWorktree } from '../executor/validate';
+import { parsePorcelain } from '../executor/gitStatus';
 import { git } from '../executor/git';
 import { createSnapshot } from '../selfUpgrade/snapshot';
 import { runCaptured } from './runner';
@@ -100,6 +106,118 @@ function withContext(task: string, context?: string): string {
   return context && context.trim()
     ? `[ENVIRONMENT — authoritative ground truth; do NOT contradict or assume otherwise]\n${context.trim()}\n\n---\n${task}`
     : task;
+}
+
+// ----------------------------- FORGE campaign helpers -----------------------------
+
+const campaignDir = (repo: string) => path.join(repo, '.fusion', 'campaign');
+const gddPath = (repo: string) => path.join(campaignDir(repo), 'GDD.md');
+
+/** Working-tree paths that are dirty right now (untracked + modified). */
+async function dirtyPaths(repo: string): Promise<string[]> {
+  try { return parsePorcelain((await git(repo, ['status', '--porcelain', '--untracked-files=all'])).stdout); }
+  catch { return []; }
+}
+
+/** Commit ONLY what the loop produced this iteration — everything dirty EXCEPT the user's
+ *  pre-existing WIP (`protectedPaths`, captured at loop start). Never `git add -A` (which
+ *  swept unrelated changes into forge commits), never an empty commit. Returns the file list
+ *  + the staged diff so the run can SHOW exactly what it wrote and where. */
+async function forgeCommit(repo: string, message: string, protectedPaths: Set<string>): Promise<{ files: string[]; diff: string; sha: string; committed: boolean }> {
+  const sha0 = async () => { try { return (await git(repo, ['rev-parse', 'HEAD'])).stdout.trim(); } catch { return ''; } };
+  const toStage = (await dirtyPaths(repo)).filter((p) => !protectedPaths.has(p));
+  if (!toStage.length) return { files: [], diff: '', sha: await sha0(), committed: false };
+  try { await git(repo, ['add', '--', ...toStage]); } catch { /* best-effort */ }
+  let diff = ''; try { diff = (await git(repo, ['diff', '--cached'])).stdout; } catch { /* none */ }
+  try { await git(repo, ['commit', '-m', message, '--no-verify']); } catch { /* best-effort */ }
+  return { files: toStage, diff, sha: await sha0(), committed: true };
+}
+
+/** (Re)build the Atlas symbol index for a repo so the design phases (diverge/steelman)
+ *  ground in the accumulating code. Best-effort + synchronous; never throws. */
+function indexRepo(repo: string): { ok: boolean; symbols?: number } {
+  try {
+    const db = asQueryable(openAtlas(repo));
+    const { parse, fileMeta, entryFiles } = scanWorkspace(repo);
+    const counts: any = writeIndex(db, { parse, fileMeta, entryFiles }, Date.now());
+    return { ok: true, symbols: counts?.symbols ?? counts?.symbolCount };
+  } catch { return { ok: false }; }
+}
+
+/** Read a capped concat of the repo's existing top-level + docs/ markdown (excluding the
+ *  GDD itself) so the charter respects docs already present (§ brownfield). */
+function readRepoMarkdown(repo: string): string {
+  const parts: string[] = [];
+  const seen = new Set([gddPath(repo)]);
+  const scan = (dir: string, max: number) => {
+    try {
+      for (const f of fs.readdirSync(dir).filter((n) => /\.md$/i.test(n)).slice(0, max)) {
+        const p = path.join(dir, f);
+        if (seen.has(p)) continue; seen.add(p);
+        try { const c = fs.readFileSync(p, 'utf8'); if (c.trim()) parts.push(`### ${path.relative(repo, p)}\n${c.slice(0, 4000)}`); } catch { /* skip */ }
+      }
+    } catch { /* no dir */ }
+  };
+  scan(repo, 6);
+  scan(path.join(repo, 'docs'), 6);
+  return parts.join('\n\n').slice(0, 12000);
+}
+
+/** Charter task: instruct the panel to author/refine a GDD ending in a strict `## Backlog`. */
+function charterTask(concept: string, design: boolean, existingMd: string, otherMd: string): string {
+  const spec = [
+    'Author a complete Game Design Document (the "bible") for the game described below.',
+    'Be concrete and exhaustive: vision, core loop, design pillars, EVERY system/subsystem, content, controls, UI, and win/lose conditions.',
+    'END the document with a section titled EXACTLY "## Backlog": an ordered checklist of buildable items, one per line, in THIS exact grammar:',
+    '    - [ ] [S-001] Short imperative title | deps: S-000 | rigor: full | slice | accept: criterion a; criterion b',
+    'Backlog rules:',
+    '  • Build items use ids [S-NNN].' + (design ? ' OPEN design questions still to decide use [Q-NNN] with the [?] marker, e.g. "- [?] [Q-001] Combat: real-time or turn-based?".' : ''),
+    '  • The FIRST item MUST be a playable vertical slice, tagged `slice`, `rigor: full`.',
+    '  • `deps:` = ids that must ship first (omit if none). `rigor: light` for trivial items, `full` for core/risky ones.',
+    '  • `accept:` = 1–4 concrete, demonstrable checks separated by semicolons — these become the regression tests.',
+    '  • Order so dependencies precede dependents and the game grows from a playable core outward.',
+    design ? '  • Add a [?] [Q-NNN] question item for EVERY choice not yet settled (engine, art direction, combat model, progression, economy, …).' : '',
+  ].filter(Boolean).join('\n');
+  const material = [
+    existingMd ? `An existing GDD is present — REFINE and EXTEND it; preserve prior decisions and any [x] done items verbatim:\n\n${existingMd.slice(0, 16000)}` : '',
+    otherMd ? `Other reference docs already in the repo (respect them):\n\n${otherMd}` : '',
+  ].filter(Boolean).join('\n\n---\n\n');
+  return `${spec}\n\n=== GAME CONCEPT ===\n${concept}${material ? `\n\n=== EXISTING MATERIAL ===\n${material}` : ''}`;
+}
+
+/** One build iteration's task: implement just this batch, follow the bible, don't regress. */
+function buildIterationTask(batch: gdd.GddItem[], gddMd: string, doneAccept: string): string {
+  const items = batch.map((i) => `- [${i.id}] ${i.title}\n  Acceptance: ${i.accept || '(use your judgment, consistent with the GDD)'}`).join('\n');
+  return [
+    'You are building ONE increment of a game assembled across many iterations.',
+    'Implement ONLY the backlog items listed below — do not start other items. Produce real, complete, runnable code (the build step writes it to the working tree).',
+    'Follow the Game Design Document (the bible) below as the source of truth. You may PROPOSE new/split items by emitting lines beginning "GDD-AMENDMENT:" followed by a backlog line in the GDD grammar — do NOT renumber or rewrite existing items.',
+    'GOLDEN GATE: an automated compile + test gate runs over the WHOLE project after you build. Add or extend an automated test that asserts each item\'s acceptance criteria (in the project\'s test runner — npm test / pytest / cargo test / go test; for vanilla web, ensure every script parses and wire a smoke test if one exists). Keep ALL existing tests green — if your change would break a prior test, fix it.',
+    assetGuidance(),
+    doneAccept ? `Do NOT regress already-shipped behavior. These criteria must STILL hold after your change:\n${doneAccept}` : '',
+    '',
+    '=== ITEMS TO BUILD THIS ITERATION ===',
+    items,
+    '',
+    '=== GAME DESIGN DOCUMENT (the bible) ===',
+    gddMd.slice(0, 18000),
+  ].filter(Boolean).join('\n');
+}
+
+/** One design iteration's task: resolve these questions into decisions + implied items. */
+function designIterationTask(batch: gdd.GddItem[], gddMd: string): string {
+  const qs = batch.map((i) => `- [${i.id}] ${i.title}`).join('\n');
+  return [
+    'You are resolving open DESIGN QUESTIONS for a game and recording decisions in its design document (NO code).',
+    'For EACH question below: decide it, justify briefly, and state the choice. Then emit the concrete build items the decision implies as lines beginning "GDD-AMENDMENT:" in the backlog grammar (e.g. "GDD-AMENDMENT: - [ ] [S-020] … | rigor: full | accept: …").',
+    'Output a "## Design decisions" section with one subsection per question (decision + rationale), then the GDD-AMENDMENT lines.',
+    '',
+    '=== QUESTIONS TO RESOLVE ===',
+    qs,
+    '',
+    '=== GAME DESIGN DOCUMENT (the bible) ===',
+    gddMd.slice(0, 18000),
+  ].join('\n');
 }
 
 // Prologue: a run that is paused after generating clarifying questions, waiting
@@ -466,6 +584,12 @@ function makeExecutorHooks(repo: string, runId: string, abortSignal?: AbortSigna
       const c = await ensureWorktree();
       if (!c.ok || !c.wt) return { ok: false, error: c.error };
       const r = await runEditingDelegate(agent, prompt, c.wt, cfg);
+      // Quarantine a provider error: a usage-limit/auth reply must NEVER pass as a build.
+      if (looksLikeProviderError(r.output ?? '') || looksLikeProviderError(r.error ?? '')) {
+        persist('delegate-failed', { error: 'provider error (usage limit / auth)' });
+        appendAudit('council:delegateProviderError', { runId, agentId: agent.id });
+        return { ok: false, error: `provider error from ${agent.displayName} (usage limit / auth) — not a build` };
+      }
       if (!r.ok) {
         persist('delegate-failed', { error: r.error ?? 'delegate failed' });
         appendAudit('council:delegateFailed', { runId, agentId: agent.id, error: (r.error ?? '').slice(0, 300) });
@@ -485,10 +609,10 @@ function makeExecutorHooks(repo: string, runId: string, abortSignal?: AbortSigna
       return { ok: true, diff: lastDiff };
     },
     validate: async () => {
-      if (!wt) return { ok: false };
+      if (!wt) return { ok: false, reason: 'no worktree' };
       const result = await validateWorktree(wt);
-      persist(result.ok ? 'validated' : 'invalid', { validationOk: result.ok ? 1 : 0 });
-      return { ok: result.ok };
+      persist(result.ok ? 'validated' : 'invalid', { validationOk: result.ok ? 1 : 0, error: result.ok ? null : `${result.reason ?? 'validation failed'}: ${(result.output ?? '').slice(0, 400)}` });
+      return { ok: result.ok, reason: result.reason, output: result.output };
     },
     approve: async () => {
       if (!wt) return { ok: false, error: 'no worktree' };
@@ -531,6 +655,58 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
     if (buf.length < 5000) buf.push({ ...ev });
     if (ev.type === 'finished' || ev.type === 'error' || ev.type === 'loop:done') persistEvents(runId);
   };
+
+  // ── live-bible coordination (FORGE) ──
+  // A campaign's workers re-read the GDD at every rotation. If the user has the Bible
+  // tab open and is editing, we "force-save then pull": before a worker reads the GDD
+  // we ask the live editor to flush its in-progress buffer and wait for its ack (or a
+  // short timeout) so the worker gets the freshest version. No live editor → read disk.
+  const bibleActive = new Map<string, boolean>();          // runId → Bible tab mounted+editing
+  const pendingFlush = new Map<string, () => void>();      // runId → resolver awaiting a flush ack
+  const requestGddFlush = (runId: string): Promise<void> => new Promise((resolve) => {
+    if (!bibleActive.get(runId)) { resolve(); return; }    // disk is current (editor autosaves + flushes on unmount)
+    const fin = () => { pendingFlush.delete(runId); resolve(); };
+    const timer = setTimeout(fin, 1500);
+    pendingFlush.set(runId, () => { clearTimeout(timer); fin(); });
+    send(runId, { type: 'gdd-flush' });                    // → the editor saves now, then calls campaignFlushAck
+  });
+  ipcMain.handle('council:campaignFlushAck', (_e, opts: { runId: string }) => { pendingFlush.get(opts.runId)?.(); return { ok: true }; });
+  ipcMain.handle('council:campaignBibleActive', (_e, opts: { runId: string; active: boolean }) => {
+    if (opts.active) bibleActive.set(opts.runId, true);
+    else { bibleActive.delete(opts.runId); pendingFlush.get(opts.runId)?.(); }
+    return { ok: true };
+  });
+  ipcMain.handle('council:campaignReadGdd', (_e, opts: { repo: string }) => {
+    try { const content = fs.readFileSync(gddPath(opts.repo), 'utf8'); return { ok: true, content, stats: gdd.backlogStats(gdd.parseBacklog(content)) }; }
+    catch { return { ok: false, content: '', stats: null }; }
+  });
+  ipcMain.handle('council:campaignWriteGdd', (_e, opts: { repo: string; content: string }) => {
+    try { fs.mkdirSync(campaignDir(opts.repo), { recursive: true }); fs.writeFileSync(gddPath(opts.repo), opts.content ?? '', 'utf8'); return { ok: true, stats: gdd.backlogStats(gdd.parseBacklog(opts.content ?? '')) }; }
+    catch (e: any) { return { ok: false, error: String(e?.message ?? e) }; }
+  });
+  // Is this run a FORGE campaign? (drives the Bible tab in the theater.)
+  ipcMain.handle('council:campaignInfo', (_e, opts: { runId: string }) => {
+    const row = getDb().prepare('SELECT protocol, repo, status, result FROM council_runs WHERE run_id=?').get(opts.runId) as { protocol?: string; repo?: string; status?: string; result?: string } | undefined;
+    if (!row) return { ok: false, isCampaign: false };
+    const isCampaign = row.protocol === 'forge' || row.protocol === 'forge-design';
+    let result: any = null; try { result = row.result ? JSON.parse(row.result) : null; } catch { /* none */ }
+    return { ok: true, isCampaign, design: row.protocol === 'forge-design', repo: row.repo ?? null, status: row.status, result };
+  });
+  // Probe the roster's reachable models for asset capabilities (SVG / GDScript / chiptune / SFX),
+  // store the results, and let the director route builds to capable agents. (Standalone parity:
+  // CodeStuff/dependencies/capability-probe.)
+  ipcMain.handle('council:probeCapabilities', async (_e, opts?: { caps?: string[] }) => {
+    const roster = getSetting<RosterAgent[]>('fusionRoster', []);
+    const base = getSetting<string>('ollamaUrl', 'http://localhost:11434');
+    const models = roster.filter((a) => ['ollama-cloud', 'ollama-local', 'openai-compat'].includes(a.transport) && a.model).map((a) => ({ id: a.id, model: a.model! }));
+    if (!models.length) return { ok: false, error: 'no Ollama models in the roster to probe' };
+    try {
+      const probed = await probeCapabilities(models, { base, caps: opts?.caps });
+      getDb().prepare('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run('agentCapabilities', JSON.stringify(probed));
+      appendAudit('council:probeCapabilities', { models: models.length });
+      return { ok: true, probed };
+    } catch (e: any) { return { ok: false, error: String(e?.message ?? e) }; }
+  });
 
   // Shared launcher for a fresh start AND a resume (resumeFrom set). Persists a
   // checkpoint after every phase so an aborted/errored run can be continued.
@@ -708,6 +884,8 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
       } catch { /* run without tools */ }
       const transport = makeTransport(transportConfig(opts.repo, controller.signal, buildAgentOptions(opts.hot, roster), toolset, buildAgentPersonas(opts.personas)));
       try {
+        const protectedPaths = new Set(await dirtyPaths(opts.repo));
+        if (protectedPaths.size) send(runId, { type: 'warn', phase: 'Pre-flight', content: `⚠ ${protectedPaths.size} pre-existing uncommitted file(s) will be left alone — the loop commits only what it writes (no more blanket git add -A).`, ok: true });
         const res = await runAutoloop({
           goal,
           maxIterations: opts.maxIterations ?? 5,
@@ -724,10 +902,10 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
               }
             : (task, iter) => runProtocol(loopProtocol, { roster, assignment: opts.assignment, task, transport, executor: makeExecutorHooks(opts.repo, `${runId}-i${iter}`, controller.signal), signal, forceBlind: opts.forceBlind, atlasQuery: loopCaps.atlasQuery, readFiles: loopCaps.readFiles, emit: (ev) => send(runId, ev) }),
           checkpoint: async (iter) => {
-            await git(opts.repo, ['add', '-A']);
-            await git(opts.repo, ['commit', '-m', `fusion autoloop ${runId} iter ${iter}`, '--allow-empty', '--no-verify']);
-            const t = await git(opts.repo, ['rev-parse', 'HEAD^{tree}']);
-            return { signature: t.stdout.trim() || `iter-${iter}` };
+            const c = await forgeCommit(opts.repo, `fusion autoloop ${runId} iter ${iter}`, protectedPaths);
+            send(runId, { type: 'agent', phase: `iter ${iter}`, kind: 'files', content: c.committed ? `committed ${c.files.length} file(s) → ${c.sha.slice(0, 8)}: ${c.files.slice(0, 12).join(', ')}${c.files.length > 12 ? ` +${c.files.length - 12} more` : ''}` : 'no new files this iteration' });
+            let t = ''; try { t = (await git(opts.repo, ['rev-parse', 'HEAD^{tree}'])).stdout.trim(); } catch { /* none */ }
+            return { signature: t || `iter-${iter}` };
           },
           checkGoal: async (g, _iter, last) => {
             if (!checker) return { met: false, reason: 'no checker agent' };
@@ -941,6 +1119,207 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
         send(runId, { type: 'error', content: String(err?.message ?? err) });
       } finally { signals.delete(runId); toolset?.dispose(); }
     })();
+    return { ok: true, runId };
+  });
+
+  // FORGE campaign (loop-only): author a Game Design Document (the "bible") ONCE, then
+  // loop — select the next dependency-ready batch from the backlog → run the inner crucible
+  // cycle (forge-cycle) → build & validate → flip backlog status deterministically → commit →
+  // repeat until no actionable items remain. Brownfield: an existing GDD.md is loaded &
+  // continued (free resume). design=true writes only the GDD (resolves [?] questions, no code).
+  ipcMain.handle('council:startCampaign', (_e, opts: {
+    repo: string; concept: string; design?: boolean; maxIterations?: number; batchSize?: number;
+    consolidatorId?: string; builderId?: string; lean?: boolean; cycles?: number; context?: string;
+    disableProviders?: string[]; retryLimit?: number;
+  }) => {
+    if (!opts?.repo) return { ok: false, error: 'FORGE needs a workspace (for the GDD + git checkpoints)' };
+    if (!opts?.concept?.trim()) return { ok: false, error: 'describe the game concept first' };
+    const roster = getSetting<RosterAgent[]>('fusionRoster', []);
+    if (!roster.length) return { ok: false, error: 'no agents configured in the roster' };
+    const design = !!opts.design;
+    // Capability-aware default builder: pick the strongest edit-capable asset/code emitter
+    // (refined by any probe results) so a build job is never defaulted to a weak/incapable agent.
+    const probedCaps = getSetting<ProbedCaps | undefined>('agentCapabilities', undefined);
+    const builder = opts.builderId ? roster.find((a) => a.id === opts.builderId) : rankEditors(roster, probedCaps)[0];
+    if (!design && !builder) return { ok: false, error: 'FORGE build needs an edit-capable agent (Claude/Codex/OpenClaw, or a cloud model with "edits" on) — none in the roster' };
+
+    const runId = `forge-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
+    const concept = withContext(opts.concept, opts.context);
+    const controller = new AbortController();
+    const signal = { aborted: false, controller };
+    signals.set(runId, signal);
+    const db = getDb();
+    const protocolId = design ? 'forge-design' : 'forge';
+    db.prepare('INSERT INTO council_runs(run_id, repo, protocol, task, assignment, status, started) VALUES(?,?,?,?,?,?,?)')
+      .run(runId, opts.repo, protocolId, concept, '{}', 'running', Date.now());
+    appendAudit('council:forgeStart', { runId, design, repo: opts.repo, maxIterations: opts.maxIterations ?? 12 });
+    trace('council:forgeStart', { runId, design, repo: opts.repo });
+
+    const batchSize = Math.max(1, Math.min(5, opts.batchSize ?? (design ? 3 : 2)));
+    const maxIterations = Math.max(1, Math.min(50, opts.maxIterations ?? 12));
+    const preferAgents: Partial<Record<FusionRole, string>> = {};
+    if (opts.consolidatorId) preferAgents.consolidator = opts.consolidatorId;
+    if (builder) preferAgents.builder = builder.id;
+    const disableProviders = opts.disableProviders ?? [];   // e.g. ['claude'] when Claude is out of tokens
+    const retryLimit = Math.max(0, Math.min(5, opts.retryLimit ?? 2));
+    const retry = new Map<string, number>();                // per-item retry counter (slice/root recovery)
+
+    const ensureDir = () => { try { fs.mkdirSync(campaignDir(opts.repo), { recursive: true }); } catch { /* best-effort */ } };
+    const readGdd = () => { try { return fs.readFileSync(gddPath(opts.repo), 'utf8'); } catch { return ''; } };
+    const writeGdd = (md: string) => { ensureDir(); try { fs.writeFileSync(gddPath(opts.repo), md, 'utf8'); } catch { /* best-effort */ } };
+    const appendFile = (name: string, text: string) => { ensureDir(); try { fs.appendFileSync(path.join(campaignDir(opts.repo), name), `${text}\n`, 'utf8'); } catch { /* best-effort */ } };
+    // force-save-then-pull: flush any live in-editor edits before a worker reads the bible.
+    const pullGdd = async () => { await requestGddFlush(runId); return readGdd(); };
+
+    void (async () => {
+      let toolset: ToolSet | undefined;
+      try { if (getSetting('panelistTools', true)) { const servers = scopedReadOnlyServers(opts.repo); if (servers.length) { toolset = await buildToolSet(servers, controller.signal); if (toolset.tools.length) send(runId, { type: 'tools', content: toolset.tools.map((t) => t.function.name).join(', ') } as any); } } } catch { /* run without tools */ }
+      const transport = makeTransport(transportConfig(opts.repo, controller.signal, buildAgentOptions(undefined, roster), toolset));
+      const caps = methodCaps(opts.repo, `forge-${runId}`, controller, true);  // atlas + file-read grounding
+
+      try {
+        send(runId, { type: 'phase', phase: design ? 'FORGE-DESIGN — campaign' : 'FORGE — campaign', kind: 'method' });
+
+        // Pre-flight: snapshot the user's existing uncommitted work so the loop NEVER stages or
+        // commits it. Each iteration commits only the files IT produced (no more `git add -A`).
+        const protectedPaths = new Set(await dirtyPaths(opts.repo));
+        if (protectedPaths.size) send(runId, { type: 'warn', phase: 'Pre-flight', content: `⚠ ${protectedPaths.size} pre-existing uncommitted file(s) detected — they will be LEFT ALONE (the loop commits only what it writes): ${[...protectedPaths].slice(0, 8).join(', ')}${protectedPaths.size > 8 ? '…' : ''}`, ok: true });
+
+        // ── Charter (once): load an existing bible, else author one ──
+        let gddMd = readGdd();
+        if (gdd.hasBacklog(gddMd)) {
+          send(runId, { type: 'agent', phase: 'Charter', kind: 'seed', content: `Loaded existing bible (${gdd.parseBacklog(gddMd).length} backlog items) — continuing from where it left off.` });
+        } else {
+          send(runId, { type: 'phase', phase: 'Charter — author the bible', kind: 'frame' });
+          const m = await runMethod(buildCharter(), { task: charterTask(concept, design, gddMd, readRepoMarkdown(opts.repo)), roster, transport, signal, emit: (ev) => send(runId, ev), atlasQuery: caps.atlasQuery, readFiles: caps.readFiles, runDir: caps.runDir, groundInRepo: true, preferAgents, disableProviders });
+          gddMd = m.artifact || '';
+          if (!gdd.hasBacklog(gddMd)) { gddMd += '\n\n## Backlog\n- [ ] [S-001] Implement the core playable loop | rigor: full | slice | accept: the game runs and is playable\n'; send(runId, { type: 'warn', phase: 'Charter', content: 'charter produced no parseable backlog — seeded a single core-loop item; edit .fusion/campaign/GDD.md to refine.', ok: true }); }
+          writeGdd(gddMd);
+          send(runId, { type: 'agent', phase: 'Charter ✓', kind: 'frame', content: `Wrote the bible → ${path.relative(opts.repo, gddPath(opts.repo))} (${gdd.parseBacklog(gddMd).length} items).` });
+        }
+
+        // Index the (possibly brownfield) repo so iteration 1's design phases ground in real code.
+        { const ix = indexRepo(opts.repo); if (ix.ok) send(runId, { type: 'agent', phase: 'Index', kind: 'ingest', content: `Atlas indexed${ix.symbols != null ? ` (${ix.symbols} symbols)` : ''} — design phases ground in the code.` }); }
+
+        // ── Loop ──
+        const res = await runAutoloop({
+          goal: concept, maxIterations, signal,
+          emit: (ev) => send(runId, { ...ev, type: `loop:${ev.type}` } as any),
+          runIteration: async (_task, iter) => {
+            const md = await pullGdd();
+            let items = gdd.parseBacklog(md);
+            let batch = gdd.selectBatch(items, { maxSize: batchSize, mode: design ? 'design' : 'build' });
+            // Stall recovery: nothing ready but a blocked item's deps are all done → it failed on
+            // its own (e.g. a blocked vertical slice stranding the backlog). Retry it up to retryLimit
+            // before giving up, so one bad build doesn't kill the whole campaign.
+            if (!batch.length && !design) {
+              const recoverable = gdd.blockedWithSatisfiedDeps(items).filter((i) => (retry.get(i.id) ?? 0) < retryLimit);
+              if (recoverable.length) {
+                let md2 = await pullGdd();
+                for (const it of recoverable) { md2 = gdd.setStatus(md2, it.id, 'todo', `retry ${(retry.get(it.id) ?? 0) + 1}/${retryLimit}`); retry.set(it.id, (retry.get(it.id) ?? 0) + 1); }
+                writeGdd(md2);
+                send(runId, { type: 'agent', phase: `Iteration ${iter}`, kind: 'retry', content: `stalled — retrying ${recoverable.length} blocked item(s): ${recoverable.map((i) => `${i.id} (try ${retry.get(i.id)})`).join(', ')}` });
+                items = gdd.parseBacklog(md2);
+                batch = gdd.selectBatch(items, { maxSize: batchSize, mode: 'build' });
+              }
+            }
+            const stats = gdd.backlogStats(items);
+            send(runId, { type: 'agent', phase: `Iteration ${iter}`, kind: 'scope', content: `backlog ${stats.done}/${stats.total} done · ${stats.blocked} blocked · this batch: [${batch.map((b) => b.id).join(', ') || '—'}]` });
+            if (!batch.length) return { status: 'completed', phasesRun: ['(idle)'], transcript: [], artifact: '', verdicts: [], approved: true } as RunResult;
+
+            const rigor = batch.some((b) => b.rigor === 'full') ? 'full' : 'light';
+            const cycle = buildForgeCycle({ rigor, lean: !!opts.lean, cycles: opts.cycles, design });
+            const task = design ? designIterationTask(batch, md) : buildIterationTask(batch, md, gdd.acceptanceOfDone(items));
+
+            // per-iteration build capture (build mode): delegate → validate → apply, recording outcome
+            const outcome = { ok: false, validated: false, applied: false, error: '' };
+            const build = design ? undefined : async (artifact: string, b: RosterAgent) => {
+              if (!b.capabilities?.canEdit) { outcome.error = `${b.displayName} cannot edit files`; return { ok: false, error: outcome.error }; }
+              const ex = makeExecutorHooks(opts.repo, `forge-${runId}-i${iter}`, controller.signal);
+              if (!ex.delegate) { outcome.error = 'no delegate capability'; return { ok: false, error: outcome.error }; }
+              const r = await ex.delegate(b, `Implement the following into the working tree directly. FIRST write/append a CHANGE_PLAN.md mapping what you change and why, THEN make focused changes. When done, summarize what changed.\n\n${artifact}`);
+              outcome.ok = r.ok; if (!r.ok) { outcome.error = r.error ?? 'delegate failed'; return r; }
+              // Golden regression gate: validate runs the per-stack compile/test over the
+              // ACCUMULATED worktree (prior batches + this one) — a failing suite blocks the apply.
+              const v = await ex.validate(); outcome.validated = v.ok;
+              send(runId, { type: 'validate', phase: `Iteration ${iter} · gate`, ok: v.ok, content: v.ok ? '' : `${v.reason ?? 'stack gate'}: ${(v.output ?? '').replace(/\s+/g, ' ').slice(0, 300)}` });
+              if (v.ok) { const ap = await ex.approve(); outcome.applied = ap.ok; if (!ap.ok) outcome.error = ap.error ?? 'apply failed'; }
+              else outcome.error = `regression gate failed (${v.reason ?? 'stack gate'}): ${(v.output ?? '').replace(/\s+/g, ' ').slice(0, 160)}`;
+              return { ok: r.ok, diff: r.diff, error: r.error };
+            };
+
+            const m = await runMethod(cycle, { task, roster, transport, signal, emit: (ev) => send(runId, ev), atlasQuery: caps.atlasQuery, readFiles: caps.readFiles, runDir: caps.runDir, groundInRepo: true, build, preferAgents, disableProviders });
+
+            // ── deterministic bookkeeping (status flips by code, never by an agent) ──
+            let nextMd = await pullGdd();   // pull again so edits made during the build aren't clobbered
+            const amendments = gdd.parseAmendments(m.artifact, gdd.parseBacklog(nextMd));
+            if (amendments.length) { nextMd = gdd.appendItems(nextMd, amendments); send(runId, { type: 'agent', phase: `Iteration ${iter}`, kind: 'amend', content: `+${amendments.length} backlog item(s) proposed by the panel` }); }
+
+            const gated = m.humanDecision.length > 0;
+            let approved = false;
+            if (design) {
+              appendFile('decisions.md', `\n<!-- iteration ${iter} -->\n${m.artifact}`);
+              for (const q of batch) nextMd = gdd.setStatus(nextMd, q.id, 'done', 'resolved');
+              approved = true;
+            } else if (gated) {   // autonomous: log TODO(gate), block the item, keep going
+              const note = `GATE: ${m.humanDecision.join(' / ').replace(/\s+/g, ' ').slice(0, 200)}`;
+              for (const it of batch) nextMd = gdd.setStatus(nextMd, it.id, 'blocked', note);
+              appendFile('gates.md', `## Iteration ${iter} — ${batch.map((b) => b.id).join(', ')}\nTODO(gate): an invariant blocker survived auto-repair; resolve before shipping.\n${m.humanDecision.join('\n')}\n`);
+              send(runId, { type: 'warn', phase: `Iteration ${iter}`, content: `[GATE] survived → logged TODO(gate), blocked ${batch.map((b) => b.id).join(', ')}, continuing (autonomous).`, ok: true });
+            } else if (outcome.applied) {
+              for (const it of batch) nextMd = gdd.setStatus(nextMd, it.id, 'done');
+              approved = true;
+            } else {
+              for (const it of batch) nextMd = gdd.setStatus(nextMd, it.id, 'blocked', (outcome.error || 'build did not apply').slice(0, 200));
+              send(runId, { type: 'warn', phase: `Iteration ${iter}`, content: `build not applied (${outcome.error || 'unknown'}) → blocked ${batch.map((b) => b.id).join(', ')}, continuing.`, ok: true });
+            }
+            writeGdd(nextMd);
+            // re-index after applied code changes so the NEXT iteration's design phases see them.
+            if (!design && outcome.applied) { const ix = indexRepo(opts.repo); if (ix.ok) send(runId, { type: 'agent', phase: `Iteration ${iter}`, kind: 'ingest', content: 're-indexed (Atlas) for the next iteration' }); }
+            appendFile('log.md', `## Iteration ${iter}\nbatch: ${batch.map((b) => b.id).join(', ')}\noutcome: ${design ? 'design' : gated ? 'gated' : outcome.applied ? 'applied' : 'blocked'}${outcome.error ? ` (${outcome.error})` : ''}\nscores: ${m.scores.map((s) => s.verdict).join(', ') || '—'}`);
+            return { status: 'completed', phasesRun: [cycle.name], transcript: [], artifact: m.artifact, verdicts: [], approved } as RunResult;
+          },
+          checkpoint: async (iter) => {
+            const c = await forgeCommit(opts.repo, `forge ${runId} iter ${iter}`, protectedPaths);
+            if (c.committed) {
+              send(runId, { type: 'agent', phase: `Iteration ${iter}`, kind: 'files', content: `committed ${c.files.length} file(s) → ${c.sha.slice(0, 8)}: ${c.files.slice(0, 12).join(', ')}${c.files.length > 12 ? ` +${c.files.length - 12} more` : ''}` });
+              try { fs.mkdirSync(path.join(campaignDir(opts.repo), 'iterations'), { recursive: true }); fs.writeFileSync(path.join(campaignDir(opts.repo), 'iterations', `iter-${iter}.diff`), c.diff.slice(0, 800000), 'utf8'); } catch { /* best-effort */ }
+              appendFile('log.md', `  files: ${c.files.join(', ')}\n  commit: ${c.sha.slice(0, 8)}`);
+            } else {
+              send(runId, { type: 'agent', phase: `Iteration ${iter}`, kind: 'files', content: 'no new files this iteration' });
+            }
+            let tree = ''; try { tree = (await git(opts.repo, ['rev-parse', 'HEAD^{tree}'])).stdout.trim(); } catch { /* none */ }
+            return { signature: tree || `iter-${iter}` };
+          },
+          checkGoal: async () => {
+            const items = gdd.parseBacklog(await pullGdd());
+            const s = gdd.backlogStats(items);
+            // not done while a blocked item can still be retried (else the loop would quit on a
+            // transient build failure of the slice and report a false completion).
+            const recoverable = design ? 0 : gdd.blockedWithSatisfiedDeps(items).filter((i) => (retry.get(i.id) ?? 0) < retryLimit).length;
+            const met = gdd.isComplete(items, design ? 'design' : 'build') && recoverable === 0;
+            return { met, reason: `${s.done}/${s.total} done · ${s.blocked} blocked · ${s.ready} ready${recoverable ? ` · ${recoverable} retryable` : ''}${met ? ' — backlog complete' : ''}` };
+          },
+        });
+
+        // Honest final status: a backlog that ends with 0 done but blocked items is STALLED,
+        // not "completed"; any remaining work is PARTIAL. Never report a do-nothing run as success.
+        const finalStats = gdd.backlogStats(gdd.parseBacklog(readGdd()));
+        const finalStatus = res.status === 'met'
+          ? (finalStats.done === 0 ? 'stalled' : (finalStats.todo + finalStats.blocked > 0 ? 'partial' : 'completed'))
+          : res.status;   // cap / oscillation / cost / aborted
+        const ok = finalStatus === 'completed';
+        db.prepare('UPDATE council_runs SET status=?, approved=?, finished=?, result=? WHERE run_id=?')
+          .run(finalStatus, ok ? 1 : 0, Date.now(), JSON.stringify({ loop: res.status, status: finalStatus, iterations: res.iterations, stats: finalStats, gdd: path.relative(opts.repo, gddPath(opts.repo)) }), runId);
+        appendAudit('council:forgeFinish', { runId, status: finalStatus, loop: res.status, iterations: res.iterations, stats: finalStats });
+        trace('council:forgeFinish', { runId, status: finalStatus, iterations: res.iterations });
+        send(runId, { type: 'loop:done', status: finalStatus, ok });
+      } catch (err: any) {
+        db.prepare('UPDATE council_runs SET status=?, finished=? WHERE run_id=?').run('error', Date.now(), runId);
+        send(runId, { type: 'error', content: String(err?.message ?? err) });
+      } finally { signals.delete(runId); toolset?.dispose(); }
+    })();
+
     return { ok: true, runId };
   });
 

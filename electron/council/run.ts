@@ -9,6 +9,7 @@ import { RosterAgent, SessionAssignment, Msg, GateVerdict, resolveAgents } from 
 import { Protocol, Phase, parseGateVerdict, parseBlindVerdict, isConverged, extractDiff } from './protocol';
 import { lintArtifact, formatFindings } from './fusionLint';
 import { boundedRepair } from './fusionInfra';
+import { looksLikeProviderError, providerErrorKind } from './providerError';
 
 export type TransportFn = (agent: RosterAgent, messages: Msg[], onDelta?: (chunk: string) => void) => Promise<string>;
 
@@ -17,7 +18,7 @@ export interface CouncilEvent { type: string; phase?: string; kind?: string; age
 export interface ExecutorHooks {
   propose: (plan: string, diff?: string) => Promise<{ ok: boolean; diff?: string; error?: string }>;
   delegate?: (agent: RosterAgent, prompt: string) => Promise<{ ok: boolean; diff?: string; error?: string }>;
-  validate: () => Promise<{ ok: boolean }>;
+  validate: () => Promise<{ ok: boolean; reason?: string; output?: string }>;
   approve: () => Promise<{ ok: boolean; error?: string }>;
 }
 
@@ -77,8 +78,17 @@ const SYS = {
 async function ask(deps: RunDeps, agent: RosterAgent, system: string, user: string, phase?: string): Promise<string | null> {
   try {
     deps.emit?.({ type: 'agent-start', phase, agentId: agent.id });
-    return await deps.transport(agent, [{ role: 'system', content: system }, { role: 'user', content: user }],
+    const out = await deps.transport(agent, [{ role: 'system', content: system }, { role: 'user', content: user }],
       (delta) => { try { deps.emit?.({ type: 'agent-delta', phase, agentId: agent.id, content: delta }); } catch { /* ignore */ } });
+    // Empty reply (e.g. a reasoning model that spent its budget thinking) → treat as a failed call.
+    if (out == null || !String(out).trim()) { try { deps.emit?.({ type: 'agent-error', phase, agentId: agent.id, content: `${agent.displayName} returned an empty reply — dropped`, ok: false }); } catch { /* ignore */ } return null; }
+    // Quarantine a usage-limit/auth/overload reply: drop it, never pass it on as a model
+    // answer (else the synthesizer/judge/executor treat the error text as work product).
+    if (looksLikeProviderError(out)) {
+      try { deps.emit?.({ type: 'agent-error', phase, agentId: agent.id, content: `provider error (${providerErrorKind(out)}) quarantined — dropped, not used as content`, ok: false }); } catch { /* ignore */ }
+      return null;
+    }
+    return out;
   }
   catch (e: any) {
     const msg = String(e?.message ?? e).slice(0, 1000);

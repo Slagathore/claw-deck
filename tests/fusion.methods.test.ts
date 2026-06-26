@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { METHODS, printMethodCard, runMethod, MethodDeps, Method } from '../electron/council/methods';
+import { METHODS, printMethodCard, runMethod, MethodDeps, Method, buildForgeCycle, buildCharter } from '../electron/council/methods';
 import { TransportFn } from '../electron/council/run';
 import { RosterAgent } from '../electron/council/agents';
 
@@ -21,6 +21,8 @@ const happy: TransportFn = async (_agent, messages) => {
   const sys = messages[0]?.content ?? '';
   if (/framer/i.test(sys)) return 'CONTRACT: must do X; golden: assert Y.';
   if (/drafting INDEPENDENTLY|brainstorming/i.test(sys)) return 'a concrete draft\n```ts\nfunction f(){ return 1; }\n```';
+  if (/improving a draft/i.test(sys)) return 'a strengthened draft\n```ts\nfunction f(){ return 1; }\n```';
+  if (/HARDENING the artifact/i.test(sys)) return 'a hardened artifact\n```ts\nfunction f(){ return 1; }\n```';
   if (/adversarial critic|stress-testing IDEAS/i.test(sys)) return 'NO_FURTHER_ISSUES';
   if (/repair hand/i.test(sys)) return 'repaired artifact\n```ts\nfunction f(){ return 1; }\n```';
   if (/consolidator/i.test(sys)) return 'ONE consolidated artifact\n```ts\nfunction f(){ return 1; }\n```';
@@ -196,5 +198,118 @@ describe('§3 runMethod engine', () => {
     const b = makeBudget(0, 10);
     const r = await runMethod(METHODS.relay, deps({ budget: b }));
     expect(r.warnings.some((w) => /budget reached|keeping concatenated/.test(w))).toBe(true);
+  });
+});
+
+describe('FORGE — campaign cycle methods', () => {
+  it('buildForgeCycle (full) emits the crucible pipeline: generate → consolidate → steelman⇄adversarial → harden → gate → qa → judge → build', () => {
+    const kinds = buildForgeCycle({ rigor: 'full' }).phases.map((p) => p.kind);
+    expect(kinds[0]).toBe('diverge');
+    expect(kinds).toContain('steelman');
+    expect(kinds).toContain('gauntlet');
+    expect(kinds).toContain('harden');
+    expect(kinds).toContain('lint-gate');
+    expect(kinds).toContain('qa');
+    expect(kinds).toContain('judge');
+    expect(kinds[kinds.length - 1]).toBe('build');
+    // every-cycle consolidation (default): one consolidate per cycle + the post-generate one
+    expect(kinds.filter((k) => k === 'consolidate').length).toBe(3);   // generate + 2 cycles
+  });
+
+  it('lean collapses to a single consolidation; light skips the crucible; design has no build', () => {
+    expect(buildForgeCycle({ rigor: 'full', lean: true }).phases.filter((p) => p.kind === 'consolidate').length).toBe(2); // post-generate + final
+    const light = buildForgeCycle({ rigor: 'light' }).phases.map((p) => p.kind);
+    expect(light).not.toContain('steelman');
+    expect(light[light.length - 1]).toBe('build');
+    const design = buildForgeCycle({ design: true }).phases.map((p) => p.kind);
+    expect(design).not.toContain('build');
+    expect(design[design.length - 1]).toBe('report');
+  });
+
+  it('runs a full forge-cycle end-to-end: steelman + harden execute, judge scores, build applies', async () => {
+    let built = '';
+    const build = async (artifact: string) => { built = artifact; return { ok: true, diff: 'diff --git a/x b/x' }; };
+    const r = await runMethod(buildForgeCycle({ rigor: 'full' }), deps({ build }));
+    expect(r.scores[0].verdict).toMatch(/score 8/);
+    expect(r.artifact).toMatch(/hardened|consolidated|strengthened/);   // the cycle transformed the artifact
+    expect(built).toBeTruthy();                                          // build step received the artifact
+    expect(r.diff).toContain('diff --git');
+  });
+
+  it('preferAgents pins a non-default consolidator (e.g. Kimi over Claude), overriding eligibility', async () => {
+    let consolidatorId = '';
+    const t: TransportFn = async (agent, m) => {
+      const sys = m[0]?.content ?? '';
+      if (/consolidator/i.test(sys)) { consolidatorId = agent.id; return 'ONE consolidated artifact'; }
+      if (/improving a draft/i.test(sys)) return 'strengthened';
+      if (/HARDENING/i.test(sys)) return 'hardened';
+      if (/BLIND judge/i.test(sys)) return 'SCORE: 7 ok';
+      if (/drafting INDEPENDENTLY/i.test(sys)) return 'draft';
+      return 'ok';
+    };
+    await runMethod(buildForgeCycle({ rigor: 'full', lean: true }), deps({ transport: t, preferAgents: { consolidator: 'kimi' } }));
+    expect(consolidatorId).toBe('kimi');   // pinned despite Claude being the eligible consolidator
+  });
+
+  it('buildCharter authors a contract + a consolidated GDD artifact, blind-judged', async () => {
+    const r = await runMethod(buildCharter(), deps());
+    expect(r.contract).toContain('CONTRACT');
+    expect(r.artifact).toContain('consolidated');
+    expect(r.scores.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('provider circuit-breaker + quarantine', () => {
+  const PROVIDER_ERR = 'Claude usage limit reached. Your limit will reset at 3pm.';
+
+  it('quarantines a provider-error reply: it never lands in the artifact (the out-of-tokens bug)', async () => {
+    const events: any[] = [];
+    const t: TransportFn = async (_agent, m) => {
+      const sys = m[0]?.content ?? '';
+      if (/consolidator/i.test(sys)) return PROVIDER_ERR;          // Claude consolidator is out of tokens
+      if (/drafting INDEPENDENTLY/i.test(sys)) return 'a real draft';
+      return 'ok';
+    };
+    const M: Method = { id: 'q', name: 'Q', use: '', summary: '', endPrompt: '', budget: '', phases: [{ kind: 'diverge', label: 'Draft', count: 2 }, { kind: 'consolidate', label: 'Consolidate' }] };
+    const r = await runMethod(M, deps({ transport: t, emit: (e: any) => events.push(e) }));
+    expect(r.artifact).not.toMatch(/usage limit/i);              // error text is NOT consolidated into the work
+    expect(events.some((e) => e.type === 'agent-error' && /quarantined/i.test(e.content ?? ''))).toBe(true);
+  });
+
+  it('disableProviders routes around a provider from the start — it is never called', async () => {
+    const called = new Set<string>();
+    const t: TransportFn = async (agent) => { called.add(agent.id); return 'ok'; };
+    const M: Method = { id: 'd', name: 'D', use: '', summary: '', endPrompt: '', budget: '', phases: [{ kind: 'frame', label: 'Frame', role: 'framer' }, { kind: 'diverge', label: 'Draft', count: 3 }, { kind: 'consolidate', label: 'Consolidate' }] };
+    await runMethod(M, deps({ transport: t, disableProviders: ['claude'] }));
+    expect(called.has('claude')).toBe(false);                    // Claude skipped (framer + consolidator fall through)
+    expect(called.size).toBeGreaterThan(0);                      // the rest of the roster still ran
+  });
+
+  it('drops an EMPTY reply (reasoning model out of budget) instead of letting it become the artifact', async () => {
+    const events: any[] = [];
+    const t: TransportFn = async (_agent, m) => {
+      const sys = m[0]?.content ?? '';
+      if (/consolidator/i.test(sys)) return '   \n  ';                 // empty/whitespace — emitted nothing
+      if (/drafting INDEPENDENTLY/i.test(sys)) return 'a real draft';
+      return 'ok';
+    };
+    const M: Method = { id: 'e', name: 'E', use: '', summary: '', endPrompt: '', budget: '', phases: [{ kind: 'diverge', label: 'Draft', count: 2 }, { kind: 'consolidate', label: 'Consolidate' }] };
+    const r = await runMethod(M, deps({ transport: t, emit: (e: any) => events.push(e) }));
+    expect(r.artifact.trim().length).toBeGreaterThan(0);             // not an empty artifact
+    expect(r.artifact).toContain('a real draft');                   // kept the real material
+    expect(events.some((e) => e.type === 'agent-error' && /empty reply/i.test(e.content ?? ''))).toBe(true);
+  });
+
+  it('fails over a single-agent step to another provider when the first trips mid-run', async () => {
+    const ROSTER2: RosterAgent[] = [...ROSTER, A('mystery', 'some-unrecognized-model')];   // a second repair-hand-eligible provider
+    const t: TransportFn = async (agent, m) => {
+      const sys = m[0]?.content ?? '';
+      if (/HARDENING/i.test(sys)) return agent.id === 'qcoder' ? PROVIDER_ERR : 'HARDENED_BY_FALLBACK';
+      if (/drafting INDEPENDENTLY/i.test(sys)) return 'draft';
+      return 'ok';
+    };
+    const M: Method = { id: 'h', name: 'H', use: '', summary: '', endPrompt: '', budget: '', phases: [{ kind: 'diverge', label: 'Draft', count: 1 }, { kind: 'harden', label: 'Harden' }] };
+    const r = await runMethod(M, deps({ roster: ROSTER2, transport: t }));
+    expect(r.artifact).toContain('HARDENED_BY_FALLBACK');         // qcoder tripped → harden failed over to the other provider
   });
 });

@@ -102,6 +102,13 @@ declare global {
         methodResult: (runId: string) => Promise<{ ok: boolean; isMethod: boolean; methodId?: string; status?: string; result?: { report?: string; scores?: { agentId: string; verdict: string }[]; warnings?: string[]; findings?: string[]; seed?: { task: string; focus?: string; contract: string; artifacts: string[] }; endPrompt?: string; confidence?: 'high' | 'low'; humanDecision?: string[] } | null }>;
         roleEligibility: () => Promise<{ ok: boolean; rows: { id: string; displayName: string; key: string; eligible: string[]; notEligible: string[]; context: string; maxCalls?: number; optional: boolean }[] }>;
         startLoop: (opts: { repo: string; protocolId: string; assignment: import('../electron/council/agents').SessionAssignment; goal: string; maxIterations?: number; costCeiling?: number; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number }; personas?: Record<string, string>; forceBlind?: boolean; methodId?: string; groundInRepo?: boolean }) => Promise<{ ok: boolean; runId?: string; error?: string }>;
+        startCampaign: (opts: { repo: string; concept: string; design?: boolean; maxIterations?: number; batchSize?: number; consolidatorId?: string; builderId?: string; lean?: boolean; cycles?: number; context?: string; disableProviders?: string[]; retryLimit?: number }) => Promise<{ ok: boolean; runId?: string; error?: string }>;
+        campaignInfo: (runId: string) => Promise<{ ok: boolean; isCampaign: boolean; design?: boolean; repo?: string | null; status?: string; result?: { loop?: string; iterations?: number; stats?: { total: number; done: number; blocked: number; todo: number; question: number; ready: number }; gdd?: string } | null }>;
+        campaignReadGdd: (repo: string) => Promise<{ ok: boolean; content: string; stats: { total: number; done: number; blocked: number; todo: number; question: number; ready: number } | null }>;
+        campaignWriteGdd: (repo: string, content: string) => Promise<{ ok: boolean; stats?: { total: number; done: number; blocked: number; todo: number; question: number; ready: number }; error?: string }>;
+        campaignBibleActive: (runId: string, active: boolean) => Promise<{ ok: boolean }>;
+        campaignFlushAck: (runId: string) => Promise<{ ok: boolean }>;
+        probeCapabilities: (caps?: string[]) => Promise<{ ok: boolean; probed?: Record<string, Record<string, string>>; error?: string }>;
         answerQuestions: (runId: string, answers: string[]) => Promise<{ ok: boolean; runId?: string; error?: string }>;
         detectEnv: (repo: string) => Promise<{ ok: boolean; facts: string; error?: string }>;
         resume: (runId: string) => Promise<{ ok: boolean; runId?: string; fromPhase?: number; error?: string }>;

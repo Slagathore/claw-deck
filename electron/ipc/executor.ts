@@ -15,14 +15,13 @@ import { appendAudit } from './security';
 import { getDb } from './db';
 import { createWorktree, captureDiff, writeArtifacts, applyToLiveTree, removeWorktree, Worktree } from '../executor/worktree';
 import { applyDiffToWorktree } from '../executor/applyDiff';
-import { validateWorktree } from '../executor/validate';
-import { SandboxResult } from '../selfUpgrade/sandbox';
+import { validateWorktree, ValidationResult } from '../executor/validate';
 import { createSnapshot, restoreSnapshot, findSnapshotById } from '../selfUpgrade/snapshot';
 
 type Mode = 'delegate' | 'apply';
 interface ExecRun {
   runId: string; repo: string; wt: Worktree; mode: Mode;
-  plan: string; diff: string; validation: SandboxResult | null; snapshotId?: string;
+  plan: string; diff: string; validation: ValidationResult | null; snapshotId?: string;
   status: 'open' | 'proposed' | 'validated' | 'invalid' | 'approved' | 'rejected';
 }
 

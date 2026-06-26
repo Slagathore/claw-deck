@@ -8,9 +8,10 @@
 
 import { RosterAgent, Msg } from './agents';
 import { TransportFn, CouncilEvent } from './run';
-import { FusionRole, pickAdvisors, Budget, makeBudget } from './roles';
+import { FusionRole, pickAdvisors, Budget, makeBudget, advisorKey, AdvisorKey } from './roles';
 import { lintArtifact, formatFindings } from './fusionLint';
 import { boundedRepair, runPhase, sha12, echoMatches, artifactStore } from './fusionInfra';
+import { looksLikeProviderError, providerErrorKind } from './providerError';
 
 // ----------------------------- declarative method spec -----------------------------
 
@@ -20,8 +21,10 @@ export type StepKind =
   | 'scope'        // deterministic: targeted vs heuristic
   | 'diverge'      // N advisors draft in parallel
   | 'ideate'       // N advisors brainstorm in parallel (by flavor)
+  | 'steelman'     // N advisors each STRENGTHEN the current artifact (no critique-only)
   | 'gauntlet'     // N critics (rotated) surface findings
   | 'repair'       // repair-hands address the findings
+  | 'harden'       // 1 hand hardens for ship: fixes/viability only, NO new scope
   | 'consolidate'  // 1 consolidator merges drafts → ONE artifact
   | 'cluster'      // 1 consolidator clusters ideas/bets → ranked themes
   | 'lint-gate'    // deterministic lint (+optional compile/golden) + repair loop
@@ -72,6 +75,17 @@ export interface MethodDeps {
   readFiles?: (paths: string[]) => Promise<Record<string, string>>; // real-code grounding for assay/prospect
   groundInRepo?: boolean;            // prepend a repo-ingest phase to methods that lack one (foundry, etc.)
   build?: (artifact: string, builder: RosterAgent) => Promise<{ ok: boolean; diff?: string; error?: string }>;
+  // Explicit per-role agent override (role → roster id). When set, that agent plays the
+  // role regardless of the eligibility table (the user chose it) — e.g. the FORGE campaign
+  // pinning Kimi as the consolidator. Remaining slots still fill by eligibility.
+  preferAgents?: Partial<Record<FusionRole, string>>;
+  // Providers to NOT use this run (advisor keys, e.g. 'claude' when Claude is out of
+  // tokens). Seeds the circuit-breaker so assignment routes around them from the start.
+  disableProviders?: string[];
+  // Engine-internal: providers tripped as unavailable mid-run (provider-error / limit /
+  // auth). Shared Set so call() trips it and assign() routes around it. Seeded from
+  // disableProviders. Do not set from callers — runMethod manages it.
+  down?: Set<AdvisorKey>;
 }
 
 export interface MethodResult {
@@ -93,6 +107,8 @@ const SYS = {
   frame: 'You are the framer. Produce a tight CONTRACT for this task: the invariants/laws it must not violate, the output contract (named fields it must produce), and 3–5 concrete, runnable acceptance checks ("golden" criteria). Be specific and checkable. No preamble.',
   rubric: 'You are the framer. Produce a weighted RUBRIC (criteria + weights) plus the invariant "must-not-violate" laws this design must satisfy. Make every criterion objectively checkable. No preamble.',
   diverge: 'You are one of several engineers drafting INDEPENDENTLY. Produce your best complete attempt at the task. Do not hedge or defer; commit to concrete choices.',
+  steelman: 'You are improving a draft, not merely critiquing it. Make it STRONGER: add what is missing, tighten weak spots, fill under-specified parts, and fix obvious flaws. Return your COMPLETE improved version of the artifact (not a diff, not notes). Be substantive — do not just restate it.',
+  harden: 'You are HARDENING the artifact for ship. Do NOT add new features or scope. ONLY: fix bugs, correct wrong/deprecated/removed API usage, complete anything truncated, improve robustness and viability, and make it actually run. Return the COMPLETE hardened artifact, ready to ship. No commentary, no new scope.',
   ideate: 'You are brainstorming opportunities for this repo from your assigned angle. Produce several concrete ideas; for each, a one-line "why it is worth building". Favor genuinely valuable, fitting ideas over filler.',
   critic: 'You are an adversarial critic. Find concrete, NEW problems in the artifact (bugs, missing cases, wrong assumptions, deprecated APIs, security). For each: a specific location/aspect + why it is wrong + a suggested fix. If you genuinely find nothing new, reply EXACTLY: NO_FURTHER_ISSUES.',
   feasibility: 'You are stress-testing IDEAS for feasibility. For each idea: fit with the codebase, effort, risk, dependencies, and conflicts. Be concrete; kill ideas that do not fit.',
@@ -110,7 +126,10 @@ const SYS = {
 
 const aborted = (deps: MethodDeps) => !!deps.signal?.aborted;
 
-/** One transport call wrapped to never throw + charge the trusted budget (downgrade, not error). */
+/** One transport call wrapped to never throw + charge the trusted budget (downgrade, not error).
+ *  Quarantines provider errors: a usage-limit/auth/overload reply (returned as normal output
+ *  OR thrown) is DROPPED (returns null) and trips the run's circuit-breaker — it is never
+ *  passed back as a model answer, so it can't poison the artifact/findings/judge stream. */
 async function call(deps: MethodDeps, budget: Budget, agent: RosterAgent, system: string, user: string, phase: string): Promise<string | null> {
   if (!budget.canAfford(agent)) { deps.emit?.({ type: 'warn', phase, content: `budget reached — skipping trusted ${agent.displayName} call (downgraded)`, ok: true }); return null; }
   budget.charge(agent);
@@ -118,19 +137,60 @@ async function call(deps: MethodDeps, budget: Budget, agent: RosterAgent, system
     deps.emit?.({ type: 'agent-start', phase, agentId: agent.id });
     const msgs: Msg[] = [{ role: 'system', content: system }, { role: 'user', content: user }];
     const out = await deps.transport(agent, msgs, (d) => deps.emit?.({ type: 'agent-delta', phase, agentId: agent.id, content: d }));
+    // An empty/whitespace reply is a failed call — typically a reasoning model that spent its
+    // whole token budget thinking and emitted nothing. Drop it (→ failover/degrade) instead of
+    // letting an empty string become the artifact (a cause of "nothing runnable").
+    if (out == null || !String(out).trim()) {
+      deps.emit?.({ type: 'agent-error', phase, agentId: agent.id, content: `${agent.displayName} returned an empty reply (likely a reasoning model out of token budget) — dropped`, ok: false });
+      return null;
+    }
+    if (looksLikeProviderError(out)) {
+      deps.down?.add(advisorKey(agent));
+      deps.emit?.({ type: 'agent-error', phase, agentId: agent.id, content: `provider error (${providerErrorKind(out)}) quarantined — not used as content; ${agent.displayName} disabled for the rest of this run`, ok: false });
+      return null;
+    }
     deps.emit?.({ type: 'agent', phase, agentId: agent.id, content: out });
     return out;
   } catch (e: any) {
-    deps.emit?.({ type: 'agent-error', phase, agentId: agent.id, content: String(e?.message ?? e).slice(0, 800), ok: false });
+    const msg = String(e?.message ?? e);
+    if (looksLikeProviderError(msg)) { deps.down?.add(advisorKey(agent)); deps.emit?.({ type: 'agent-error', phase, agentId: agent.id, content: `provider error (${providerErrorKind(msg)}) — ${agent.displayName} disabled for the rest of this run`, ok: false }); return null; }
+    deps.emit?.({ type: 'agent-error', phase, agentId: agent.id, content: msg.slice(0, 800), ok: false });
     return null;
   }
 }
 
-/** Assign advisors for a step; emit + record a coverage-gap warning instead of aborting. */
+/** Assign advisors for a step; emit + record a coverage-gap warning instead of aborting.
+ *  Routes around providers in the circuit-breaker (`deps.down`: disabled / tripped). An
+ *  explicit `preferAgents[role]` pin is honored first (user choice overrides the eligibility
+ *  table) unless that provider is down; the rest of the slots fill by eligibility. */
 function assign(deps: MethodDeps, role: FusionRole, count: number, exclude: string[], warnings: string[], phase: string): RosterAgent[] {
-  const { picks, warning } = pickAdvisors(deps.roster, role, count, { exclude });
+  const down = deps.down;
+  const roster = down && down.size ? deps.roster.filter((a) => !down.has(advisorKey(a))) : deps.roster;
+  const pinnedId = deps.preferAgents?.[role];
+  const pinned = pinnedId ? roster.find((a) => a.id === pinnedId && !exclude.includes(a.id)) : undefined;
+  if (pinned) {
+    if (count <= 1) return [pinned];
+    const rest = pickAdvisors(roster, role, count - 1, { exclude: [...exclude, pinned.id] }).picks;
+    return [pinned, ...rest].slice(0, count);
+  }
+  const { picks, warning } = pickAdvisors(roster, role, count, { exclude });
   if (warning) { warnings.push(warning); deps.emit?.({ type: 'warn', phase, content: warning, ok: picks.length > 0 }); }
   return picks;
+}
+
+/** Single-agent step with provider failover: pick one advisor for `role`, call it, and if
+ *  the call drops because that provider just tripped the breaker, fail over to another
+ *  eligible advisor once. Keeps the artifact-critical steps (frame/consolidate) alive when
+ *  the default provider (e.g. Claude) is out. */
+async function callSolo(deps: MethodDeps, budget: Budget, role: FusionRole, system: string, user: string, phase: string, warnings: string[], exclude: string[] = []): Promise<string | null> {
+  const [agent] = assign(deps, role, 1, exclude, warnings, phase);
+  if (!agent) return null;
+  const out = await call(deps, budget, agent, system, user, phase);
+  if (out != null || !deps.down?.has(advisorKey(agent))) return out;
+  const [alt] = assign(deps, role, 1, [...exclude, agent.id], warnings, phase);   // assign now skips the downed provider
+  if (!alt) return null;
+  deps.emit?.({ type: 'warn', phase, content: `${agent.displayName} unavailable (provider quarantined) — failing over to ${alt.displayName}`, ok: true });
+  return call(deps, budget, alt, system, user, phase);
 }
 
 /** §1.3.3 — ask a reviewer/judge that MUST echo `REVIEWING: <sha12>` so we can detect a
@@ -163,6 +223,10 @@ export async function runMethod(method: Method, deps: MethodDeps): Promise<Metho
     deps.emit?.(ev);
   };
   const ldeps: MethodDeps = { ...deps, emit };
+  // circuit-breaker: seed from explicitly-disabled providers; call() trips more as they fail.
+  const down: Set<AdvisorKey> = deps.down ?? new Set((deps.disableProviders ?? []) as AdvisorKey[]);
+  ldeps.down = down;
+  if (down.size) emit({ type: 'agent', phase: method.name, kind: 'providers', content: `skipping provider(s): ${[...down].join(', ')}` });
   const store = deps.runDir ? artifactStore(deps.runDir) : undefined;
   let degraded = false;
   // §5 chaining — a seed pre-loads the contract + prior artifacts so we don't re-ingest.
@@ -194,10 +258,8 @@ export async function runMethod(method: Method, deps: MethodDeps): Promise<Metho
     const outcome = await runPhase<void>(step.label, async () => {
       switch (step.kind) {
         case 'frame': {
-          const [framer] = assign(ldeps, step.role ?? 'framer', 1, [], warnings, step.label);
-          if (!framer) return;
           const g = repoGround();
-          const out = await call(ldeps, budget, framer, step.role === 'framer' ? SYS.frame : SYS.rubric, `Task:\n${deps.task}${g ? `\n\nExisting repo context (ground the contract in what is actually there):\n${g}` : ''}`, step.label);
+          const out = await callSolo(ldeps, budget, step.role ?? 'framer', step.role === 'framer' ? SYS.frame : SYS.rubric, `Task:\n${deps.task}${g ? `\n\nExisting repo context (ground the contract in what is actually there):\n${g}` : ''}`, step.label, warnings);
           if (out) contract = out;
           return;
         }
@@ -238,6 +300,19 @@ export async function runMethod(method: Method, deps: MethodDeps): Promise<Metho
           if (got.length) { artifact = got.join('\n\n'); lastAuthors = advisors.filter((_, i) => settled[i]).map((a) => a.id); }
           return;
         }
+        case 'steelman': {
+          // Each advisor returns a COMPLETE strengthened version; the next consolidate
+          // collapses them. Mirrors diverge, but builds on the current artifact.
+          const n = step.count ?? 2;
+          const advisors = assign(ldeps, step.role ?? 'diverger', n, [], warnings, step.label);
+          const ground = repoGround();
+          const base = `Task:\n${deps.task}${contract ? `\n\nContract:\n${contract}` : ''}${ground ? `\n\nRepo context:\n${ground}` : ''}\n\nCurrent artifact to strengthen:\n${artifact || '(none yet)'}`;
+          const settled = await Promise.all(advisors.map((a) => call(ldeps, budget, a, SYS.steelman, base, step.label)));
+          const got = advisors.map((a, i) => settled[i] ? `### ${a.displayName}\n${settled[i]}` : '').filter(Boolean);
+          if (got.length < advisors.length) deps.emit?.({ type: 'warn', phase: step.label, content: `${advisors.length - got.length} strengthener(s) dropped; quorum ${got.length}/${advisors.length}`, ok: got.length > 0 });
+          if (got.length) { artifact = got.join('\n\n'); lastAuthors = advisors.filter((_, i) => settled[i]).map((a) => a.id); }
+          return;
+        }
         case 'gauntlet': {
           const n = step.count ?? 3;
           const critics = assign(ldeps, step.role ?? 'critic', n, step.rotated ? lastAuthors : [], warnings, step.label);
@@ -260,12 +335,21 @@ export async function runMethod(method: Method, deps: MethodDeps): Promise<Metho
           if (out) { artifact = out; findings = []; }
           return;
         }
+        case 'harden': {
+          // Like repair, but with no finding list: tighten for ship — fixes/viability only,
+          // never new scope. Single hand (with provider failover); no-op if none is assignable.
+          if (!artifact) return;
+          const ground = repoGround();
+          const out = await callSolo(ldeps, budget, step.role ?? 'repair-hand', SYS.harden, `Artifact:\n${artifact}${ground ? `\n\nRepo context (so fixes match the real code):\n${ground}` : ''}\n\nHarden it for ship — fix bugs/viability only, add NO new scope. Return the complete hardened artifact.`, step.label, warnings);
+          if (out) artifact = out;
+          else warnings.push(`no hand available for '${step.label}' — keeping artifact unhardened`);
+          return;
+        }
         case 'consolidate':
         case 'cluster': {
-          const [con] = assign(ldeps, step.role ?? 'consolidator', 1, [], warnings, step.label);
-          if (!con) { warnings.push(`no consolidator available for '${step.label}' — keeping concatenated material`); return; }
-          const out = await call(ldeps, budget, con, step.kind === 'cluster' ? SYS.cluster : SYS.consolidate, `Task:\n${deps.task}\n\nMaterial:\n${artifact}`, step.label);
+          const out = await callSolo(ldeps, budget, step.role ?? 'consolidator', step.kind === 'cluster' ? SYS.cluster : SYS.consolidate, `Task:\n${deps.task}\n\nMaterial:\n${artifact}`, step.label, warnings);
           if (out) artifact = out;
+          else warnings.push(`no consolidator available for '${step.label}' — keeping concatenated material`);
           return;
         }
         case 'lint-gate': {
@@ -515,4 +599,105 @@ function methodTagline(id: string): string {
     case 'scatter': return 'greenfield divergence';
     default: return 'fusion method';
   }
+}
+
+// ----------------------------- FORGE campaign cycles -----------------------------
+// The per-iteration method the FORGE loop runs over one backlog batch. Built
+// dynamically (not registered) so the loop can tune it per item: rigor (full
+// crucible vs a fast light cycle), consolidation cadence (lean = once vs every
+// cycle), and a design-only variant that writes the GDD instead of code.
+
+export interface ForgeCycleOptions {
+  rigor?: Rigor;        // 'full' = the crucible cycle; 'light' = a fast relay-style cycle
+  lean?: boolean;       // true = consolidate once after the cycles; false = every cycle (default)
+  cycles?: number;      // steelman⇄adversarial repetitions in a full cycle (default 2)
+  design?: boolean;     // design-only: ideate → refine → judge → write GDD (no harden/lint/build)
+}
+export type Rigor = 'light' | 'full';
+
+/** Build the inner cycle method for one FORGE iteration. */
+export function buildForgeCycle(opts: ForgeCycleOptions = {}): Method {
+  const { rigor = 'full', lean = false, cycles = 2, design = false } = opts;
+
+  // Light build cycle — cheap, for low-risk backlog items.
+  if (rigor === 'light' && !design) {
+    return {
+      id: 'forge-cycle-light', name: 'FORGE CYCLE (light)',
+      use: 'low-risk backlog item — fast path.', summary: 'draft ×2 → consolidate → harden → free gate → QA → judge → build.',
+      endPrompt: '', budget: 'cheap',
+      phases: [
+        { kind: 'diverge', label: 'Draft', role: 'diverger', count: 2 },
+        { kind: 'consolidate', label: 'Consolidate' },
+        { kind: 'harden', label: 'Harden' },
+        { kind: 'lint-gate', label: 'Gate' },
+        { kind: 'qa', label: 'Panel QA' },
+        { kind: 'judge', label: 'Blind judge', judges: 1, blind: true },
+        { kind: 'build', label: 'Build', role: 'builder' },
+      ],
+    };
+  }
+
+  const cyclePhases: MethodStep[] = [];
+  for (let i = 1; i <= Math.max(1, cycles); i++) {
+    cyclePhases.push({ kind: 'steelman', label: `Steelman ${i}`, count: 2 });
+    cyclePhases.push({ kind: 'gauntlet', label: `Adversarial ${i}`, role: 'critic', count: 3, rotated: true });
+    if (!lean) cyclePhases.push({ kind: 'consolidate', label: `Consolidate ${i}` });
+  }
+  const leanTail: MethodStep[] = lean ? [{ kind: 'consolidate', label: 'Consolidate (final)' }] : [];
+
+  if (design) {
+    // Design-only cycle: resolve a design question/decision; the report step is where
+    // the campaign writes the decision into the GDD. No code is produced.
+    return {
+      id: 'forge-design-cycle', name: 'FORGE-DESIGN CYCLE',
+      use: 'resolve one set of open design questions into the GDD.', summary: 'ideate options → [steelman ⇄ adversarial] → consolidate → judge → write decision to the GDD.',
+      endPrompt: '', budget: '~design',
+      phases: [
+        { kind: 'ideate', label: 'Options', role: 'ideator', count: 4 },
+        { kind: 'consolidate', label: 'Consolidate' },
+        ...cyclePhases,
+        ...leanTail,
+        { kind: 'judge', label: 'Decision judge', judges: 1, blind: false },
+        { kind: 'report', label: 'Write decision' },
+      ],
+    };
+  }
+
+  // Full build cycle — the user's pipeline.
+  return {
+    id: 'forge-cycle', name: 'FORGE CYCLE',
+    use: 'build one backlog batch with the full crucible.', summary: 'generate → consolidate → [steelman ⇄ adversarial → consolidate] → harden → free gate → QA repair → verify → blind judge → build.',
+    endPrompt: '', budget: 'full',
+    phases: [
+      { kind: 'diverge', label: 'Generate', role: 'diverger', count: 4 },
+      { kind: 'consolidate', label: 'Consolidate' },
+      ...cyclePhases,
+      ...leanTail,
+      { kind: 'harden', label: 'Harden' },
+      { kind: 'lint-gate', label: 'Hard gate' },
+      { kind: 'qa', label: 'Panel QA' },
+      { kind: 'verify', label: 'Verify' },
+      { kind: 'judge', label: 'Blind judge', judges: 1, tiebreak: true, blind: true },
+      { kind: 'build', label: 'Build', role: 'builder' },
+    ],
+  };
+}
+
+/** The one-shot charter method: author (or refine) the GDD bible. Frames the design,
+ *  diverges, hardens via a critic pass, consolidates to ONE doc, judges. Its artifact
+ *  IS the GDD — the campaign writes it to disk and parses the backlog. `design` only
+ *  changes the framing prompt the caller supplies; the pipeline is the same. */
+export function buildCharter(): Method {
+  return {
+    id: 'forge-charter', name: 'FORGE CHARTER',
+    use: 'author the game design document + backlog.', summary: 'frame → 4 designs in parallel → critic gauntlet → consolidate to ONE GDD → triple-blind judge.',
+    endPrompt: '', budget: '~design',
+    phases: [
+      { kind: 'frame', label: 'Frame (rubric)' },
+      { kind: 'diverge', label: 'Design', role: 'diverger', count: 4 },
+      { kind: 'gauntlet', label: 'Gauntlet', role: 'critic', count: 3, rotated: true },
+      { kind: 'consolidate', label: 'Consolidate GDD' },
+      { kind: 'judge', label: 'Triple blind judge', judges: 3, tiebreak: true, blind: true },
+    ],
+  };
 }

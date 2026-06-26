@@ -11,8 +11,9 @@ export default function CouncilTab() {
   const { runByWs, events, live, questions, running, startRun, appendEvent, clearQuestions, markRunning, newSession, finishRun } = useCouncil();
   const [roster, setRoster] = useState<{ id: string; displayName: string }[]>([]);
   const [expanded, setExpanded] = useState(false);
-  const [theaterTab, setTheaterTab] = useState<'theater' | 'result' | 'ask' | 'pr' | 'replay'>('theater');
+  const [theaterTab, setTheaterTab] = useState<'theater' | 'result' | 'bible' | 'ask' | 'pr' | 'replay'>('theater');
   const [isMethodRun, setIsMethodRun] = useState(false);
+  const [isCampaignRun, setIsCampaignRun] = useState(false);
 
   // single subscription to the council event stream
   useEffect(() => {
@@ -28,11 +29,18 @@ export default function CouncilTab() {
   const nameOf = (id?: string) => roster.find((a) => a.id === id)?.displayName ?? id ?? '';
 
   const runId = active ? runByWs[active] : undefined;
-  // reset to the live theater on a new run, and learn whether it's a method (→ Result tab)
-  useEffect(() => { setTheaterTab('theater'); setIsMethodRun(false); if (runId) window.api.council.methodResult(runId).then((r) => setIsMethodRun(!!r.isMethod)); }, [runId]);
+  // reset to the live theater on a new run, and learn whether it's a method (→ Result tab) / campaign (→ Bible tab)
+  useEffect(() => {
+    setTheaterTab('theater'); setIsMethodRun(false); setIsCampaignRun(false);
+    if (runId) {
+      window.api.council.methodResult(runId).then((r) => setIsMethodRun(!!r.isMethod));
+      window.api.council.campaignInfo(runId).then((r) => setIsCampaignRun(!!r.isCampaign));
+    }
+  }, [runId]);
 
   const terminated = !!runId && !running[runId] && isTerminated(events[runId]);
-  const tabs: { id: 'theater' | 'result' | 'ask' | 'pr' | 'replay'; label: string }[] = [{ id: 'theater', label: '🎭 Theater' }];
+  const tabs: { id: 'theater' | 'result' | 'bible' | 'ask' | 'pr' | 'replay'; label: string }[] = [{ id: 'theater', label: '🎭 Theater' }];
+  if (isCampaignRun) tabs.push({ id: 'bible', label: '🜂 Bible' });   // live-editable while the campaign runs
   if (terminated && isMethodRun) tabs.push({ id: 'result', label: '⚗ Result' });
   if (terminated) tabs.push({ id: 'ask', label: '💬 Ask' }, { id: 'pr', label: '📝 PR' }, { id: 'replay', label: '⏮ Replay' });
   const activeTab = tabs.some((t) => t.id === theaterTab) ? theaterTab : 'theater';
@@ -51,6 +59,7 @@ export default function CouncilTab() {
             <div className="col" style={{ width: 400, minHeight: 0, overflow: 'auto' }}>
               <CouncilSettings workspace={active} key={active} />
               <FusionMethods repo={active} />
+              <ForgeCampaign repo={active} />
               <SessionHistory repo={active} onRerun={(id) => startRun(active, id)} />
               <ManualExecutor repo={active} />
               <RunLedger repo={active} />
@@ -73,6 +82,7 @@ export default function CouncilTab() {
             {runId && !running[runId] && lastFinishedStatus(events[runId]) === 'bounced' && <BounceRecovery runId={runId} onSent={() => markRunning(runId)} />}
             {activeTab === 'theater' && <DebateTheater events={runId ? (events[runId] ?? []) : []} live={runId ? live[runId] : undefined} running={runId ? running[runId] : false} nameOf={nameOf} />}
             {activeTab === 'result' && runId && <MethodResultPanel runId={runId} repo={active} />}
+            {activeTab === 'bible' && runId && <CampaignBible runId={runId} repo={active} running={!!running[runId]} />}
             {(activeTab === 'ask' || activeTab === 'pr' || activeTab === 'replay') && runId && <PostRunView runId={runId} roster={roster} view={activeTab} />}
           </div>
         </div>
@@ -198,6 +208,185 @@ function FusionMethods({ repo }: { repo: string }) {
           <div className="label">Existing Session protocols (Council/Crucible/…) ignore this — they use your manual assignment.</div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** FORGE — loop-only campaign launcher. Authors the GDD bible once, then loops the
+ *  crucible cycle over the backlog until done. Design-only mode resolves the bible
+ *  (writes no code). Consolidator defaults to Kimi; builder defaults to an edit-capable agent. */
+function ForgeCampaign({ repo }: { repo: string }) {
+  const { startRun } = useCouncil();
+  const [roster, setRoster] = useState<{ id: string; displayName: string; model?: string; transport?: string; capabilities?: { canEdit?: boolean } }[]>([]);
+  const [concept, setConcept] = useState('');
+  const [design, setDesign] = useState(false);
+  const [maxIterations, setMaxIterations] = useState(12);
+  const [batchSize, setBatchSize] = useState(2);
+  const [lean, setLean] = useState(false);
+  const [consolidatorId, setConsolidatorId] = useState('');
+  const [builderId, setBuilderId] = useState('');
+  const [skip, setSkip] = useState<Record<string, boolean>>({});   // providers to skip (e.g. claude out of tokens)
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [open, setOpen] = useState(false);
+  const [probing, setProbing] = useState(false);
+  const [probeMsg, setProbeMsg] = useState('');
+
+  useEffect(() => {
+    window.api.settings.get().then((s: any) => {
+      const r: typeof roster = s.fusionRoster ?? [];
+      setRoster(r);
+      const kimi = r.find((a) => /kimi/i.test(`${a.model ?? ''} ${a.id}`));   // default consolidator = Kimi
+      if (kimi) setConsolidatorId(kimi.id);
+      const ed = r.find((a) => a.capabilities?.canEdit);                       // default builder = first edit-capable
+      if (ed) setBuilderId(ed.id);
+    });
+  }, []);
+
+  const editors = roster.filter((a) => a.capabilities?.canEdit);
+  // map an agent to the engine's provider key so a "skip" toggle disables the right one
+  const provKey = (a: { id: string; model?: string; transport?: string }) => {
+    const h = `${a.model ?? ''} ${a.id}`.toLowerCase();
+    if (a.transport === 'claude-code' || /\bclaude\b/.test(h)) return 'claude';
+    if (a.transport === 'codex' || /\bcodex\b/.test(h)) return 'codex';
+    return '';
+  };
+  const presentProviders = Array.from(new Set(roster.map(provKey).filter(Boolean)));
+  async function run() {
+    if (!concept.trim()) { setErr('describe the game concept first'); return; }
+    if (!design && !editors.length) { setErr('build mode needs an edit-capable agent (Claude/Codex/OpenClaw, or a cloud model with "edits" on)'); return; }
+    const disableProviders = Object.entries(skip).filter(([, v]) => v).map(([k]) => k);
+    setBusy(true); setErr('');
+    const r = await window.api.council.startCampaign({ repo, concept, design, maxIterations, batchSize, lean, consolidatorId: consolidatorId || undefined, builderId: builderId || undefined, disableProviders });
+    setBusy(false);
+    if (r.ok && r.runId) startRun(repo, r.runId); else setErr(r.error ?? 'failed to start');
+  }
+  async function probe() {
+    setProbing(true); setProbeMsg('Probing roster capabilities — can take a minute…');
+    const r = await window.api.council.probeCapabilities();
+    setProbing(false);
+    if (!r.ok || !r.probed) { setProbeMsg(`probe failed: ${r.error ?? 'unknown'}`); return; }
+    const models = Object.keys(r.probed);
+    const passes = (m: string) => Object.values(r.probed![m]).filter((v) => v === 'pass').length;
+    const total = Object.values(r.probed[models[0]] ?? {}).length;
+    setProbeMsg(`probed ${models.length} model(s): ${models.map((m) => `${m.split(':')[0]} ${passes(m)}/${total}✓`).join(' · ')} — builds now route to the strongest emitters`);
+  }
+  return (
+    <div className="card col" style={{ gap: 6 }}>
+      <div className="row" style={{ justifyContent: 'space-between', cursor: 'pointer' }} onClick={() => setOpen((x) => !x)}>
+        <strong>🜂 Forge campaign <span className="label">(loop)</span></strong><span className="label">{open ? '▾' : '▸'}</span>
+      </div>
+      {open && <>
+        <div className="label" style={{ ...WRAP }}>Authors a Game Design Doc (the bible) once, then loops: pick the next dependency-ready batch → crucible cycle → build &amp; validate → mark done → repeat until the backlog is done. Writes <code>.fusion/campaign/GDD.md</code>; re-running continues it.</div>
+        <label className="label"><input type="checkbox" checked={design} disabled={busy} onChange={(e) => setDesign(e.target.checked)} /> Design only — resolve the bible, write no code</label>
+        <textarea placeholder="Describe the game from nothing: genre, core loop, platform/engine, controls, win/lose, vibe…" value={concept} onChange={(e) => setConcept(e.target.value)} rows={4} style={{ fontSize: 12 }} />
+        <div className="row" style={{ flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+          <label style={{ fontSize: 12 }}>max iters <input type="number" min={1} max={50} value={maxIterations} disabled={busy} onChange={(e) => setMaxIterations(Math.max(1, Math.min(50, Number(e.target.value) || 1)))} style={{ width: 56 }} /></label>
+          <label style={{ fontSize: 12 }}>batch <input type="number" min={1} max={5} value={batchSize} disabled={busy} onChange={(e) => setBatchSize(Math.max(1, Math.min(5, Number(e.target.value) || 1)))} style={{ width: 48 }} /></label>
+          <label style={{ fontSize: 12 }} title="Consolidate once per iteration instead of after every steelman⇄adversarial cycle"><input type="checkbox" checked={lean} disabled={busy} onChange={(e) => setLean(e.target.checked)} /> lean</label>
+        </div>
+        <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
+          <label style={{ fontSize: 12 }}>Consolidator <select value={consolidatorId} disabled={busy} onChange={(e) => setConsolidatorId(e.target.value)}><option value="">(auto)</option>{roster.map((a) => <option key={a.id} value={a.id}>{a.displayName}</option>)}</select></label>
+          {!design && <label style={{ fontSize: 12 }}>Builder <select value={builderId} disabled={busy} onChange={(e) => setBuilderId(e.target.value)}>{editors.length ? editors.map((a) => <option key={a.id} value={a.id}>{a.displayName}</option>) : <option value="">(none can edit)</option>}</select></label>}
+        </div>
+        {presentProviders.length > 0 && (
+          <div className="row" style={{ flexWrap: 'wrap', gap: 10, alignItems: 'center' }} title="Skip a provider this run — e.g. when Claude is out of tokens. The run routes around it (framer/consolidator/judge fall back) instead of feeding its error text into the build.">
+            <span className="label">Skip provider:</span>
+            {presentProviders.map((p) => (
+              <label key={p} style={{ fontSize: 12 }}><input type="checkbox" disabled={busy} checked={!!skip[p]} onChange={(e) => setSkip((s) => ({ ...s, [p]: e.target.checked }))} /> {p}</label>
+            ))}
+          </div>
+        )}
+        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+          <button onClick={probe} disabled={probing || busy} title="Ask each roster model to actually produce SVG / GDScript / chiptune / SFX and record what it can do, so builds route to capable agents. Same logic as the standalone capability-probe tool.">{probing ? 'Probing…' : '🧪 Probe capabilities'}</button>
+          <button onClick={run} disabled={busy} style={{ borderColor: 'var(--good)', color: 'var(--good)' }}>{busy ? 'Starting…' : '🜂 Start campaign'}</button>
+        </div>
+        {probeMsg && <div className="label" style={{ ...WRAP }}>{probeMsg}</div>}
+        {err && <div className="label" style={{ color: 'var(--bad)' }}>{err}</div>}
+        <div className="label" style={{ ...WRAP }}>Index the workspace (Project Brain → Index) so iterations ground in the accumulating code. Gate blockers are logged to <code>gates.md</code> and the loop keeps going (autonomous).</div>
+      </>}
+    </div>
+  );
+}
+
+/** FORGE — the live bible. Edit GDD.md in place while the campaign runs; the orchestrator
+ *  owns status flips and force-saves-then-pulls our buffer before each worker rotation, so
+ *  edits are picked up. Autosaves (debounced), flushes on unmount, and reflects on-disk
+ *  progress while the user isn't mid-edit. */
+function CampaignBible({ runId, repo, running }: { runId: string; repo: string; running: boolean }) {
+  type Stats = { total: number; done: number; blocked: number; todo: number; question: number; ready: number };
+  const [content, setContent] = useState('');
+  const [stats, setStats] = useState<Stats | null>(null);
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [info, setInfo] = useState<{ loop?: string; iterations?: number } | null>(null);
+  const contentRef = React.useRef('');
+  const dirtyRef = React.useRef(false);
+  const saveTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const setBuf = (v: string) => { contentRef.current = v; setContent(v); };
+  const save = React.useCallback(async () => {
+    setSaving(true);
+    const r = await window.api.council.campaignWriteGdd(repo, contentRef.current);
+    setSaving(false); dirtyRef.current = false; setDirty(false);
+    if (r.ok && r.stats) setStats(r.stats);
+  }, [repo]);
+  const loadFromDisk = React.useCallback(async () => {
+    const r = await window.api.council.campaignReadGdd(repo);
+    if (r.ok) { setBuf(r.content); setStats(r.stats); dirtyRef.current = false; setDirty(false); }
+  }, [repo]);
+
+  useEffect(() => {
+    window.api.council.campaignBibleActive(runId, true);
+    loadFromDisk();
+    window.api.council.campaignInfo(runId).then((r) => setInfo(r.result ?? null));
+    return () => {
+      if (dirtyRef.current) window.api.council.campaignWriteGdd(repo, contentRef.current);   // flush on unmount
+      window.api.council.campaignBibleActive(runId, false);
+    };
+  }, [runId, repo, loadFromDisk]);
+
+  // honor the worker's force-save request: save the in-progress buffer, then ack so it pulls
+  useEffect(() => {
+    const off = window.api.council.onEvent(async (e: { runId?: string; type?: string }) => {
+      if (e.runId !== runId || e.type !== 'gdd-flush') return;
+      if (dirtyRef.current) await window.api.council.campaignWriteGdd(repo, contentRef.current);
+      await window.api.council.campaignFlushAck(runId);
+    });
+    return off;
+  }, [runId, repo]);
+
+  // while running, reflect the orchestrator's on-disk status flips (only when not mid-edit)
+  useEffect(() => {
+    if (!running) return;
+    const t = setInterval(() => { if (!dirtyRef.current) loadFromDisk(); }, 4000);
+    return () => clearInterval(t);
+  }, [running, loadFromDisk]);
+
+  const onChange = (v: string) => {
+    setBuf(v); dirtyRef.current = true; setDirty(true);
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => { void save(); }, 800);
+  };
+  const pct = stats && stats.total ? Math.round((stats.done / stats.total) * 100) : 0;
+
+  return (
+    <div className="card col" style={{ gap: 6, flex: 1, minHeight: 0 }}>
+      <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: 6 }}>
+        <strong>🜂 Bible — GDD.md</strong>
+        {stats && <span className="label">{stats.done}/{stats.total} done · {stats.ready} ready · {stats.blocked} blocked{stats.question ? ` · ${stats.question} open Q` : ''} · {pct}%</span>}
+      </div>
+      {info?.loop && <div className="label">Campaign: {info.loop}{info.iterations != null ? ` · ${info.iterations} iteration(s)` : ''}</div>}
+      <textarea value={content} onChange={(e) => onChange(e.target.value)} spellCheck={false}
+        style={{ flex: 1, minHeight: 200, fontFamily: 'var(--mono, monospace)', fontSize: 12, resize: 'none', whiteSpace: 'pre', overflow: 'auto' }} />
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+        <span className="label">{dirty ? (saving ? 'saving…' : 'unsaved — autosaves; workers pull the latest each rotation') : 'saved'}{running ? ' · live' : ''}</span>
+        <div className="row" style={{ gap: 6 }}>
+          <button onClick={loadFromDisk} title="Discard local edits and reload the on-disk bible (with the orchestrator's latest status flips)">Reload</button>
+          <button onClick={save} disabled={saving} style={{ borderColor: 'var(--good)', color: 'var(--good)' }}>Save now</button>
+        </div>
+      </div>
+      <div className="label" style={{ ...WRAP }}>Edit freely. The <code>## Backlog</code> grammar (<code>[ ]</code> todo · <code>[x]</code> done · <code>[~]</code> blocked · <code>[?]</code> question) drives the loop. The orchestrator owns status flips; your prose/acceptance edits are picked up at the next worker rotation.</div>
     </div>
   );
 }
