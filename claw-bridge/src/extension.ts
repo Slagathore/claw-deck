@@ -8,10 +8,28 @@
 import * as vscode from 'vscode';
 import * as http from 'http';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 
-const VERSION = '0.1.0';
+const VERSION = '0.2.0';
 let server: http.Server | undefined;
+
+// Discovery registry so Claw Deck can find THIS window's bridge among several open
+// VS Code windows (each binds its own port and advertises its folders).
+const REG_DIR = path.join(os.homedir(), '.claw-bridge');
+let regFile: string | undefined;
+let heartbeat: NodeJS.Timeout | undefined;
+
+function folderPaths(): string[] { return (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath); }
+
+function writeRegistry(port: number) {
+  try {
+    fs.mkdirSync(REG_DIR, { recursive: true });
+    regFile = path.join(REG_DIR, `${port}.json`);
+    fs.writeFileSync(regFile, JSON.stringify({ port, pid: process.pid, version: VERSION, folders: folderPaths(), updated: Date.now() }));
+  } catch { /* registry is best-effort */ }
+}
+function clearRegistry() { try { if (regFile && fs.existsSync(regFile)) fs.unlinkSync(regFile); } catch { /* ignore */ } }
 
 function severity(s: vscode.DiagnosticSeverity): string {
   switch (s) {
@@ -86,35 +104,52 @@ function readBody(req: http.IncomingMessage): Promise<any> {
   return new Promise((resolve) => { let b = ''; req.on('data', (c) => (b += c)); req.on('end', () => { try { resolve(JSON.parse(b || '{}')); } catch { resolve({}); } }); });
 }
 
+const requestHandler = async (req: http.IncomingMessage, res: http.ServerResponse) => {
+  res.setHeader('Content-Type', 'application/json');
+  const send = (v: unknown, code = 200) => { res.statusCode = code; res.end(JSON.stringify(v)); };
+  try {
+    const url = new URL(req.url ?? '/', 'http://127.0.0.1');   // base is cosmetic — only the path/query matter
+    const file = url.searchParams.get('file');
+    switch (url.pathname) {
+      case '/status': return send({ version: VERSION, folders: folderPaths() });
+      case '/selection': return send(selection());
+      case '/diagnostics': return send(diagnostics(file));
+      case '/symbols': return send(await symbols(file));
+      case '/lm/models': return send(await lmModels());
+      case '/lm/invoke': return send(await lmInvoke(await readBody(req)));
+      case '/mcp': return send(mcp());
+      default: return send({ error: 'not found' }, 404);
+    }
+  } catch (e: any) { send({ error: String(e?.message ?? e) }, 500); }
+};
+
 export function activate(context: vscode.ExtensionContext) {
-  const port = vscode.workspace.getConfiguration('clawBridge').get<number>('port', 39217);
+  const startPort = vscode.workspace.getConfiguration('clawBridge').get<number>('port', 39217);
+  let boundPort = startPort;
 
-  server = http.createServer(async (req, res) => {
-    res.setHeader('Content-Type', 'application/json');
-    const send = (v: unknown, code = 200) => { res.statusCode = code; res.end(JSON.stringify(v)); };
-    try {
-      const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`);
-      const file = url.searchParams.get('file');
-      switch (url.pathname) {
-        case '/status': return send({ version: VERSION, folders: (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath) });
-        case '/selection': return send(selection());
-        case '/diagnostics': return send(diagnostics(file));
-        case '/symbols': return send(await symbols(file));
-        case '/lm/models': return send(await lmModels());
-        case '/lm/invoke': return send(await lmInvoke(await readBody(req)));
-        case '/mcp': return send(mcp());
-        default: return send({ error: 'not found' }, 404);
-      }
-    } catch (e: any) { send({ error: String(e?.message ?? e) }, 500); }
-  });
-
-  server.on('error', (err) => vscode.window.showWarningMessage(`Claw Bridge: could not listen on ${port} (${err.message})`));
-  server.listen(port, '127.0.0.1', () => console.log(`[claw-bridge] listening on 127.0.0.1:${port}`));
+  // Bind the first free port from startPort upward, so multiple VS Code windows each get
+  // their own bridge instead of the second one failing on EADDRINUSE.
+  const listen = (port: number, attemptsLeft: number) => {
+    server = http.createServer(requestHandler);
+    server.on('error', (err: any) => {
+      try { server?.close(); } catch { /* ignore */ }
+      if (err?.code === 'EADDRINUSE' && attemptsLeft > 0) { listen(port + 1, attemptsLeft - 1); }
+      else vscode.window.showWarningMessage(`Claw Bridge: could not listen (${err.message})`);
+    });
+    server.listen(port, '127.0.0.1', () => {
+      boundPort = port;
+      writeRegistry(port);
+      heartbeat = setInterval(() => writeRegistry(port), 30_000);   // liveness + folder refresh
+      console.log(`[claw-bridge] listening on 127.0.0.1:${port}`);
+    });
+  };
+  listen(startPort, 20);
 
   context.subscriptions.push(
-    { dispose: () => server?.close() },
-    vscode.commands.registerCommand('clawBridge.status', () => vscode.window.showInformationMessage(`Claw Bridge v${VERSION} listening on 127.0.0.1:${port} · ${(vscode.workspace.workspaceFolders ?? []).length} folder(s)`)),
+    { dispose: () => { if (heartbeat) clearInterval(heartbeat); clearRegistry(); try { server?.close(); } catch { /* ignore */ } } },
+    vscode.workspace.onDidChangeWorkspaceFolders(() => writeRegistry(boundPort)),   // keep advertised folders fresh
+    vscode.commands.registerCommand('clawBridge.status', () => vscode.window.showInformationMessage(`Claw Bridge v${VERSION} on 127.0.0.1:${boundPort} · ${folderPaths().length} folder(s)`)),
   );
 }
 
-export function deactivate() { server?.close(); }
+export function deactivate() { if (heartbeat) clearInterval(heartbeat); clearRegistry(); server?.close(); }

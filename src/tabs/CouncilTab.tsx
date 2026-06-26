@@ -31,7 +31,7 @@ export default function CouncilTab() {
     <div className="col" style={{ height: '100%' }}>
       <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'wrap' }}>
         <WorkspaceTabs />
-        <BridgeBadge />
+        <BridgeBadge workspace={active ?? undefined} />
       </div>
       {!active ? (
         <div className="card" style={{ color: 'var(--muted)' }}>Open a folder to start a multi-agent council session on it.</div>
@@ -100,26 +100,28 @@ function RunLedger({ repo }: { repo: string }) {
   );
 }
 
-/** claw-bridge status (Phase 6): live when VS Code + the extension are running. */
-function BridgeBadge() {
+/** claw-bridge status (Phase 6): connects to the VS Code window whose folders match the
+ *  active workspace — so it shows THIS project's diagnostics, not another window's. */
+function BridgeBadge({ workspace }: { workspace?: string }) {
   const [connected, setConnected] = useState(false);
+  const [matched, setMatched] = useState(false);
   const [lm, setLm] = useState(0);
   const [diag, setDiag] = useState(0);
   const [folders, setFolders] = useState(0);
   useEffect(() => {
     let on = true;
     const tick = async () => {
-      const st = await window.api.bridge.status();
+      const st = await window.api.bridge.status(workspace);
       if (!on) return;
-      setConnected(st.connected); setFolders(st.folders?.length ?? 0);
-      if (st.connected) { const m = await window.api.bridge.lmModels(); const d = await window.api.bridge.diagnostics(); if (on) { setLm(m.length); setDiag(d.length); } }
+      setConnected(st.connected); setMatched(!!st.matched); setFolders(st.folders?.length ?? 0);
+      if (st.connected) { const m = await window.api.bridge.lmModels(workspace); const d = st.matched ? await window.api.bridge.diagnostics(workspace) : []; if (on) { setLm(m.length); setDiag(d.length); } }
     };
     tick(); const t = setInterval(tick, 5000);
     return () => { on = false; clearInterval(t); };
-  }, []);
-  return connected
-    ? <span className="badge ok" title={`${folders} folder(s)`}>VS Code bridge · {lm} lm · {diag} problems</span>
-    : <span className="badge" style={{ color: 'var(--muted)' }} title="Open VS Code with the claw-bridge extension for live diagnostics + vscode.lm models">bridge offline</span>;
+  }, [workspace]);
+  if (!connected) return <span className="badge" style={{ color: 'var(--muted)' }} title="Open this project in VS Code with the claw-bridge extension for live diagnostics + vscode.lm models. (Optional — the council also reads the filesystem, git, and Atlas.)">bridge offline</span>;
+  if (!matched) return <span className="badge warn" title="A VS Code window with claw-bridge is running, but it's open to a DIFFERENT project — open THIS workspace in VS Code to surface its diagnostics.">VS Code bridge · other project</span>;
+  return <span className="badge ok" title={`${folders} folder(s) · this project`}>VS Code bridge · {lm} lm · {diag} problems</span>;
 }
 
 const WRAP: React.CSSProperties = { whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere' };

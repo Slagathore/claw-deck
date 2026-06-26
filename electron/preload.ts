@@ -95,12 +95,12 @@ contextBridge.exposeInMainWorld('api', {
     stopAll: () => invoke('mcp:stopAll')
   },
   bridge: {
-    status: () => invoke('bridge:status'),
-    diagnostics: (file?: string) => invoke('bridge:diagnostics', { file }),
-    selection: () => invoke('bridge:selection'),
-    lmModels: () => invoke('bridge:lmModels'),
-    invoke: (model: string, messages: { role: string; content: string }[]) => invoke('bridge:invoke', { model, messages }),
-    mcp: () => invoke('bridge:mcp')
+    status: (workspace?: string) => invoke('bridge:status', { workspace }),
+    diagnostics: (workspace?: string, file?: string) => invoke('bridge:diagnostics', { workspace, file }),
+    selection: (workspace?: string) => invoke('bridge:selection', { workspace }),
+    lmModels: (workspace?: string) => invoke('bridge:lmModels', { workspace }),
+    invoke: (model: string, messages: { role: string; content: string }[], workspace?: string) => invoke('bridge:invoke', { model, messages, workspace }),
+    mcp: (workspace?: string) => invoke('bridge:mcp', { workspace })
   },
   council: {
     start: (opts: { repo?: string; protocolId: string; assignment: any; task: string; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number }; prologue?: boolean; personas?: Record<string, string>; forceBlind?: boolean }) => invoke('council:start', opts),

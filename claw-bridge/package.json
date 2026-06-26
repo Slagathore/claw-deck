@@ -1,8 +1,8 @@
 {
   "name": "claw-bridge",
   "displayName": "Claw Bridge",
-  "description": "Publishes editor-only signals (workspace, selection, diagnostics, symbols, vscode.lm models, MCP config) to Claw Deck over localhost. Claw Deck connects when present and degrades to filesystem+git when absent.",
-  "version": "0.1.0",
+  "description": "Publishes editor-only signals (workspace, selection, diagnostics, symbols, vscode.lm models, MCP config) to Claw Deck over localhost. Multi-window aware: each VS Code window binds its own port and advertises its folders so Claw Deck reaches the right one. Degrades to filesystem+git when absent.",
+  "version": "0.2.0",
   "publisher": "cole",
   "private": true,
   "engines": { "vscode": "^1.90.0" },

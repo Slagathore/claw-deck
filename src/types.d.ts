@@ -88,12 +88,12 @@ declare global {
         stopAll: () => Promise<{ stopped: number }>;
       };
       bridge: {
-        status: () => Promise<{ connected: boolean; version?: string; folders?: string[] }>;
-        diagnostics: (file?: string) => Promise<{ file: string; line: number; severity: string; message: string; source?: string }[]>;
-        selection: () => Promise<{ file: string; text: string; line: number } | null>;
-        lmModels: () => Promise<{ id: string; vendor?: string; family?: string; name?: string; maxInputTokens?: number }[]>;
-        invoke: (model: string, messages: { role: string; content: string }[]) => Promise<string | null>;
-        mcp: () => Promise<{ name: string; command: string; args?: string[] }[]>;
+        status: (workspace?: string) => Promise<{ connected: boolean; version?: string; folders?: string[]; matched?: boolean }>;
+        diagnostics: (workspace?: string, file?: string) => Promise<{ file: string; line: number; severity: string; message: string; source?: string }[]>;
+        selection: (workspace?: string) => Promise<{ file: string; text: string; line: number } | null>;
+        lmModels: (workspace?: string) => Promise<{ id: string; vendor?: string; family?: string; name?: string; maxInputTokens?: number }[]>;
+        invoke: (model: string, messages: { role: string; content: string }[], workspace?: string) => Promise<string | null>;
+        mcp: (workspace?: string) => Promise<{ name: string; command: string; args?: string[] }[]>;
       };
       council: {
         start: (opts: { repo?: string; protocolId: string; assignment: import('../electron/council/agents').SessionAssignment; task: string; context?: string; hot?: { agents?: string[]; temperature?: number; top_p?: number }; prologue?: boolean; personas?: Record<string, string>; forceBlind?: boolean }) => Promise<{ ok: boolean; runId?: string; awaiting?: boolean; error?: string }>;
