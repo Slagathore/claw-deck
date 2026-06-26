@@ -497,6 +497,15 @@ function makeExecutorHooks(repo: string, runId: string, abortSignal?: AbortSigna
 }
 
 export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
+  // Boot reconciliation: any run still marked running/prologue/awaiting-answers belongs to
+  // a PREVIOUS app process that is now dead (its CLI children were killed and its HTTP
+  // requests abandoned when the app exited). Mark them interrupted so they aren't falsely
+  // "running" and become re-runnable/resumable. No tokens are in use — nothing auto-resumes.
+  try {
+    const r = getDb().prepare("UPDATE council_runs SET status='interrupted', finished=COALESCE(finished, ?) WHERE status IN ('running','prologue','awaiting-answers')").run(Date.now());
+    if (r.changes) { appendAudit('council:bootReconcile', { interrupted: r.changes }); trace('council:bootReconcile', { interrupted: r.changes }); }
+  } catch { /* best-effort */ }
+
   // Buffer the event stream per run so a past session can be replayed in the theater.
   // Persisted to council_runs.events on terminal events; pruned to the last 10 per repo.
   const eventLog = new Map<string, CouncilEvent[]>();
