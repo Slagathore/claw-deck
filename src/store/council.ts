@@ -30,7 +30,11 @@ export const useCouncil = create<CouncilState>((set) => ({
   questions: {},
   running: {},
   setConfig: (ws, c) => set((s) => ({ configs: { ...s.configs, [ws]: c } })),
-  startRun: (ws, runId) => set((s) => ({ runByWs: { ...s.runByWs, [ws]: runId }, events: { ...s.events, [runId]: [] }, live: { ...s.live, [runId]: {} }, questions: { ...s.questions, [runId]: [] }, running: { ...s.running, [runId]: true } })),
+  // NOTE: preserve any events/live that ALREADY arrived for this fresh runId — the IPC
+  // handler emits the first events (card, initial phase, the framer's agent-start) before
+  // it returns the runId, so resetting here would wipe them (theater looks empty until the
+  // first slow model — e.g. Claude — streams). runId is unique per run, so nothing stale.
+  startRun: (ws, runId) => set((s) => ({ runByWs: { ...s.runByWs, [ws]: runId }, events: { ...s.events, [runId]: s.events[runId] ?? [] }, live: { ...s.live, [runId]: s.live[runId] ?? {} }, questions: { ...s.questions, [runId]: s.questions[runId] ?? [] }, running: { ...s.running, [runId]: true } })),
   loadRun: (ws, runId, events) => set((s) => ({ runByWs: { ...s.runByWs, [ws]: runId }, events: { ...s.events, [runId]: events }, live: { ...s.live, [runId]: {} }, questions: { ...s.questions, [runId]: [] }, running: { ...s.running, [runId]: false } })),
   clearQuestions: (runId) => set((s) => ({ questions: { ...s.questions, [runId]: [] } })),
   markRunning: (runId) => set((s) => ({ running: { ...s.running, [runId]: true } })),
