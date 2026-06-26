@@ -23,7 +23,7 @@ import { makeTransport, TransportConfig } from '../council/transport';
 import { buildToolSet, ToolSet, McpServerSpec, ToolDef } from '../council/mcpClient';
 import { atlasDbPath, openAtlas, asQueryable } from '../atlas/db';
 import { locate } from '../atlas/query';
-import { advisorKey, ADVISOR_ELIGIBILITY } from '../council/roles';
+import { advisorKey, ADVISOR_ELIGIBILITY, advisorTemp } from '../council/roles';
 import { RosterAgent, SessionAssignment, validateAssignment, resolveAgents } from '../council/agents';
 import { createWorktree, captureDiff, writeArtifacts, applyToLiveTree, removeWorktree, Worktree } from '../executor/worktree';
 import { applyDiffToWorktree } from '../executor/applyDiff';
@@ -118,12 +118,17 @@ function parseQuestions(text: string): string[] {
 }
 
 /** Build a per-agent sampling map from a "run hot" selection (raised temperature). */
-function buildAgentOptions(hot?: { agents?: string[]; temperature?: number; top_p?: number }): Record<string, { temperature?: number; top_p?: number }> | undefined {
-  if (!hot?.agents?.length) return undefined;
-  const temperature = hot.temperature ?? 1.15;
+function buildAgentOptions(hot?: { agents?: string[]; temperature?: number; top_p?: number }, roster?: RosterAgent[]): Record<string, { temperature?: number; top_p?: number }> | undefined {
   const map: Record<string, { temperature?: number; top_p?: number }> = {};
-  for (const id of hot.agents) map[id] = { temperature, ...(hot.top_p != null ? { top_p: hot.top_p } : {}) };
-  return map;
+  // base: each advisor's recommended sampling temperature (e.g. Gemini-hot @ 1.1 for its
+  // diverger/wildcard/ideator roles). Applied wherever that model is called.
+  for (const a of roster ?? []) { const t = advisorTemp(a); if (t != null) map[a.id] = { temperature: t }; }
+  // override: the user's per-session "run hot" for the agents they picked.
+  if (hot?.agents?.length) {
+    const temperature = hot.temperature ?? 1.15;
+    for (const id of hot.agents) map[id] = { temperature, ...(hot.top_p != null ? { top_p: hot.top_p } : {}) };
+  }
+  return Object.keys(map).length ? map : undefined;
 }
 
 /** The READ-ONLY MCP servers a cloud panelist may use: Context7 (docs) + this
@@ -648,7 +653,7 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
 
     const runId = `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
     const task = withContext(opts.task, opts.context);
-    const agentOptions = buildAgentOptions(opts.hot);
+    const agentOptions = buildAgentOptions(opts.hot, roster);
     const agentPersonas = buildAgentPersonas(opts.personas);
     getDb().prepare('INSERT INTO council_runs(run_id, repo, protocol, task, assignment, status, started) VALUES(?,?,?,?,?,?,?)')
       .run(runId, opts.repo ?? null, protocol.id, task, JSON.stringify(opts.assignment), opts.prologue ? 'prologue' : 'running', Date.now());
@@ -679,7 +684,7 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
     const controller = new AbortController();
     const signal = { aborted: false, controller };
     signals.set(runId, signal);
-    const transport = makeTransport(transportConfig(opts.repo, controller.signal, buildAgentOptions(opts.hot), undefined, buildAgentPersonas(opts.personas)));
+    const transport = makeTransport(transportConfig(opts.repo, controller.signal, buildAgentOptions(opts.hot, roster), undefined, buildAgentPersonas(opts.personas)));
     const checker = resolveAgents(roster, ['@judge'], opts.assignment)[0];
     const db = getDb();
     db.prepare('INSERT INTO council_runs(run_id, repo, protocol, task, assignment, status, started) VALUES(?,?,?,?,?,?,?)')
@@ -895,7 +900,7 @@ export function registerCouncilHandlers(getWindow: () => BrowserWindow | null) {
     void (async () => {
       send(runId, { type: 'phase', phase: method.name, kind: 'method' });
       send(runId, { type: 'agent', phase: method.name, content: printMethodCard(method) });
-      const transport = makeTransport(transportConfig(opts.repo, controller.signal));
+      const transport = makeTransport(transportConfig(opts.repo, controller.signal, buildAgentOptions(undefined, roster)));
       // Atlas-first ingest + file-read grounding + build (one-shot: build is NOT auto-applied;
       // it lands in a worktree the user can review/apply from the Run ledger).
       const { atlasQuery, readFiles, build, runDir } = methodCaps(opts.repo, `method-${runId}`, controller, false);

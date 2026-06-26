@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { advisorKey, eligibleFor, pickAdvisors, makeBudget } from '../electron/council/roles';
+import { advisorKey, eligibleFor, pickAdvisors, makeBudget, advisorTemp } from '../electron/council/roles';
 import { RosterAgent } from '../electron/council/agents';
 
 const A = (id: string, model: string, transport = 'ollama-cloud', canEdit = false): RosterAgent =>
@@ -43,6 +43,13 @@ describe('fusion roles — §1.1 eligibility', () => {
   it('deepseek may NEVER do whole-doc QA, but may do focused (chunked) QA', () => {
     expect(eligibleFor(DEEPSEEK, 'qa-wholedoc')).toBe(false);
     expect(eligibleFor(DEEPSEEK, 'qa-focused')).toBe(true);
+  });
+
+  it('Gemini carries its recommended hot temperature (1.1); other models have none', () => {
+    expect(advisorTemp(GEMINI)).toBe(1.1);
+    expect(advisorTemp(KIMI)).toBeUndefined();
+    expect(advisorTemp(QWEN35)).toBeUndefined();
+    expect(advisorTemp(CLAUDE)).toBeUndefined();
   });
 
   it('whole-doc QA is limited to large-context models', () => {
