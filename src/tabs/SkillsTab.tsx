@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useSettings, useUI } from '../store/ui';
 import { useConsole } from '../store/console';
 import { buildSkillMd, slugify } from '../lib/skills';
-import { isRisky, toggleAllowlist, effectiveSummary, ignoredCount, RuleOverride } from '../lib/scanReview';
+import { isRisky, toggleAllowlist, effectiveSummary, ignoredCount, type RuleOverride } from '../lib/scanReview';
 import DeepScanReport from '../components/DeepScanReport';
 import RiskBadge from '../components/RiskBadge';
 
@@ -93,7 +93,7 @@ export default function SkillsTab() {
     if (r.ok) { setSkills(r.skills ?? []); setListErr(''); }
     else { setSkills([]); setListErr(r.reason || 'failed to read skills'); }
   }
-  useEffect(() => { reloadLocal(); /* eslint-disable-next-line */ }, [workspace]);
+  useEffect(() => { reloadLocal();   }, [workspace]);
 
   // Probe whether the clawhub CLI is available.
   useEffect(() => {

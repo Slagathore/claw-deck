@@ -4,7 +4,7 @@
 // Rails: max-iterations, cost ceiling, oscillation detector (same change
 // proposed↔reverted twice → stop), optional human checkpoint every N.
 
-import { RunResult } from './run';
+import { type RunResult } from './run';
 
 export interface GoalCheck { met: boolean; reason: string; nextSubtask?: string }
 

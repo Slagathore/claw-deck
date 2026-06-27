@@ -3,8 +3,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { getDb } from './db';
 import { isHostAllowed, scanFile, sha256OfFile, appendAudit, quarantineDir } from './security';
-import { fetchSources, FeedSource } from './feeds';
-import { verifyEd25519, KeySpec } from './signing';
+import { fetchSources, type FeedSource } from './feeds';
+import { verifyEd25519, type KeySpec } from './signing';
 import { vtLookup, installWithBackup, restoreBackup } from './reputation';
 
 interface UpgradeManifest {

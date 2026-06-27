@@ -7,7 +7,7 @@
 // Gates auto-parse their verdict for now; interactive approveGate is a Phase-4
 // refinement (the event stream already surfaces every verdict).
 
-import { ipcMain, BrowserWindow } from 'electron';
+import { ipcMain, type BrowserWindow } from 'electron';
 import { randomUUID, createHash } from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -15,22 +15,22 @@ import * as path from 'path';
 import { getDb } from './db';
 import { getSetting } from './settings';
 import { appendAudit } from './security';
-import { PROTOCOLS, Protocol } from '../council/protocol';
-import { runProtocol, ExecutorHooks, CouncilEvent, ResumeState, RunResult } from '../council/run';
+import { PROTOCOLS, type Protocol } from '../council/protocol';
+import { runProtocol, type ExecutorHooks, type CouncilEvent, type ResumeState, type RunResult } from '../council/run';
 import { METHODS, runMethod, printMethodCard, buildForgeCycle, buildCharter } from '../council/methods';
 import { runAutoloop } from '../council/autoloop';
 import * as gdd from '../council/gdd';
-import { makeTransport, TransportConfig } from '../council/transport';
-import { buildToolSet, ToolSet, McpServerSpec, ToolDef } from '../council/mcpClient';
+import { makeTransport, type TransportConfig } from '../council/transport';
+import { buildToolSet, type ToolSet, type McpServerSpec, type ToolDef } from '../council/mcpClient';
 import { atlasDbPath, openAtlas, asQueryable } from '../atlas/db';
 import { scanWorkspace, writeIndex } from '../atlas/index';
 import { locate } from '../atlas/query';
-import { advisorKey, ADVISOR_ELIGIBILITY, advisorTemp, FusionRole } from '../council/roles';
+import { advisorKey, ADVISOR_ELIGIBILITY, advisorTemp, type FusionRole } from '../council/roles';
 import { looksLikeProviderError } from '../council/providerError';
-import { assetGuidance, rankEditors, ProbedCaps } from '../council/capabilities';
+import { assetGuidance, rankEditors, type ProbedCaps } from '../council/capabilities';
 import { probeCapabilities } from '../council/capabilityProbe';
-import { RosterAgent, SessionAssignment, validateAssignment, resolveAgents } from '../council/agents';
-import { createWorktree, captureDiff, writeArtifacts, applyToLiveTree, removeWorktree, Worktree } from '../executor/worktree';
+import { type RosterAgent, type SessionAssignment, validateAssignment, resolveAgents } from '../council/agents';
+import { createWorktree, captureDiff, writeArtifacts, applyToLiveTree, removeWorktree, type Worktree } from '../executor/worktree';
 import { applyDiffToWorktree } from '../executor/applyDiff';
 import { validateWorktree } from '../executor/validate';
 import { parsePorcelain } from '../executor/gitStatus';

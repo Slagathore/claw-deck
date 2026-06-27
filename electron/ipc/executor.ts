@@ -13,9 +13,9 @@ import { ipcMain } from 'electron';
 import { randomUUID } from 'crypto';
 import { appendAudit } from './security';
 import { getDb } from './db';
-import { createWorktree, captureDiff, writeArtifacts, applyToLiveTree, removeWorktree, Worktree } from '../executor/worktree';
+import { createWorktree, captureDiff, writeArtifacts, applyToLiveTree, removeWorktree, type Worktree } from '../executor/worktree';
 import { applyDiffToWorktree } from '../executor/applyDiff';
-import { validateWorktree, ValidationResult } from '../executor/validate';
+import { validateWorktree, type ValidationResult } from '../executor/validate';
 import { createSnapshot, restoreSnapshot, findSnapshotById } from '../selfUpgrade/snapshot';
 
 type Mode = 'delegate' | 'apply';

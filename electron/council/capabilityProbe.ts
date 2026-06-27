@@ -4,7 +4,7 @@
 // this is the lean app-embedded one (no external dependency). Reasoning is suppressed
 // (think:false) and an empty reply is retried with a bigger budget — same error-correction idea.
 
-import { PROBE_PROMPTS, ProbedCaps } from './capabilities';
+import { PROBE_PROMPTS, type ProbedCaps } from './capabilities';
 import { looksLikeProviderError } from './providerError';
 
 async function chat(base: string, model: string, prompt: string, numPredict: number, timeoutMs: number): Promise<{ content: string; error: string | null }> {

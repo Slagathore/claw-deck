@@ -11,8 +11,8 @@
 // and emit nothing unless reasoning is suppressed (think:false) or the budget is large.
 // `reasoningHeavy` flags those (the empty-reply guard in the engine drops + fails them over).
 
-import { AdvisorKey, advisorKey } from './roles';
-import { RosterAgent } from './agents';
+import { type AdvisorKey, advisorKey } from './roles';
+import { type RosterAgent } from './agents';
 
 /** Asset kinds a text model can emit directly (as text/code). */
 export type TextAssetKind = 'svg' | 'gdscript' | 'code' | 'chiptune' | 'sfx' | 'shader';

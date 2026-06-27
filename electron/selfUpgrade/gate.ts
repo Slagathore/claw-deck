@@ -1,5 +1,5 @@
 import * as path from 'path';
-import { auditDirectory, AuditReport, Finding } from '../lib/scanner';
+import { auditDirectory, type AuditReport, type Finding } from '../lib/scanner';
 import { run, which } from './exec';
 
 export interface GateResult {

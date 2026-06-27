@@ -8,7 +8,7 @@
 // Pure + dependency-free → fully unit-testable. Absent/unreachable advisors are
 // simply skipped during assignment (§1.2 no-abort: log a coverage gap, proceed).
 
-import { RosterAgent } from './agents';
+import { type RosterAgent } from './agents';
 
 // Fine-grained roles the methods assign (distinct from the coarse SessionAssignment roles).
 export type FusionRole =

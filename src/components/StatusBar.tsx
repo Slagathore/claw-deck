@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useSettings, useUI } from '../store/ui';
-import { formatBytes, RunningModel, totalVram } from '../lib/vram';
+import { formatBytes, type RunningModel, totalVram } from '../lib/vram';
 
 /**
  * Persistent status bar at the bottom of the app. Shows live system state

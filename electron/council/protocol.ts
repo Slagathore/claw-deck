@@ -1,5 +1,5 @@
 // Protocols & phase primitives (BOOTSTRAP §4.3). Pure data + parsing helpers.
-import { GateVerdict } from './agents';
+import { type GateVerdict } from './agents';
 
 export type PhaseKind = 'ingest' | 'independent' | 'debate' | 'gauntlet' | 'steelman' | 'select' | 'synthesize' | 'gate' | 'relay' | 'vote' | 'propose' | 'execute';
 

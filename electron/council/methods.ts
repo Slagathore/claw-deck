@@ -6,9 +6,9 @@
 // with stubs. Exotic capabilities (compile-check, golden tests, Atlas, build) are passed
 // in deps and DEGRADE GRACEFULLY when absent — never abort (§1.2).
 
-import { RosterAgent, Msg } from './agents';
-import { TransportFn, CouncilEvent } from './run';
-import { FusionRole, pickAdvisors, Budget, makeBudget, advisorKey, AdvisorKey } from './roles';
+import { type RosterAgent, type Msg } from './agents';
+import { type TransportFn, type CouncilEvent } from './run';
+import { type FusionRole, pickAdvisors, type Budget, makeBudget, advisorKey, type AdvisorKey } from './roles';
 import { lintArtifact, formatFindings } from './fusionLint';
 import { boundedRepair, runPhase, sha12, echoMatches, artifactStore } from './fusionInfra';
 import { looksLikeProviderError, providerErrorKind } from './providerError';

@@ -4,10 +4,10 @@ import { useConsole } from '../store/console';
 import {
   MODEL_CATALOG, MCP_CATALOG, TOOL_CATALOG, OPENCLAW_PLUGIN_CATALOG,
   searchModels, searchMcp, searchTools, searchOpenClawPlugins, openclawInstallRef,
-  ModelEntry, McpPreset, ToolPreset, OpenClawPluginEntry
+  type ModelEntry, type McpPreset, type ToolPreset, type OpenClawPluginEntry
 } from '../lib/catalog';
 import { formatBytes } from '../lib/vram';
-import { isRisky, toggleAllowlist, effectiveSummary, ignoredCount, RuleOverride } from '../lib/scanReview';
+import { isRisky, toggleAllowlist, effectiveSummary, ignoredCount, type RuleOverride } from '../lib/scanReview';
 import DeepScanReport from '../components/DeepScanReport';
 import RiskBadge from '../components/RiskBadge';
 

@@ -11,7 +11,7 @@
 //     other has refs → superseded_by the other. (Pairs come from embedding
 //     clusters in embed.ts; injected here so the rule is testable on its own.)
 
-import { SymbolStatus } from './types';
+import { type SymbolStatus } from './types';
 
 export interface StalenessSymbol {
   key: string;

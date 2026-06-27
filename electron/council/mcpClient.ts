@@ -4,7 +4,7 @@
 // (Atlas code-brain + Context7) given to panelists — never the write-capable
 // servers. No SDK dependency; newline-delimited JSON-RPC 2.0.
 
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
 import { trace } from '../ipc/trace';
 
 export interface McpServerSpec { name: string; command: string; args?: string[]; env?: Record<string, string>; cwd?: string }

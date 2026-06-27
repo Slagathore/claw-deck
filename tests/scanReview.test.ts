@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { findingFingerprint, effectiveSummary, isRisky, ignoredCount, toggleAllowlist, effectiveSeverity, worstSeverity, ScanFinding } from '../src/lib/scanReview';
+import { findingFingerprint, effectiveSummary, isRisky, ignoredCount, toggleAllowlist, effectiveSeverity, worstSeverity, type ScanFinding } from '../src/lib/scanReview';
 
 const f = (rule: string, file: string, severity: string, snippet = ''): ScanFinding => ({ rule, file, severity, snippet });
 

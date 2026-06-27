@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import WorkspaceTabs from '../components/WorkspaceTabs';
 import CouncilSettings from '../components/CouncilSettings';
 import DebateTheater from '../components/DebateTheater';
-import DiffReview, { Proposal } from '../components/DiffReview';
+import DiffReview, { type Proposal } from '../components/DiffReview';
 import { useWorkspaces } from '../store/workspaces';
 import { useCouncil } from '../store/council';
 

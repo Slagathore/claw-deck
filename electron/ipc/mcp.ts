@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { ChildProcess, spawn } from 'child_process';
+import { type ChildProcess, spawn } from 'child_process';
 import { getDb } from './db';
 
 export interface McpServerConfig {

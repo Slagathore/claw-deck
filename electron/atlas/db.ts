@@ -7,7 +7,7 @@ import Database from 'better-sqlite3';
 import * as path from 'path';
 import * as fs from 'fs';
 import { migrate } from './schema';
-import { Queryable } from './driver';
+import { type Queryable } from './driver';
 
 const handles = new Map<string, Database.Database>();
 
@@ -47,7 +47,7 @@ function probeSqliteVec(db: Database.Database): void {
     if (prior) return;
     let ok = false;
     try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
+
       const sqliteVec = require('sqlite-vec');
       sqliteVec.load(db);
       const v = db.prepare('SELECT vec_version() AS v').get() as { v: string } | undefined;

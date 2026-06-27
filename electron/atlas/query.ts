@@ -2,8 +2,8 @@
 // (Electron IPC), node:sqlite (the code-brain MCP server), and vitest.
 // These back both the code-brain MCP tools (§4.4) and the Project Brain UI.
 
-import { Queryable } from './driver';
-import { SymbolCard, SymbolStatus } from './types';
+import { type Queryable } from './driver';
+import { type SymbolCard, type SymbolStatus } from './types';
 
 const SYM_SELECT = `
 SELECT s.id, s.key, s.name, s.qualified_name AS qualifiedName, s.kind, s.signature,

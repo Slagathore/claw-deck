@@ -3,19 +3,19 @@
 // query / graph / card / enrich / close. New `atlas` namespace = a superset of
 // window.api; no existing contract is touched.
 
-import { ipcMain, BrowserWindow } from 'electron';
+import { ipcMain, type BrowserWindow } from 'electron';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { getDb } from './db';
 import { getSetting } from './settings';
 import { openAtlas, closeAtlas, getOpenAtlas, asQueryable, atlasDbPath, sqliteVecAvailable } from '../atlas/db';
 import { scanWorkspace, writeIndex } from '../atlas/index';
-import { watchWorkspace, Watcher } from '../atlas/watch';
+import { watchWorkspace, type Watcher } from '../atlas/watch';
 import { embedPending, applySupersededFromEmbeddings } from '../atlas/embed';
 import { summarizePending } from '../atlas/summarize';
 import { run } from '../selfUpgrade/exec';
 import * as q from '../atlas/query';
-import { SymbolStatus } from '../atlas/types';
+import { type SymbolStatus } from '../atlas/types';
 
 const watchers = new Map<string, Watcher>();
 const keyOf = (ws: string) => path.resolve(ws);

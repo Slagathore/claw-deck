@@ -1,5 +1,5 @@
 import { ipcMain, dialog } from 'electron';
-import { auditDirectory, AuditReport } from '../lib/scanner';
+import { auditDirectory, type AuditReport } from '../lib/scanner';
 
 function emptyReport(error: string): AuditReport {
   return {

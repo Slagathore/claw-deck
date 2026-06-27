@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveRoleRef, resolveAgents, validateAssignment, RosterAgent, SessionAssignment } from '../electron/council/agents';
+import { resolveRoleRef, resolveAgents, validateAssignment, type RosterAgent, type SessionAssignment } from '../electron/council/agents';
 import { PROTOCOLS, parseGateVerdict, parseBlindVerdict, isConverged, extractDiff } from '../electron/council/protocol';
 
 const ROSTER: RosterAgent[] = [

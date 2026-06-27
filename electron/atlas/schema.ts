@@ -10,7 +10,7 @@
 //     is verified to load in this Electron build (see RECON.md / BOOTSTRAP §3).
 //   - atlas_meta(key,value): schema version + resumable embed/summarize cursors.
 
-import { Queryable } from './driver';
+import { type Queryable } from './driver';
 
 export const SCHEMA_VERSION = 1;
 

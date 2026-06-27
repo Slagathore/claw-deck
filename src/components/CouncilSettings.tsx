@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useCouncil, Assignment, SessionConfig } from '../store/council';
+import { useCouncil, type Assignment, type SessionConfig } from '../store/council';
 
 interface RosterAgent { id: string; displayName: string; transport: string; model?: string; binary?: string; capabilities: { canEdit: boolean; canRunTools: boolean; costTier: string } }
 const PROTOCOLS = ['COUNCIL', 'CRUCIBLE', 'GAUNTLET', 'DEVIL', 'STEELMAN', 'TOURNAMENT', 'REDTEAM', 'PCRSR', 'GCRJ', 'PAIR', 'SOLO'];

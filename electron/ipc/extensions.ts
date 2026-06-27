@@ -3,7 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as fsp from 'fs/promises';
 import { run, which } from '../selfUpgrade/exec';
-import { auditDirectory, AuditReport } from '../lib/scanner';
+import { auditDirectory, type AuditReport } from '../lib/scanner';
 
 /**
  * Real installer for OpenClaw extensions. Fetches the package source into

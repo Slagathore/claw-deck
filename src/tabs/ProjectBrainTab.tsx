@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import cytoscape from 'cytoscape';
-import { atlas, AtlasStatus, STATUS_COLOR, STATUS_BADGE } from '../lib/atlasClient';
+import { atlas, type AtlasStatus, STATUS_COLOR, STATUS_BADGE } from '../lib/atlasClient';
 
 const ALL_STATUSES: AtlasStatus[] = ['active', 'orphaned', 'deprecated', 'superseded'];
 

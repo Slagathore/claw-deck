@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { advisorKey, eligibleFor, pickAdvisors, makeBudget, advisorTemp } from '../electron/council/roles';
-import { RosterAgent } from '../electron/council/agents';
+import { type RosterAgent } from '../electron/council/agents';
 
 const A = (id: string, model: string, transport = 'ollama-cloud', canEdit = false): RosterAgent =>
   ({ id, displayName: id, transport: transport as any, model, capabilities: { canEdit, canRunTools: false, costTier: 'cheap' } });

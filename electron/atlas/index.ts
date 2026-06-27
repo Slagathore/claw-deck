@@ -11,12 +11,12 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { spawnSync } from 'child_process';
-import { Queryable, rowId } from './driver';
+import { type Queryable, rowId } from './driver';
 import { migrate } from './schema';
 import { parseTsProgram } from './parse/tsProgram';
 import { parsePolyglot, polyLangOf } from './parse/polyglot';
 import { computeStaleness, makeEntrypointPredicate } from './staleness';
-import { ParseResult } from './types';
+import { type ParseResult } from './types';
 
 export interface FileMeta { lang: string; hash: string; mtime: number; gitLastDate?: number | null }
 

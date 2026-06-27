@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { runAutoloop, oscillates, AutoloopDeps } from '../electron/council/autoloop';
-import { RunResult } from '../electron/council/run';
+import { runAutoloop, oscillates, type AutoloopDeps } from '../electron/council/autoloop';
+import { type RunResult } from '../electron/council/run';
 
 const fakeResult = (): RunResult => ({ status: 'completed', phasesRun: [], transcript: [], artifact: '', verdicts: [], approved: true });
 

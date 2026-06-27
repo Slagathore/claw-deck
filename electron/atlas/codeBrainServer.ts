@@ -10,7 +10,7 @@
 // rather than mcp/code-brain/server.ts, so it needs no extra build target.
 
 import { DatabaseSync } from 'node:sqlite';
-import { Queryable } from './driver';
+import { type Queryable } from './driver';
 import * as q from './query';
 
 function argDb(): string {

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { runProtocol, TransportFn, CouncilEvent, ExecutorHooks } from '../electron/council/run';
-import { PROTOCOLS, Protocol } from '../electron/council/protocol';
-import { RosterAgent, SessionAssignment } from '../electron/council/agents';
+import { runProtocol, type TransportFn, type CouncilEvent, type ExecutorHooks } from '../electron/council/run';
+import { PROTOCOLS, type Protocol } from '../electron/council/protocol';
+import { type RosterAgent, type SessionAssignment } from '../electron/council/agents';
 
 const ROSTER: RosterAgent[] = [
   { id: 'p1', displayName: 'Panel One', transport: 'ollama-cloud', capabilities: { canEdit: false, canRunTools: false, costTier: 'cheap' } },

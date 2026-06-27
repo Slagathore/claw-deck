@@ -3,7 +3,7 @@
 // + resumable (only summarizes rows with summary IS NULL). Gated: fails fast and
 // never crashes when the model/Ollama is unavailable.
 
-import { Queryable } from './driver';
+import { type Queryable } from './driver';
 
 export interface SummarizeOpts { baseUrl?: string; model?: string; max?: number; concurrency?: number }
 export interface SummarizeResult { ok: boolean; summarized: number; remaining: number; reason?: string }

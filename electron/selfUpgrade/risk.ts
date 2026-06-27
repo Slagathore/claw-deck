@@ -1,4 +1,4 @@
-import { PatchSet } from './patcher';
+import { type PatchSet } from './patcher';
 
 export type RiskLevel = 'low' | 'medium' | 'high';
 

@@ -10,7 +10,7 @@
 // size threshold instead of an O(n²) all-pairs sweep — so a 10k-node repo doesn't
 // stall the renderer.
 
-import { Queryable } from './driver';
+import { type Queryable } from './driver';
 
 export interface EmbedOpts { baseUrl?: string; model?: string; max?: number; concurrency?: number; batchSize?: number }
 export interface EmbedResult { ok: boolean; embedded: number; remaining: number; reason?: string }

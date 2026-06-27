@@ -3,7 +3,7 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import { git } from './git';
-import { Worktree } from './worktree';
+import { type Worktree } from './worktree';
 
 export async function applyDiffToWorktree(wt: Worktree, diff: string): Promise<{ ok: boolean; error?: string }> {
   if (!diff.trim()) return { ok: false, error: 'empty diff' };

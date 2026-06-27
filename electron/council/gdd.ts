@@ -93,7 +93,7 @@ export function appendItems(md: string, newLines: string[]): string {
   const clean = newLines.map((l) => l.trim()).filter(Boolean);
   if (!clean.length) return md;
   const lines = (md ?? '').split(/\r?\n/);
-  let headingIdx = lines.findIndex((l) => /^#{1,6}\s+backlog\b/i.test(l));
+  const headingIdx = lines.findIndex((l) => /^#{1,6}\s+backlog\b/i.test(l));
   if (headingIdx < 0) { lines.push('', '## Backlog', ...clean); return lines.join('\n'); }
   // find the last list line of the backlog section to insert after it
   let insertAt = headingIdx + 1;

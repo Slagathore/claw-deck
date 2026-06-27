@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { summarizeVtResponse, VtSummary } from './signing';
+import { summarizeVtResponse, type VtSummary } from './signing';
 
 /**
  * Optional VirusTotal v3 hash lookup (no upload). Returns null when no API key

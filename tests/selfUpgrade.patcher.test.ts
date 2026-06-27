@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { validatePatchSet, applyPatchSet, extractPatchSetFromText, PatchSet } from '../electron/selfUpgrade/patcher';
+import { validatePatchSet, applyPatchSet, extractPatchSetFromText, type PatchSet } from '../electron/selfUpgrade/patcher';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';

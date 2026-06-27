@@ -4,7 +4,7 @@
 // from-scratch game in any stack (HTML/JS, Godot, Python, Rust, Go, Node) is gated
 // by a real build/test — and a missing toolchain degrades to "skipped", never a
 // false failure. selfUpgrade still uses runInSandbox directly for its own gate.
-import { Worktree } from './worktree';
+import { type Worktree } from './worktree';
 import { runStackGate } from './stack';
 import { getSetting } from '../ipc/settings';
 

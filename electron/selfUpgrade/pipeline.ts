@@ -1,11 +1,11 @@
 import { BrowserWindow, webContents } from 'electron';
-import { PatchSet, applyPatchSet } from './patcher';
-import { assessRisk, RiskAssessment } from './risk';
-import { createSnapshot, restoreSnapshot, Snapshot } from './snapshot';
-import { baselineAudit, runGate, GateResult } from './gate';
-import { runProbe, ProbeResult, ProbeCheck } from './probe';
-import { runInSandbox, SandboxResult } from './sandbox';
-import { repoStatus, RepoStatus } from './github';
+import { type PatchSet, applyPatchSet } from './patcher';
+import { assessRisk, type RiskAssessment } from './risk';
+import { createSnapshot, restoreSnapshot, type Snapshot } from './snapshot';
+import { baselineAudit, runGate, type GateResult } from './gate';
+import { runProbe, type ProbeResult, type ProbeCheck } from './probe';
+import { runInSandbox, type SandboxResult } from './sandbox';
+import { repoStatus, type RepoStatus } from './github';
 
 export type PipelinePhase =
   | 'github-check'

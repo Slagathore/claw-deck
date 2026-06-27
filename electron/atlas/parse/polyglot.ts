@@ -12,7 +12,7 @@
 // (resolved=0), which is exactly tree-sitter's "structural" remit here — swapping
 // python/bash to tree-sitter later is a precision upgrade behind this same API.
 
-import { ParseResult, ParsedSymbol, ParsedEdge, SymbolKind } from '../types';
+import { type ParseResult, type ParsedSymbol, type ParsedEdge, type SymbolKind } from '../types';
 
 export type PolyLang = 'python' | 'bash' | 'gdscript';
 

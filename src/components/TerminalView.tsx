@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
-import { ConsoleSession } from '../store/console';
+import { type ConsoleSession } from '../store/console';
 
 /**
  * xterm.js view for a PTY-backed Console session. Renders the real terminal

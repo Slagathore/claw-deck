@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { pickAssetFor, compareSemver, isNewer, ReleaseCandidate } from '../src/lib/autoUpdate';
+import { pickAssetFor, compareSemver, isNewer, type ReleaseCandidate } from '../src/lib/autoUpdate';
 
 function rc(...names: string[]): ReleaseCandidate {
   return {

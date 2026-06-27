@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { METHODS, printMethodCard, runMethod, MethodDeps, Method, buildForgeCycle, buildCharter } from '../electron/council/methods';
-import { TransportFn } from '../electron/council/run';
-import { RosterAgent } from '../electron/council/agents';
+import { METHODS, printMethodCard, runMethod, type MethodDeps, type Method, buildForgeCycle, buildCharter } from '../electron/council/methods';
+import { type TransportFn } from '../electron/council/run';
+import { type RosterAgent } from '../electron/council/agents';
 
 const A = (id: string, model: string, transport = 'ollama-cloud', canEdit = false): RosterAgent =>
   ({ id, displayName: id, transport: transport as any, model, capabilities: { canEdit, canRunTools: false, costTier: 'cheap' } });

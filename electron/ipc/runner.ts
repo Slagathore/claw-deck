@@ -1,5 +1,5 @@
-import { ipcMain, BrowserWindow } from 'electron';
-import { spawn, ChildProcess } from 'child_process';
+import { ipcMain, type BrowserWindow } from 'electron';
+import { spawn, type ChildProcess } from 'child_process';
 import { randomUUID } from 'crypto';
 import { getActiveMcpEnv } from './mcp';
 import { resolveCliBinary } from './cliResolve';

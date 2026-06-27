@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fsp from 'fs/promises';
-import { PatchSet, extractPatchSetFromText } from './patcher';
+import { type PatchSet, extractPatchSetFromText } from './patcher';
 
 const TEXT_EXTS = new Set(['.ts', '.tsx', '.js', '.jsx', '.json', '.md']);
 const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'dist-electron', 'dist-installer', 'dist-installer2', 'dist-installer3', 'dist-installer4', 'dist-installer5', 'dist-installer6', 'dist-installer7', 'dist-installer8', '.cache', 'public']);

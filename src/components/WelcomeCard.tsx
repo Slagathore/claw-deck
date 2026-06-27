@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useSettings, useUI } from '../store/ui';
-import { RunningModel } from '../lib/vram';
+import { type RunningModel } from '../lib/vram';
 
 const DISMISS_KEY = 'clawdeck:welcome:dismissed';
 

@@ -5,8 +5,8 @@
 // phase so raw transcripts never get dumped into the actors. Gates return a
 // verdict; major/veto bounces the run.
 
-import { RosterAgent, SessionAssignment, Msg, GateVerdict, resolveAgents } from './agents';
-import { Protocol, Phase, parseGateVerdict, parseBlindVerdict, isConverged, extractDiff } from './protocol';
+import { type RosterAgent, type SessionAssignment, type Msg, type GateVerdict, resolveAgents } from './agents';
+import { type Protocol, Phase, parseGateVerdict, parseBlindVerdict, isConverged, extractDiff } from './protocol';
 import { lintArtifact, formatFindings } from './fusionLint';
 import { boundedRepair } from './fusionInfra';
 import { looksLikeProviderError, providerErrorKind } from './providerError';

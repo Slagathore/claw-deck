@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { CouncilEvt, LiveLane } from '../store/council';
+import { type CouncilEvt, type LiveLane } from '../store/council';
 
 const LANE_COLORS = ['#7c9cff', '#4ade80', '#fbbf24', '#f87171', '#a78bfa', '#22d3ee'];
 const WRAP: React.CSSProperties = { whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere' };

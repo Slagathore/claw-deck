@@ -26,6 +26,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc -p tsconfig.json --noEmit && tsc -p electron/tsconfig.json --noEmit",
+    "lint:eslint": "eslint .",
+    "lint:all": "npm run lint && npm run lint:eslint",
     "postinstall": "electron-builder install-app-deps || echo skipped"
   },
   "dependencies": {
@@ -40,6 +42,7 @@
     "zustand": "^4.5.5"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/better-sqlite3": "^7.6.11",
     "@types/cytoscape": "^3.21.9",
     "@types/node": "^20.14.10",
@@ -50,7 +53,12 @@
     "cross-env": "^10.1.0",
     "electron": "^42.4.0",
     "electron-builder": "^26.15.3",
+    "eslint": "^10.6.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.3",
+    "globals": "^17.7.0",
     "typescript": "^5.5.4",
+    "typescript-eslint": "^8.62.0",
     "vite": "^8.0.16",
     "vitest": "^4.1.9",
     "wait-on": "^7.2.0"

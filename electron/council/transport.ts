@@ -5,11 +5,11 @@
 // The state machine (run.ts) takes this as an injected TransportFn, so this file
 // holds only the I/O; all orchestration logic is tested separately with stubs.
 
-import { RosterAgent, Msg } from './agents';
+import { type RosterAgent, type Msg } from './agents';
 import { runCaptured } from '../ipc/runner';
 import { bridgeLmInvoke } from '../bridge/client';
 import { trace } from '../ipc/trace';
-import { ToolDef } from './mcpClient';
+import { type ToolDef } from './mcpClient';
 
 export interface TransportConfig {
   ollamaCloudUrl?: string;   // default https://ollama.com/v1

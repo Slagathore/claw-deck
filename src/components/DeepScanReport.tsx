@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   findingFingerprint, effectiveSummary, ignoredCount, effectiveSeverity,
-  RuleOverride, RuleOverrides
+  type RuleOverride, type RuleOverrides
 } from '../lib/scanReview';
 import { RULE_INFO } from '../lib/ruleInfo';
 

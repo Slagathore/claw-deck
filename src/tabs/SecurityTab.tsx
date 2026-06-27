@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useSettings } from '../store/ui';
-import { toggleAllowlist, RuleOverride } from '../lib/scanReview';
+import { toggleAllowlist, type RuleOverride } from '../lib/scanReview';
 import DeepScanReport from '../components/DeepScanReport';
 
 export default function SecurityTab() {

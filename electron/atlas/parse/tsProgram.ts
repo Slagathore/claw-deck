@@ -12,7 +12,7 @@
 // there). This module owns the `.ts`/`.tsx` story, which is all of claw-deck.
 
 import ts from 'typescript';
-import { ParseResult, ParsedSymbol, ParsedEdge, SymbolKind, EdgeKind } from '../types';
+import { type ParseResult, type ParsedSymbol, type ParsedEdge, type SymbolKind, type EdgeKind } from '../types';
 
 const OPTIONS: ts.CompilerOptions = {
   target: ts.ScriptTarget.ES2022,

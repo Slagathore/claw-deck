@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import UpgradesTab from './UpgradesTab';
 import { useSettings, useUI } from '../store/ui';
 import { useConsole } from '../store/console';
-import { pickAssetFor, isNewer, Platform, Arch, ReleaseCandidate } from '../lib/autoUpdate';
+import { pickAssetFor, isNewer, type Platform, type Arch, type ReleaseCandidate } from '../lib/autoUpdate';
 
 interface OtaStatus {
   state: 'idle' | 'checking' | 'noUpdate' | 'updateFound' | 'installing' | 'installed' | 'error';

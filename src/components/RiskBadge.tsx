@@ -1,5 +1,5 @@
 import React from 'react';
-import { worstSeverity, SeverityCounts } from '../lib/scanReview';
+import { worstSeverity, type SeverityCounts } from '../lib/scanReview';
 
 /**
  * Compact at-a-glance verdict from the last security scan of an item, so risk is

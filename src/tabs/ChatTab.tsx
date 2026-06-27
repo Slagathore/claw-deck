@@ -1,11 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useSettings, useUI } from '../store/ui';
 import { splitThinking } from '../lib/thinking';
-import { newMetrics, recordDelta, finalize, view, formatView, MetricsSnapshot } from '../lib/metrics';
+import { newMetrics, recordDelta, finalize, view, formatView, type MetricsSnapshot } from '../lib/metrics';
 import { routeRequest } from '../lib/router';
-import { summarizeRunning, RunningModel } from '../lib/vram';
+import { summarizeRunning, type RunningModel } from '../lib/vram';
 import {
-  Plan, PlanStep, ParsedPlan, StepStatus,
+  type Plan, type PlanStep, type ParsedPlan, type StepStatus,
   parsePlan, describeStep, isDestructive, PLANNER_SYSTEM_PROMPT
 } from '../lib/planner';
 import ImageUploader from '../components/ImageUploader';

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useSettings } from '../store/ui';
-import { useConsole, SessionKind } from '../store/console';
+import { useConsole, type SessionKind } from '../store/console';
 import { parseArgs } from '../lib/cliargs';
 import TerminalView from '../components/TerminalView';
 
