@@ -101,10 +101,12 @@
         }
       ],
       "artifactName": "${productName}-${version}-${arch}.${ext}",
-      "certificateSubjectName": "Claw Deck Dev",
-      "signingHashAlgorithms": [
-        "sha256"
-      ]
+      "signtoolOptions": {
+        "certificateSubjectName": "Claw Deck Dev",
+        "signingHashAlgorithms": [
+          "sha256"
+        ]
+      }
     },
     "nsis": {
       "oneClick": false,
