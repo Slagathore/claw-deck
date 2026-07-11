@@ -4,13 +4,18 @@
 
 ### A local-first desktop command deck for **OpenClaw** & **Claude Code** — running on your own **Ollama** models, with a hardened, malware-scanned upgrade pipeline.
 
+[![Release](https://img.shields.io/github/v/release/Slagathore/claw-deck?color=e05d44&label=release)](https://github.com/Slagathore/claw-deck/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/Slagathore/claw-deck/total?color=4ade80&label=downloads)](https://github.com/Slagathore/claw-deck/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-![Platform](https://img.shields.io/badge/platform-Windows-0078D6?logo=windows&logoColor=white)
+![Platform](https://img.shields.io/badge/platform-Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-0078D6)
 ![Electron](https://img.shields.io/badge/Electron-42-47848F?logo=electron&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.5-3178C6?logo=typescript&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-355%20passing-4ade80)
+![Tests](https://img.shields.io/badge/tests-367%20passing-4ade80)
 ![Local-first](https://img.shields.io/badge/local--first-no%20cloud%20inference-8b5cf6)
+![Signed](https://img.shields.io/badge/Windows%20builds-Authenticode%20signed-2ea44f)
+
+### [⬇️ Download the latest release](https://github.com/Slagathore/claw-deck/releases/latest)
 
 <img src="docs/media/claw-deck-demo.gif" alt="Claw Deck walkthrough" width="900" />
 
@@ -53,9 +58,24 @@ Everything runs against `localhost`. **No account, no cloud inference, no teleme
 |---|---|
 | <img src="docs/media/settings.png" width="440" /> | <img src="docs/media/chat.png" width="440" /> |
 
-## 🚀 Quickstart
+## 📥 Install
 
-**Prerequisites:** [Ollama](https://ollama.com) running locally, Node.js 20+, and Windows.
+**Prerequisite:** [Ollama](https://ollama.com) running locally (that's where your models live).
+
+Grab a build from the **[latest release](https://github.com/Slagathore/claw-deck/releases/latest)**:
+
+| Platform | Asset | Notes |
+|---|---|---|
+| **Windows** | `Claw.Deck-…-x64.exe` | Installer — **Authenticode-signed** (publisher: Charles Chambers) |
+| **Windows (portable)** | `Claw.Deck-…-portable-x64.exe` | Single standalone exe, no install needed — also signed |
+| **macOS** | `Claw.Deck-…-mac-arm64.dmg` / `-x64.dmg` | Apple Silicon / Intel. Unsigned — right-click → **Open** on first launch |
+| **Linux** | `Claw.Deck-…-linux-x86_64.AppImage` | `chmod +x` and run |
+
+First launch runs a 3-step tour that finds your Ollama, confirms a default model, and gets you chatting. Pull a model from the **Library** tab (or `ollama pull llama3.2`) and go. In-app updates arrive through the same **security gate** as everything else — hash-checked and scanned before install.
+
+## 🚀 Run from source
+
+**Prerequisites:** Node.js 20+ (Windows is the primary target; macOS/Linux build too).
 
 ```powershell
 git clone https://github.com/Slagathore/claw-deck.git
@@ -64,10 +84,8 @@ npm install
 npm run dev      # Vite + Electron in dev (hot reload)
 # or
 npm start        # build + run
-npm test         # vitest — 355 tests
+npm test         # vitest — 367 tests
 ```
-
-First launch runs a 3-step tour that finds your Ollama, confirms a default model, and gets you chatting. Pull a model from the **Library** tab (or `ollama pull llama3.2`) and go.
 
 ## 🛡️ Security model
 
@@ -91,7 +109,7 @@ The same scan engine powers the standalone **Deep folder scan** (Security tab) �
 - **Electron 42 + React 18 + TypeScript 5.5 + Vite 8** renderer, strict TS throughout.
 - **Node main process** with a fully typed IPC bridge (`contextIsolation`, no `nodeIntegration`) and **`better-sqlite3`** persistence.
 - **Atlas** code-intelligence engine (tree-sitter/TS-program parsing → SQLite + vector search via `sqlite-vec`).
-- **355 tests** across 42 files (Vitest).
+- **367 tests** across 42 files (Vitest).
 
 <details>
 <summary><strong>🖥️ Headless CLI</strong></summary>
@@ -121,14 +139,21 @@ Outputs land in `dist-installer/`.
 <details>
 <summary><strong>🔏 Code signing</strong></summary>
 
-Signing is wired into the build via `build.win.certificateSubjectName` (`"Claw Deck Dev"`), so electron-builder signs every produced `.exe` with a matching cert in the `CurrentUser\My` store.
+**Official Windows releases are Authenticode-signed** via **Azure Artifact Signing** (publisher: *Charles Chambers*), with RFC-3161 timestamps — so signatures stay valid after certificate rotation. Verify any downloaded exe:
 
 ```powershell
-npm run cert:dev   # create + trust a self-signed "Claw Deck Dev" test identity
-npm run dist       # build + sign
+Get-AuthenticodeSignature '.\Claw Deck-*.exe' | Format-List Status, SignerCertificate
+# Expect: Status Valid, CN=Charles Chambers
 ```
 
-`npm run cert:dev` ([scripts/make-dev-cert.ps1](scripts/make-dev-cert.ps1)) writes a portable, gitignored `certs/clawdeck-dev.pfx` and trusts it locally — a **test identity only**, so SmartScreen still warns end users. For a trusted build, point `certificateSubjectName` at an OV/EV cert on a hardware token, use **Azure Trusted Signing**, or supply a `.pfx` via [electron-builder env vars](https://www.electron.build/code-signing) (`CSC_LINK` / `CSC_KEY_PASSWORD`).
+Signing is maintainer-only (gated behind `CLAW_SIGN=1` — see [SIGNING.md](SIGNING.md)):
+
+```powershell
+npm run dist          # unsigned local build
+npm run dist:signed   # Azure-signed build (requires az login + signing role)
+```
+
+The hook lives at [scripts/azure-sign.js](scripts/azure-sign.js), wired via `build.win.signtoolOptions.sign`. Note: SmartScreen reputation on a certificate builds with download volume, so early downloads may see a soft "not commonly downloaded" notice — with the publisher shown as verified.
 </details>
 
 <details>
