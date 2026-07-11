@@ -282,7 +282,17 @@ if (!gotLock) {
   app.on('second-instance', () => showWindow());
 }
 
-app.on('before-quit', () => { quitting = true; cancelAllCouncils(); });
+app.on('before-quit', () => {
+  quitting = true;
+  // Close-to-tray means `window-all-closed` usually never fires, so run the full
+  // teardown here too: cancel councils, kill MCP child processes, and close the
+  // atlas fs.watchers + SQLite handles. Safe to also run in window-all-closed
+  // (the maps are already drained by then).
+  cancelAllCouncils();
+  stopAllMcp();
+  closeAllAtlasWatchers();
+  closeAllAtlas();
+});
 
 app.on('window-all-closed', () => {
   // With close-to-tray we generally never reach here. Only fires if tray creation failed.

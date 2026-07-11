@@ -91,6 +91,17 @@ export function registerAtlasHandlers(getWindow: () => BrowserWindow | null) {
       openAtlas(ws);
       const serverName = ensureCodeBrainServer(ws);
       if (!watchers.has(keyOf(ws))) {
+        // Bound the live recursive fs.watchers: each distinct folder opened in a
+        // session installs one and the UI doesn't close the previous on switch.
+        // Evict the oldest over the cap — that only stops auto-reindex for that
+        // folder; its Atlas DB + code-brain MCP server stay intact.
+        const MAX_WATCHERS = 4;
+        while (watchers.size >= MAX_WATCHERS) {
+          const oldest = watchers.keys().next().value as string | undefined;
+          if (!oldest) break;
+          try { watchers.get(oldest)?.close(); } catch { /* ignore */ }
+          watchers.delete(oldest);
+        }
         watchers.set(keyOf(ws), watchWorkspace(ws, () => {
           try { const counts = doIndex(ws); emit({ kind: 'reindexed', workspace: ws, counts }); void runEnrichment(ws, emit); } catch { /* ignore */ }
         }));

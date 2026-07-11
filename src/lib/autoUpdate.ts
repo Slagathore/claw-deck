@@ -91,3 +91,81 @@ export function compareSemver(a: string, b: string): number {
 export function isNewer(candidate: string, current: string): boolean {
   return compareSemver(candidate, current) > 0;
 }
+
+// ---------------------------------------------------------------------------
+// Update visibility + emergency override
+//
+// On load the app checks the self-update feed and surfaces an "update available"
+// banner. The user can silence it two ways (persisted in settings.updatePrefs):
+//   - "Later"          → snooze until a *newer* version than the one shown ships
+//   - "Don't remind me" → mute forever
+// An EMERGENCY release overrides both: it shows a blocking, urgent message no
+// matter what the user silenced. A release marks itself an emergency by carrying
+// a marker in its GitHub release notes (body):
+//
+//   <!-- clawdeck:emergency: Fixes a critical RCE — please update now. -->
+//
+// The HTML comment is invisible in GitHub's rendered notes but machine-readable
+// here. A visible fallback form is also accepted:  [!EMERGENCY] <message>
+// ---------------------------------------------------------------------------
+
+export interface EmergencyInfo { message: string; }
+
+export interface UpdatePrefs {
+  /** Never show non-emergency update notices. */
+  muteForever?: boolean;
+  /** Suppress the banner while the latest version is <= this (snooze-until-next). */
+  snoozedVersion?: string | null;
+}
+
+export interface UpdateEvaluation {
+  current: string;
+  latest?: ReleaseCandidate;
+  isUpdate: boolean;
+  emergency: EmergencyInfo | null;
+  /** What the UI should render given the release + the user's silence prefs. */
+  show: 'none' | 'banner' | 'emergency';
+}
+
+const DEFAULT_EMERGENCY = 'A critical update is available. Please update as soon as possible.';
+
+/** Extract an emergency marker + message from a release body, if present. */
+export function parseEmergency(body?: string): EmergencyInfo | null {
+  if (!body) return null;
+  const comment = /<!--\s*clawdeck:emergency:?\s*([\s\S]*?)-->/i.exec(body);
+  if (comment) return { message: comment[1].trim() || DEFAULT_EMERGENCY };
+  const line = /^\s*\[!?\s*emergency\s*\]:?\s*(.+)$/im.exec(body);
+  if (line) return { message: line[1].trim() || DEFAULT_EMERGENCY };
+  return null;
+}
+
+/** Newest release by semver (handles unsorted feeds). */
+export function pickLatestRelease(candidates: ReleaseCandidate[]): ReleaseCandidate | undefined {
+  if (!candidates || candidates.length === 0) return undefined;
+  return [...candidates].sort((a, b) => compareSemver(b.version, a.version))[0];
+}
+
+/** Decide whether/how to surface an update, honoring silence prefs but letting emergencies win. */
+export function evaluateUpdate(
+  candidates: ReleaseCandidate[],
+  current: string,
+  prefs: UpdatePrefs = {}
+): UpdateEvaluation {
+  const latest = pickLatestRelease(candidates);
+  const isUpdate = !!latest && isNewer(latest.version, current);
+  const emergency = isUpdate ? parseEmergency(latest!.body) : null;
+
+  let show: UpdateEvaluation['show'] = 'none';
+  if (isUpdate) {
+    if (emergency) {
+      show = 'emergency'; // always wins over mute/snooze
+    } else if (prefs.muteForever) {
+      show = 'none';
+    } else if (prefs.snoozedVersion && compareSemver(latest!.version, prefs.snoozedVersion) <= 0) {
+      show = 'none';
+    } else {
+      show = 'banner';
+    }
+  }
+  return { current, latest, isUpdate, emergency, show };
+}

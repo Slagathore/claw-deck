@@ -35,6 +35,17 @@ body {
 }
 .donate-btn:hover { background: var(--accent); border-color: var(--accent); color: white; }
 
+/* --- Update-available banner (top of main column) --- */
+.update-banner {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 14px;
+  padding: 9px 12px; border: 1px solid var(--accent);
+  background: rgba(124,156,255,.10); border-radius: 8px; font-size: 13px;
+}
+.update-banner .spacer { flex: 1; }
+.update-banner button { padding: 5px 10px; font-size: 12px; }
+.update-emergency { border-color: var(--bad); }
+.update-emergency h2 { color: var(--bad); }
+
 /* --- Status bar (bottom strip across main column) --- */
 .statusbar {
   grid-row: 2; grid-column: 2;

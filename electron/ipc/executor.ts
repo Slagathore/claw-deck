@@ -29,6 +29,31 @@ const runs = new Map<string, ExecRun>();
 
 export function getExecRun(runId: string): ExecRun | undefined { return runs.get(runId); }
 
+// Runs are removed on approve/reject, but a run left proposed/validated/invalid
+// (proposal or validation failed, or the user staged a diff then walked away)
+// would otherwise keep its plan, diff, and on-disk git worktree forever. Reclaim
+// clearly-abandoned runs (older than TTL) and cap the map as a backstop. Called
+// at the start of each new run so the sweep needs no timer of its own.
+const RUN_TTL_MS = 3 * 60 * 60 * 1000; // 3h
+const MAX_OPEN_RUNS = 24;
+function runStartedAt(runId: string): number { return parseInt(runId.split('-')[0], 36) || 0; }
+async function sweepStaleRuns(): Promise<void> {
+  const now = Date.now();
+  for (const run of [...runs.values()]) {
+    if (now - runStartedAt(run.runId) > RUN_TTL_MS) {
+      try { await removeWorktree(run.wt); } catch { /* best-effort */ }
+      runs.delete(run.runId);
+    }
+  }
+  if (runs.size > MAX_OPEN_RUNS) {
+    const oldestFirst = [...runs.values()].sort((a, b) => runStartedAt(a.runId) - runStartedAt(b.runId));
+    for (const run of oldestFirst.slice(0, runs.size - MAX_OPEN_RUNS)) {
+      try { await removeWorktree(run.wt); } catch { /* best-effort */ }
+      runs.delete(run.runId);
+    }
+  }
+}
+
 function upsertRun(run: ExecRun, patch: Partial<{ planPath: string; diffPath: string; error: string | null }> = {}): void {
   getDb().prepare(`
     INSERT INTO executor_runs(run_id, repo, mode, status, wt_dir, branch, plan_path, diff_path, diff_bytes, validation_ok, snapshot_id, started, updated, error)
@@ -59,6 +84,7 @@ function upsertRun(run: ExecRun, patch: Partial<{ planPath: string; diffPath: st
 export function registerExecutorHandlers() {
   ipcMain.handle('exec:beginRun', async (_e, opts: { repo: string; mode?: Mode }) => {
     if (!opts?.repo) return { ok: false, error: 'no repo' };
+    await sweepStaleRuns();
     const runId = `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
     const { ok, wt, error } = await createWorktree(opts.repo, runId);
     if (!ok) return { ok: false, error };

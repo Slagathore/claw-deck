@@ -98,20 +98,24 @@ export default function SkillsTab() {
   // Probe whether the clawhub CLI is available.
   useEffect(() => {
     let done = false;
+    let off: (() => void) | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     (async () => {
       try {
         // NOTE: clawhub remaps its version flag to --cli-version (commander.js), so `--version`
         // hits the unknown-option path and exits non-zero — which used to make this probe
         // report "clawhub not found" even when it was installed and on PATH. Use --cli-version.
         const { id } = await window.api.runner.start({ backend: 'shell', binary: s.clawhubPath || 'clawhub', args: ['--cli-version'] });
-        const off = window.api.runner.onEvent((ev: any) => {
-          if (ev.id !== id) return;
-          if (ev.kind === 'exit') { if (!done) { done = true; setClawhubOk(ev.data === 0); off(); } }
-          if (ev.kind === 'error') { if (!done) { done = true; setClawhubOk(false); off(); } }
+        if (done) return; // unmounted / clawhubPath changed before start resolved
+        off = window.api.runner.onEvent((ev: any) => {
+          if (ev.id !== id || done) return;
+          if (ev.kind === 'exit') { done = true; setClawhubOk(ev.data === 0); off?.(); }
+          else if (ev.kind === 'error') { done = true; setClawhubOk(false); off?.(); }
         });
-        setTimeout(() => { if (!done) { done = true; setClawhubOk(false); off(); } }, 5000);
-      } catch { setClawhubOk(false); }
+        timer = setTimeout(() => { if (!done) { done = true; setClawhubOk(false); off?.(); } }, 5000);
+      } catch { if (!done) setClawhubOk(false); }
     })();
+    return () => { done = true; off?.(); if (timer) clearTimeout(timer); };
   }, [s.clawhubPath]);
 
   useEffect(() => { cliBottom.current?.scrollIntoView({ block: 'end' }); }, [cliOutput]);
@@ -164,10 +168,27 @@ export default function SkillsTab() {
   async function browse() {
     setBrowsing(true); setBrowseErr('');
     try {
-      const r = await runClawhubCapture(['explore', '--json', '--sort', sort, '--limit', '60']);
-      if (!r.ok) { setBrowseErr(r.stderr.trim() || 'clawhub explore failed (is clawhub installed?)'); return; }
-      const json = parseJson(r.stdout);
-      setRegItems(Array.isArray(json.items) ? json.items : []);
+      // clawhub can reject its own registry response when a single item deep in
+      // the list has an unexpected shape (e.g. latestVersion as an object — the
+      // bug in <=0.23.0). Retry with progressively smaller limits so one bad
+      // entry can't blank the whole browse, and hint that updating clawhub fixes it.
+      const limits = ['60', '30', '15'];
+      let lastErr = '';
+      for (let i = 0; i < limits.length; i++) {
+        const r = await runClawhubCapture(['explore', '--json', '--sort', sort, '--limit', limits[i]]);
+        if (r.ok) {
+          try {
+            const json = parseJson(r.stdout);
+            setRegItems(Array.isArray(json.items) ? json.items : []);
+            setBrowseErr(i > 0
+              ? `Registry had a malformed entry — showing the first ${limits[i]}. Updating clawhub (npm i -g clawhub@latest) usually fixes this.`
+              : '');
+            return;
+          } catch (e: any) { lastErr = `parse error: ${e.message}`; continue; }
+        }
+        lastErr = r.stderr.trim() || lastErr;
+      }
+      setBrowseErr(lastErr || 'clawhub explore failed (is clawhub installed?)');
     } catch (e: any) {
       setBrowseErr(`could not read registry: ${e.message}`);
     } finally {

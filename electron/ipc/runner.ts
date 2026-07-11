@@ -127,7 +127,9 @@ export function registerRunnerHandlers(getWindow: () => BrowserWindow | null) {
     sessions.set(id, { kind: 'pipe', proc, backend: opts.backend });
     proc.stdout?.on('data', d => emit(id, 'stdout', d.toString()));
     proc.stderr?.on('data', d => emit(id, 'stderr', d.toString()));
-    proc.on('error', err => emit(id, 'error', err.message));
+    // A genuine spawn failure (e.g. ENOENT on a full-path binary) fires 'error'
+    // and may never fire 'exit' — delete here too so the dead entry can't linger.
+    proc.on('error', err => { emit(id, 'error', err.message); sessions.delete(id); });
     proc.on('exit', code => { emit(id, 'exit', code); sessions.delete(id); });
     return { id, pty: false };
   });

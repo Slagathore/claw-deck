@@ -20,9 +20,19 @@ function argDb(): string {
 }
 
 let db: Queryable | null = null;
-function openDb(path: string): Queryable {
+function openDb(path: string): Queryable | null {
   try { return new DatabaseSync(path, { readOnly: true }) as unknown as Queryable; }
-  catch { return new DatabaseSync(path) as unknown as Queryable; }
+  catch {
+    // Read-only open fails if the file is missing; fall back to a normal open.
+    // If THAT also throws (e.g. the whole workspace folder — and its .fusion dir
+    // — was deleted), return null so main() can exit cleanly instead of crashing
+    // with an unhandled exception + stack trace.
+    try { return new DatabaseSync(path) as unknown as Queryable; }
+    catch (e: any) {
+      process.stderr.write(`code-brain: could not open atlas DB at ${path}: ${e?.message ?? e}\n`);
+      return null;
+    }
+  }
 }
 
 const TOOLS = [
@@ -77,7 +87,17 @@ function handle(msg: any): void {
 }
 
 function main(): void {
-  db = openDb(argDb());
+  let dbPath: string;
+  try { dbPath = argDb(); }
+  catch (e: any) { process.stderr.write(`code-brain: ${e?.message ?? e}\n`); process.exit(2); }
+
+  db = openDb(dbPath);
+  if (!db) {
+    // Workspace removed / DB gone — nothing to serve. Exit cleanly (0) rather
+    // than crash or linger as a zombie process holding memory for no reason.
+    process.stderr.write(`code-brain: atlas DB unavailable at ${dbPath} — exiting (was this workspace removed?)\n`);
+    process.exit(0);
+  }
   let buf = '';
   process.stdin.setEncoding('utf8');
   process.stdin.on('data', (chunk: string) => {

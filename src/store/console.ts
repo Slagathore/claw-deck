@@ -39,6 +39,15 @@ function stripAnsi(s: string): string {
   return s.replace(RE_CSI, '').replace(RE_OSC, '').replace(RE_ESC, '');
 }
 
+// Cap a session's retained output so a chatty/long-lived process can't grow it
+// unbounded in memory. PTY tabs render live output via xterm (not this string),
+// and History only keeps the last 4000 chars, so trimming the head is safe.
+const MAX_OUTPUT = 256 * 1024; // 256 KB
+function capOutput(s: string): string {
+  if (s.length <= MAX_OUTPUT) return s;
+  return '…[earlier output truncated]\n' + s.slice(s.length - MAX_OUTPUT);
+}
+
 interface RunnerEvent {
   id: string;
   kind: 'stdout' | 'stderr' | 'exit' | 'error';
@@ -77,9 +86,9 @@ export const useConsole = create<ConsoleState>((set, get) => ({
     set(prev => ({
       sessions: prev.sessions.map(s => {
         if (s.id !== ev.id) return s;
-        if (ev.kind === 'stdout' || ev.kind === 'stderr') return { ...s, output: s.output + ev.data };
-        if (ev.kind === 'error') return { ...s, output: s.output + `\n[error] ${ev.data}\n` };
-        if (ev.kind === 'exit') return { ...s, exited: ev.data, output: s.output + `\n[exit ${ev.data}]\n` };
+        if (ev.kind === 'stdout' || ev.kind === 'stderr') return { ...s, output: capOutput(s.output + ev.data) };
+        if (ev.kind === 'error') return { ...s, output: capOutput(s.output + `\n[error] ${ev.data}\n`) };
+        if (ev.kind === 'exit') return { ...s, exited: ev.data, output: capOutput(s.output + `\n[exit ${ev.data}]\n`) };
         return s;
       })
     }));

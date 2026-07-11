@@ -1,5 +1,11 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
+// Several components legitimately subscribe to the same channel at once (App +
+// each open PTY TerminalView + transient Library/Skills probes). Raise the
+// ceiling above the default 10 so that doesn't emit a MaxListenersExceeded
+// warning — each subscription still unsubscribes on unmount.
+ipcRenderer.setMaxListeners(50);
+
 const invoke = (channel: string, ...args: any[]) => ipcRenderer.invoke(channel, ...args);
 const on = (channel: string, cb: (...a: any[]) => void) => {
   const listener = (_e: any, ...args: any[]) => cb(...args);

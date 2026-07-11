@@ -22,6 +22,22 @@ interface CouncilState {
   finishRun: (runId: string) => void;
 }
 
+// Keep the per-runId maps (events/live/questions/running) from growing forever
+// across a long session. We retain each workspace's active run plus the most
+// recent MAX_RUNS runs; older viewed/started runs are evicted.
+const MAX_RUNS = 12;
+function pruneRuns<T>(map: Record<string, T>, protect: Set<string>): Record<string, T> {
+  const keys = Object.keys(map);
+  if (keys.length <= MAX_RUNS) return map;
+  let toDrop = keys.length - MAX_RUNS;
+  const out: Record<string, T> = {};
+  for (const k of keys) {
+    if (toDrop > 0 && !protect.has(k)) { toDrop--; continue; } // drop oldest unprotected
+    out[k] = map[k];
+  }
+  return out;
+}
+
 export const useCouncil = create<CouncilState>((set) => ({
   configs: {},
   runByWs: {},
@@ -34,8 +50,28 @@ export const useCouncil = create<CouncilState>((set) => ({
   // handler emits the first events (card, initial phase, the framer's agent-start) before
   // it returns the runId, so resetting here would wipe them (theater looks empty until the
   // first slow model — e.g. Claude — streams). runId is unique per run, so nothing stale.
-  startRun: (ws, runId) => set((s) => ({ runByWs: { ...s.runByWs, [ws]: runId }, events: { ...s.events, [runId]: s.events[runId] ?? [] }, live: { ...s.live, [runId]: s.live[runId] ?? {} }, questions: { ...s.questions, [runId]: s.questions[runId] ?? [] }, running: { ...s.running, [runId]: true } })),
-  loadRun: (ws, runId, events) => set((s) => ({ runByWs: { ...s.runByWs, [ws]: runId }, events: { ...s.events, [runId]: events }, live: { ...s.live, [runId]: {} }, questions: { ...s.questions, [runId]: [] }, running: { ...s.running, [runId]: false } })),
+  startRun: (ws, runId) => set((s) => {
+    const runByWs = { ...s.runByWs, [ws]: runId };
+    const keep = new Set([...Object.values(runByWs), runId]);
+    return {
+      runByWs,
+      events: pruneRuns({ ...s.events, [runId]: s.events[runId] ?? [] }, keep),
+      live: pruneRuns({ ...s.live, [runId]: s.live[runId] ?? {} }, keep),
+      questions: pruneRuns({ ...s.questions, [runId]: s.questions[runId] ?? [] }, keep),
+      running: pruneRuns({ ...s.running, [runId]: true }, keep),
+    };
+  }),
+  loadRun: (ws, runId, events) => set((s) => {
+    const runByWs = { ...s.runByWs, [ws]: runId };
+    const keep = new Set([...Object.values(runByWs), runId]);
+    return {
+      runByWs,
+      events: pruneRuns({ ...s.events, [runId]: events }, keep),
+      live: pruneRuns({ ...s.live, [runId]: {} }, keep),
+      questions: pruneRuns({ ...s.questions, [runId]: [] }, keep),
+      running: pruneRuns({ ...s.running, [runId]: false }, keep),
+    };
+  }),
   clearQuestions: (runId) => set((s) => ({ questions: { ...s.questions, [runId]: [] } })),
   markRunning: (runId) => set((s) => ({ running: { ...s.running, [runId]: true } })),
   newSession: (ws) => set((s) => { const runByWs = { ...s.runByWs }; delete runByWs[ws]; return { runByWs }; }),

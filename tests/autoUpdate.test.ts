@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { pickAssetFor, compareSemver, isNewer, type ReleaseCandidate } from '../src/lib/autoUpdate';
+import {
+  pickAssetFor, compareSemver, isNewer,
+  parseEmergency, pickLatestRelease, evaluateUpdate,
+  type ReleaseCandidate
+} from '../src/lib/autoUpdate';
+
+function release(version: string, body?: string): ReleaseCandidate {
+  return { tag: `v${version}`, version, body, assets: [] };
+}
 
 function rc(...names: string[]): ReleaseCandidate {
   return {
@@ -43,5 +51,70 @@ describe('autoUpdate.compareSemver / isNewer', () => {
   });
   it('handles prerelease tags conservatively', () => {
     expect(isNewer('1.0.0', '1.0.0-beta')).toBe(true);
+  });
+});
+
+describe('autoUpdate.parseEmergency', () => {
+  it('returns null when no marker present', () => {
+    expect(parseEmergency('Just a normal release.\n- fixed stuff')).toBeNull();
+    expect(parseEmergency(undefined)).toBeNull();
+  });
+  it('parses the HTML-comment marker with a message', () => {
+    const info = parseEmergency('Notes\n<!-- clawdeck:emergency: Fixes a critical RCE, update now. -->\nmore');
+    expect(info?.message).toBe('Fixes a critical RCE, update now.');
+  });
+  it('parses the marker even with no message (uses default)', () => {
+    const info = parseEmergency('<!-- clawdeck:emergency -->');
+    expect(info?.message).toMatch(/critical update/i);
+  });
+  it('accepts the visible [!EMERGENCY] fallback form', () => {
+    const info = parseEmergency('[!EMERGENCY] Data-loss bug in 1.2.0 — upgrade immediately.');
+    expect(info?.message).toBe('Data-loss bug in 1.2.0 — upgrade immediately.');
+  });
+});
+
+describe('autoUpdate.pickLatestRelease', () => {
+  it('returns the highest semver regardless of feed order', () => {
+    const latest = pickLatestRelease([release('0.2.0'), release('0.10.0'), release('0.3.1')]);
+    expect(latest?.version).toBe('0.10.0');
+  });
+  it('returns undefined for an empty feed', () => {
+    expect(pickLatestRelease([])).toBeUndefined();
+  });
+});
+
+describe('autoUpdate.evaluateUpdate', () => {
+  it('shows nothing when up to date', () => {
+    const e = evaluateUpdate([release('1.0.0')], '1.0.0');
+    expect(e.isUpdate).toBe(false);
+    expect(e.show).toBe('none');
+  });
+  it('shows a banner for a newer release', () => {
+    const e = evaluateUpdate([release('1.1.0')], '1.0.0');
+    expect(e.isUpdate).toBe(true);
+    expect(e.show).toBe('banner');
+    expect(e.latest?.version).toBe('1.1.0');
+  });
+  it('mutes forever when the user opted out', () => {
+    const e = evaluateUpdate([release('1.1.0')], '1.0.0', { muteForever: true });
+    expect(e.show).toBe('none');
+  });
+  it('snooze suppresses the snoozed version but re-shows for a newer one', () => {
+    const snoozed = evaluateUpdate([release('1.1.0')], '1.0.0', { snoozedVersion: '1.1.0' });
+    expect(snoozed.show).toBe('none');
+    const newer = evaluateUpdate([release('1.2.0')], '1.0.0', { snoozedVersion: '1.1.0' });
+    expect(newer.show).toBe('banner');
+  });
+  it('emergency overrides mute AND snooze', () => {
+    const body = '<!-- clawdeck:emergency: Critical security fix. -->';
+    const e = evaluateUpdate([release('1.1.0', body)], '1.0.0', { muteForever: true, snoozedVersion: '9.9.9' });
+    expect(e.show).toBe('emergency');
+    expect(e.emergency?.message).toBe('Critical security fix.');
+  });
+  it('does not flag an emergency when already up to date', () => {
+    const body = '<!-- clawdeck:emergency: old news -->';
+    const e = evaluateUpdate([release('1.0.0', body)], '1.0.0');
+    expect(e.emergency).toBeNull();
+    expect(e.show).toBe('none');
   });
 });

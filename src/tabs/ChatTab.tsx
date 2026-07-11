@@ -338,9 +338,12 @@ export default function ChatTab() {
             }
             if (ev.error) onChunk(`\nERROR: ${ev.error}`);
           });
-          const r = await window.api.ollama.pull({ baseUrl: s.ollamaUrl, model: step.model, id });
-          off();
-          return { ok: !!r.ok, tail: r.error };
+          try {
+            const r = await window.api.ollama.pull({ baseUrl: s.ollamaUrl, model: step.model, id });
+            return { ok: !!r.ok, tail: r.error };
+          } finally {
+            off(); // always unsubscribe, even if the pull throws
+          }
         }
         case 'addMcpServer': {
           const existing = s.mcpServers ?? [];

@@ -16,6 +16,7 @@ import CouncilTab from './tabs/CouncilTab';
 import CommandPalette from './components/CommandPalette';
 import StatusBar from './components/StatusBar';
 import OnboardingWizard, { shouldShowOnboarding } from './components/OnboardingWizard';
+import UpdateNotice from './components/UpdateNotice';
 
 const KOFI_URL = 'https://ko-fi.com/sparklemuffin';
 
@@ -111,6 +112,7 @@ export default function App() {
         </div>
       </aside>
       <main className="main">
+        <UpdateNotice />
         {tab === 'chat' && <ChatTab />}
         {tab === 'library' && <LibraryTab />}
         {tab === 'console' && <ConsoleTab />}
