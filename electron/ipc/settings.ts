@@ -5,7 +5,7 @@ export const DEFAULTS = {
   ollamaUrl: 'http://localhost:11434',
   openaiCompatUrl: 'http://localhost:11434/v1',
   openaiCompatKey: 'ollama',
-  visionModel: 'gemini-flash-3-preview',
+  visionModel: 'kimi-k2.7-code:cloud',
   chatModel: 'llama3.2',
   reasoningModel: 'deepseek-r1',
   embedModel: 'nomic-embed-text',          // Atlas embeddings (768-dim, locked)

@@ -61,7 +61,7 @@ export default function SettingsTab() {
         <input value={draft.chatModel ?? ''} onChange={e => set('chatModel', e.target.value)} />
         <label className="label">Reasoning model</label>
         <input value={draft.reasoningModel ?? ''} onChange={e => set('reasoningModel', e.target.value)} />
-        <label className="label">Vision model (e.g. gemini-flash-3-preview routed through your OpenAI-compat proxy)</label>
+        <label className="label">Vision model (e.g. kimi-k2.7-code:cloud, or whatever your endpoint exposes)</label>
         <input value={draft.visionModel ?? ''} onChange={e => set('visionModel', e.target.value)} />
       </div>
 

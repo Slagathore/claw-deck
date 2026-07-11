@@ -173,7 +173,7 @@ Gemini-flash variants often break tool-calling on the native Anthropic-shaped en
 Ollama base URL            : http://localhost:11434
 OpenAI-compatible URL      : http://localhost:11434/v1     (or your LiteLLM proxy)
 OpenAI-compatible API key  : ollama                        (any non-empty value)
-Vision model               : gemini-flash-3-preview        (or whatever your proxy exposes)
+Vision model               : kimi-k2.7-code:cloud          (or whatever your proxy exposes)
 ```
 </details>
 
