@@ -36,6 +36,14 @@ function killProcTree(proc: ChildProcess): void {
   } catch { /* already dead */ }
 }
 
+/** Kill every live runner session so PTYs / child processes aren't orphaned on quit. */
+export function stopAllRunners(): void {
+  for (const [id, s] of sessions) {
+    try { s.kind === 'pty' ? s.term.kill() : killProcTree(s.proc); } catch { /* already dead */ }
+    sessions.delete(id);
+  }
+}
+
 export function runCaptured(opts: {
   binary: string; args?: string[]; cwd?: string; env?: Record<string, string>; input?: string; timeoutMs?: number;
   signal?: AbortSignal; onData?: (chunk: string) => void; unsetEnv?: string[];

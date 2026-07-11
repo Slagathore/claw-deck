@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, desktopCapturer, screen, dialog, Tray, Men
 import * as path from 'path';
 import { spawn } from 'child_process';
 import { initDb } from './ipc/db';
-import { registerRunnerHandlers } from './ipc/runner';
+import { registerRunnerHandlers, stopAllRunners } from './ipc/runner';
 import { registerOllamaHandlers } from './ipc/ollama';
 import { registerUpgradeHandlers } from './ipc/upgrades';
 import { registerSecurityHandlers } from './ipc/security';
@@ -24,6 +24,12 @@ import { ensureTraceFile, tracePath } from './ipc/trace';
 import { closeAllAtlas } from './atlas/db';
 import { registerSelfUpgradeHandlers } from './selfUpgrade/registry';
 import { executeProbeMode } from './selfUpgrade/probe';
+
+// Last-resort guards: a stray rejection or throw in the main process should be
+// logged, not crash the whole app to the desktop. (Startup-critical failures
+// still surface via their own try/catch + dialogs.)
+process.on('unhandledRejection', (reason) => { console.error('[unhandledRejection]', reason); });
+process.on('uncaughtException', (err) => { console.error('[uncaughtException]', err); });
 
 // Dev only when explicitly launched via `npm run dev` (which sets CLAW_DEV).
 // `npm start` builds to dist/ and runs no Vite server, so it must load the file.
@@ -298,6 +304,7 @@ app.on('before-quit', () => {
   // atlas fs.watchers + SQLite handles. Safe to also run in window-all-closed
   // (the maps are already drained by then).
   cancelAllCouncils();
+  stopAllRunners();
   stopAllMcp();
   closeAllAtlasWatchers();
   closeAllAtlas();
@@ -306,6 +313,7 @@ app.on('before-quit', () => {
 app.on('window-all-closed', () => {
   // With close-to-tray we generally never reach here. Only fires if tray creation failed.
   cancelAllCouncils();
+  stopAllRunners();
   stopAllMcp();
   closeAllAtlasWatchers();
   closeAllAtlas();

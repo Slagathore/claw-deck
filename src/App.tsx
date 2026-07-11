@@ -17,6 +17,7 @@ import CommandPalette from './components/CommandPalette';
 import StatusBar from './components/StatusBar';
 import OnboardingWizard, { shouldShowOnboarding } from './components/OnboardingWizard';
 import UpdateNotice from './components/UpdateNotice';
+import ErrorBoundary from './components/ErrorBoundary';
 
 const KOFI_URL = 'https://ko-fi.com/sparklemuffin';
 
@@ -114,18 +115,20 @@ export default function App() {
       </aside>
       <main className="main">
         <UpdateNotice />
-        {tab === 'chat' && <ChatTab />}
-        {tab === 'library' && <LibraryTab />}
-        {tab === 'console' && <ConsoleTab />}
-        {tab === 'brain' && <ProjectBrainTab />}
-        {tab === 'council' && <CouncilTab />}
-        {tab === 'skills' && <SkillsTab />}
-        {tab === 'history' && <HistoryTab />}
-        {tab === 'prompts' && <PromptVaultTab />}
-        {tab === 'settings' && <SettingsTab />}
-        {tab === 'upgrades' && <UpgradesTab kind="openclaw" title="OpenClaw Upgrades" />}
-        {tab === 'self' && <SelfUpgradeTab />}
-        {tab === 'security' && <SecurityTab />}
+        <ErrorBoundary key={tab}>
+          {tab === 'chat' && <ChatTab />}
+          {tab === 'library' && <LibraryTab />}
+          {tab === 'console' && <ConsoleTab />}
+          {tab === 'brain' && <ProjectBrainTab />}
+          {tab === 'council' && <CouncilTab />}
+          {tab === 'skills' && <SkillsTab />}
+          {tab === 'history' && <HistoryTab />}
+          {tab === 'prompts' && <PromptVaultTab />}
+          {tab === 'settings' && <SettingsTab />}
+          {tab === 'upgrades' && <UpgradesTab kind="openclaw" title="OpenClaw Upgrades" />}
+          {tab === 'self' && <SelfUpgradeTab />}
+          {tab === 'security' && <SecurityTab />}
+        </ErrorBoundary>
       </main>
       <StatusBar />
       {paletteOpen && <CommandPalette onClose={togglePalette} />}
