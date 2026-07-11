@@ -24,7 +24,7 @@ const PLACEHOLDERS = [
 
 const AGENT_EXAMPLES = [
   'Install qwen2.5-coder:7b and use it as the chat model.',
-  'Set up the filesystem MCP server for C:\\Users\\dev\\code_stuff.',
+  'Set up the filesystem MCP server for C:\\Projects.',
   'Check whether git, gh, and node are installed.',
   'Pull a small vision model and switch the vision slot to it.',
   'Explain how the upgrade gate decides whether to install a binary.'

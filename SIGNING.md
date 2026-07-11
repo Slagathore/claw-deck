@@ -3,10 +3,9 @@
 Windows builds are signed with **Azure Artifact Signing** (account
 `Slagathores-Apps`, profile `public`, publisher `CN=Charles Chambers`).
 
-All account details, machine setup, VPN/IPv6 gotchas, auth commands, and the CI
-recipe live in the shared playbook:
-**`C:\Users\dev\CodeStuff\CODE-SIGNING-PLAYBOOK.md`** (reference implementation:
-`job_finder_v2`). Don't duplicate those details here — read that.
+Account details, machine setup, VPN/IPv6 gotchas, auth commands, and the CI
+recipe live in the maintainer's local **CODE-SIGNING-PLAYBOOK.md** (kept outside
+this repo, next to the other app repos). Don't duplicate those details here.
 
 ## This repo's wiring
 
@@ -18,7 +17,7 @@ recipe live in the shared playbook:
 ## Produce a signed build
 
 ```powershell
-az account show   # confirm you're logged in (az login --tenant <tenant>-… if not)
+az account show   # confirm you're logged in (az login --tenant <tenant-id> if not)
 npm run dist:signed
 Get-AuthenticodeSignature .\dist-installer\*.exe | Format-List Status, SignerCertificate
 # Expect: Status Valid, CN=Charles Chambers  (on both the NSIS installer and portable exe)
