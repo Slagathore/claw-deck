@@ -557,8 +557,10 @@ answered all 7 tools ✅.
   0.26. The line parser ships all three now (symbols + intra-file structural edges, resolved=0) with zero
   native/wasm surface; swapping python/bash to tree-sitter later is a drop-in precision upgrade behind the same
   ParseResult. Merged into `scanWorkspace` (TS via compiler API for resolved edges; polyglot for the rest).
-- **fusionRoster seeded** in settings defaults: kimi-k2.7-code / qwen3.5-397b / gemini-3-flash / qwen3-coder-480b
-  (`*:cloud` panelists) + claude-code / codex / openclaw actors. (Cole is installing a real `codex` CLI → it's
+- **fusionRoster seeded** in settings defaults: kimi-k2.7-code / qwen3.5-397b (`*:cloud` panelists) +
+  claude-code / codex / openclaw actors. (2026-07 update: the Gemini 3 Flash preview and Qwen3 Coder 480B
+  cloud models were retired by Ollama and removed from the seed; kimi-k2.7-code:cloud is the default coding
+  panelist and took over the edit-capable slot.) (Cole is installing a real `codex` CLI → it's
   in the roster and gets a real `'codex'` runner backend in Phase 2.)
 
 *Not done / deferred (flagged, not silently dropped):*

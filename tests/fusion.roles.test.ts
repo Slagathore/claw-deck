@@ -7,8 +7,8 @@ const A = (id: string, model: string, transport = 'ollama-cloud', canEdit = fals
 
 const KIMI = A('kimi-k2', 'kimi-k2.7-code:cloud');
 const QWEN35 = A('qwen3-5', 'qwen3.5:397b-cloud');
-const QCODER = A('qwen3-coder', 'qwen3-coder:480b-cloud', 'ollama-cloud', true);
-const GEMINI = A('gemini3-flash', 'gemini-3-flash-preview:cloud');
+const QCODER = A('qwen3-coder', 'qwen3-coder-next:cloud', 'ollama-cloud', true);
+const GEMINI = A('gemini3-flash', 'gemini-3-pro:cloud');
 const DEEPSEEK = A('deepseek', 'deepseek-v4-pro:cloud');
 const CLAUDE = A('claude-code', 'claude', 'claude-code', true);
 const CODEX = A('codex', 'codex', 'codex', true);

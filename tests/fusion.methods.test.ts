@@ -9,8 +9,8 @@ const A = (id: string, model: string, transport = 'ollama-cloud', canEdit = fals
 const ROSTER: RosterAgent[] = [
   A('kimi', 'kimi-k2.7-code:cloud'),
   A('qwen35', 'qwen3.5:397b-cloud'),
-  A('qcoder', 'qwen3-coder:480b-cloud', 'ollama-cloud', true),
-  A('gemini', 'gemini-3-flash-preview:cloud'),
+  A('qcoder', 'qwen3-coder-next:cloud', 'ollama-cloud', true),
+  A('gemini', 'gemini-3-pro:cloud'),
   A('deepseek', 'deepseek-v4-pro:cloud'),
   A('claude', 'claude', 'claude-code', true),
   A('codex', 'codex', 'codex', true),

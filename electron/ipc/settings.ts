@@ -63,11 +63,11 @@ export const DEFAULTS = {
   mcpServers: [] as { name: string; command: string; args?: string[]; env?: Record<string, string>; cwd?: string; enabled?: boolean }[],
   // Fusion Council global agent roster (§4.5) — per-tab CouncilSettings assigns
   // positions from this pool. Seeded with the chosen *:cloud panelists + actors.
+  // (2026-07: the Gemini 3 Flash preview + Qwen3 Coder 480B cloud models were retired by
+  // Ollama; kimi-k2.7-code:cloud is the default coding panelist and took the edit slot.)
   fusionRoster: [
-    { id: 'kimi-k2', displayName: 'Kimi K2.7 Code', transport: 'ollama-cloud', model: 'kimi-k2.7-code:cloud', capabilities: { canEdit: false, canRunTools: false, costTier: 'cheap' } },
+    { id: 'kimi-k2', displayName: 'Kimi K2.7 Code', transport: 'ollama-cloud', model: 'kimi-k2.7-code:cloud', capabilities: { canEdit: true, canRunTools: false, costTier: 'cheap' } },
     { id: 'qwen3-5', displayName: 'Qwen3.5 397B', transport: 'ollama-cloud', model: 'qwen3.5:397b-cloud', capabilities: { canEdit: false, canRunTools: false, costTier: 'mid' } },
-    { id: 'gemini3-flash', displayName: 'Gemini 3 Flash', transport: 'ollama-cloud', model: 'gemini-3-flash-preview:cloud', capabilities: { canEdit: false, canRunTools: false, costTier: 'cheap' } },
-    { id: 'qwen3-coder', displayName: 'Qwen3 Coder 480B', transport: 'ollama-cloud', model: 'qwen3-coder:480b-cloud', capabilities: { canEdit: true, canRunTools: false, costTier: 'mid' } },
     { id: 'claude-code', displayName: 'Claude Code', transport: 'claude-code', binary: 'claude', capabilities: { canEdit: true, canRunTools: true, costTier: 'expensive' } },
     { id: 'codex', displayName: 'Codex', transport: 'codex', binary: 'codex', capabilities: { canEdit: true, canRunTools: true, costTier: 'mid' } },
     { id: 'openclaw', displayName: 'OpenClaw', transport: 'openclaw', binary: 'openclaw', capabilities: { canEdit: true, canRunTools: true, costTier: 'cheap' } },

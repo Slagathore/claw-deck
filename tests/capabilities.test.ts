@@ -46,7 +46,7 @@ describe('capability library (probe-seeded)', () => {
 
 describe('builder ranking — never default a build to a weak/incapable agent', () => {
   it('prefers clean emitters over reasoning-heavy ones, and excludes non-editors', () => {
-    const roster = [A('kimi', 'kimi-k2.7-code:cloud'), A('qc', 'qwen3-coder:480b-cloud'), A('viewer', 'qwen3.5:397b-cloud', false)];
+    const roster = [A('kimi', 'kimi-k2.7-code:cloud'), A('qc', 'qwen3-coder-next:cloud'), A('viewer', 'qwen3.5:397b-cloud', false)];
     const ranked = rankEditors(roster);
     expect(ranked[0].id).toBe('qc');                              // qwen-coder (not reasoning-heavy) wins
     expect(ranked.find((a) => a.id === 'viewer')).toBeUndefined(); // non-edit-capable excluded
