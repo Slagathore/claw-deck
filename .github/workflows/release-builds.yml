@@ -37,9 +37,11 @@ jobs:
         with:
           node-version: 22
 
-      # npm install (not ci) so a lockfile refresh never blocks a release build;
-      # postinstall runs electron-builder install-app-deps for native modules.
-      - run: npm install
+      # npm ci — exact lockfile install. A fresh `npm install` re-resolves peers
+      # and hits ERESOLVE (@vitejs/plugin-react peer range vs vite 8); the
+      # lockfile already encodes the working resolution. postinstall runs
+      # electron-builder install-app-deps for native modules.
+      - run: npm ci
 
       - run: npm run build
       - run: npm run stage:source
