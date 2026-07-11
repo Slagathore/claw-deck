@@ -89,9 +89,10 @@ injects it automatically. (The server takes a `--db` arg pointing at that worksp
 (clones source, junctions node_modules, runs `npm test`, returns `SandboxResult`); plus `snapshot.ts`,
 `patcher.ts`, `risk.ts`, `gate.ts`, `exec.ts` (`run(cmd,args,{cwd,timeoutMs})`).
 
-**Model I/O — `electron/ipc/ollama.ts` + OpenAI-compat path.** Streaming reader handles Ollama NDJSON **and**
-OpenAI SSE. Local OpenAI-compat `http://localhost:11434/v1`. **Ollama Cloud** is OpenAI-compatible at
-`https://ollama.com/v1` with an API key; cloud tags use the `*:cloud` suffix.
+**Model I/O — `electron/ipc/ollama.ts` + native Ollama path.** Streaming reader handles Ollama NDJSON **and**
+OpenAI SSE. Council panelists use the **native API** (`POST /api/chat`; local `http://localhost:11434`, or
+**Ollama Cloud** direct at `https://ollama.com` with an API key); cloud tags use the `*:cloud` suffix. The
+OpenAI-compat `/v1` path remains only for the vision workaround and genuinely remote OpenAI-compatible endpoints.
 
 **Routing — `src/lib/router.ts`.** `routeRequest()` is a *single-call* resolver. The Council fan-out is a **new
 layer above it**, not a change to it.
@@ -352,9 +353,9 @@ orchestrator also auto-injects the target symbol's card + 1-hop neighbors into e
 
 ## 5. Config & secrets
 - **Ollama (local serves cloud tags):** Cole runs Ollama locally and it serves `*:cloud` models itself — so the
-  council hits the **local** OpenAI-compat endpoint `http://localhost:11434/v1` with **no API key**. (The
-  `ollamaCloudUrl`/`ollamaCloudKey` settings are an optional override for a genuinely remote endpoint; blank =
-  local.) Reuse the existing OpenAI-compat client. **Embeddings:** `nomic-embed-text` (768-dim).
+  council hits the **local native API** (`http://localhost:11434/api/chat`) with **no API key**. (The
+  `ollamaCloudUrl`/`ollamaCloudKey` settings are an optional override for a direct remote Ollama endpoint,
+  e.g. `https://ollama.com`; blank = local.) **Embeddings:** `nomic-embed-text` (768-dim).
 - **Binary paths (Settings):** `claudeCodePath` (default `claude`), `codexPath` (add; verify a CLI exists),
   `openclawPath` (default `openclaw`). Bare names now resolve via the runner's shell fallback; absolute is safest.
 - Never log API keys. Key-bearing calls go through the main process, never the renderer.

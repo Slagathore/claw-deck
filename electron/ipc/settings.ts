@@ -43,7 +43,7 @@ export const DEFAULTS = {
   ] as { id: string; name: string; prompt: string }[],
   councilEnvByWorkspace: {} as Record<string, string>, // persisted "environment / ground truth" facts per workspace
   clawhubPath: 'clawhub',
-  ollamaCloudUrl: '',                          // blank = use local Ollama (it serves *:cloud models itself); set only for a remote OpenAI-compat endpoint
+  ollamaCloudUrl: '',                          // blank = use local Ollama (it serves *:cloud models itself); set only for a direct remote Ollama endpoint (native API, e.g. https://ollama.com)
   ollamaCloudKey: '',                          // usually blank — local Ollama needs no key
   clawBridgePort: 39217,                       // localhost port the claw-bridge VS Code extension listens on
   skillsDir: '',
@@ -53,7 +53,11 @@ export const DEFAULTS = {
   ruleOverrides: {} as Record<string, { severity: 'info' | 'low' | 'medium' | 'high' | 'critical' | 'off'; note?: string }>, // global per-rule severity overrides
   scanSummaries: {} as Record<string, { counts: { info: number; low: number; medium: number; high: number; critical: number }; ignored: number; at: number }>, // cached per-scope risk snapshot for at-a-glance row badges
   theme: 'dark',
-  showThinking: true,
+  // Thinking knobs: `think` asks thinking-capable models (e.g. kimi-k2.7-code) for a reasoning
+  // pass (false = leave the model default); `showThinking` controls whether the separate
+  // message.thinking pane is displayed — thinking is never mixed into content, hidden by default.
+  think: false as boolean | 'low' | 'medium' | 'high',
+  showThinking: false,
   policy: { allowlist: ['github.com', 'releases.openclaw.org', 'objects.githubusercontent.com'], requireSignature: false, autoScan: true, signingKeys: [] as { name: string; format: 'pem' | 'hex'; key: string }[] },
   feeds: { openclaw: [] as string[], self: ['Slagathore/claw-deck'] },
   githubToken: '',

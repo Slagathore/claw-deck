@@ -15,6 +15,7 @@ interface ChatReq {
   model: string;
   messages: any[];
   stream?: boolean;
+  think?: boolean | 'low' | 'medium' | 'high';   // request a thinking pass (thinking-capable models); omitted when falsy → model default
   options?: Record<string, any>;
 }
 interface VisionReq {
@@ -98,7 +99,7 @@ export function registerOllamaHandlers() {
       const r = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: req.model, messages: req.messages, stream: !!req.stream, options: req.options ?? {} }),
+        body: JSON.stringify({ model: req.model, messages: req.messages, stream: !!req.stream, ...(req.think ? { think: req.think } : {}), options: req.options ?? {} }),
         signal: ctrl.signal
       });
       if (!req.stream) {

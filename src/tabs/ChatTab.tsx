@@ -183,7 +183,8 @@ export default function ChatTab() {
           baseUrl: s.ollamaUrl,
           model: resolvedModel,
           messages: next.map(m => ({ role: m.role, content: m.content })),
-          stream: true
+          stream: true,
+          think: s.think || undefined
         });
         response = r.content;
         thinking = r.thinking || '';

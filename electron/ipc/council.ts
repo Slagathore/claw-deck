@@ -314,15 +314,17 @@ function methodCaps(repo: string | undefined, idBase: string, controller: AbortC
 }
 
 function transportConfig(repo?: string, abortSignal?: AbortSignal, agentOptions?: Record<string, { temperature?: number; top_p?: number }>, toolset?: ToolSet, agentPersonas?: Record<string, string>): TransportConfig {
-  // Local Ollama serves *:cloud models itself (no key). ollamaCloudUrl is an
-  // OPTIONAL override for a genuinely remote OpenAI-compat endpoint; blank → local.
-  const localV1 = getSetting('ollamaUrl', 'http://localhost:11434').replace(/\/$/, '') + '/v1';
+  // Local Ollama serves *:cloud models itself (no key) over the native API (/api/chat).
+  // ollamaCloudUrl is an OPTIONAL override for a direct remote Ollama endpoint
+  // (e.g. https://ollama.com with OLLAMA_API_KEY); blank → local.
+  const localBase = getSetting('ollamaUrl', 'http://localhost:11434').replace(/\/$/, '');
   return {
-    ollamaCloudUrl: getSetting('ollamaCloudUrl', '') || localV1,
+    ollamaCloudUrl: getSetting('ollamaCloudUrl', '') || localBase,
     ollamaCloudKey: getSetting('ollamaCloudKey', '') || process.env.OLLAMA_API_KEY || undefined,
-    ollamaLocalUrl: localV1,
+    ollamaLocalUrl: localBase,
     openaiCompatUrl: getSetting('openaiCompatUrl', 'http://localhost:11434/v1'),
     openaiCompatKey: getSetting('openaiCompatKey', '') || undefined,
+    think: getSetting('think', false) || undefined,
     paths: { claude: getSetting('claudeCodePath', 'claude'), codex: getSetting('codexPath', 'codex'), openclaw: getSetting('openclawPath', 'openclaw') || 'openclaw' },
     bridgePort: getSetting('clawBridgePort', 39217),
     abortSignal,

@@ -94,8 +94,8 @@ export default function SettingsTab() {
 
       <div className="card col">
         <h3 style={{ margin: 0 }}>Fusion Council</h3>
-        <label className="label">Council cloud models call your <strong>local Ollama daemon</strong>, which forwards <code>*:cloud</code> / <code>*-cloud</code> models to Ollama Cloud. Probe should report a <code>remote_host</code>; the fields below are only for a separate remote OpenAI-compatible endpoint.</label>
-        <label className="label">Remote OpenAI-compat URL (optional; blank = use local Ollama)</label>
+        <label className="label">Council cloud models call your <strong>local Ollama daemon</strong> (native API), which forwards <code>*:cloud</code> / <code>*-cloud</code> models to Ollama Cloud. Probe should report a <code>remote_host</code>; the fields below are only for a direct remote Ollama endpoint.</label>
+        <label className="label">Remote Ollama URL (optional; blank = use local Ollama; e.g. https://ollama.com)</label>
         <input value={draft.ollamaCloudUrl ?? ''} onChange={e => set('ollamaCloudUrl', e.target.value)} placeholder="(blank — uses local Ollama)" />
         <label className="label">Remote API key (optional; blank for local)</label>
         <input type="password" value={draft.ollamaCloudKey ?? ''} onChange={e => set('ollamaCloudKey', e.target.value)} />
@@ -134,7 +134,17 @@ export default function SettingsTab() {
 
       <div className="card col">
         <h3 style={{ margin: 0 }}>UX</h3>
-        <label><input type="checkbox" checked={!!draft.showThinking} onChange={e => set('showThinking', e.target.checked)} /> Show thinking pane</label>
+        <label title="Ask thinking-capable models (e.g. kimi-k2.7-code) for a reasoning pass. Off = leave the model's default. The reasoning arrives separately (message.thinking) and is only shown when the thinking pane is on.">
+          Thinking
+          <select
+            value={draft.think === true ? 'on' : (draft.think || 'off')}
+            onChange={e => { const v = e.target.value; set('think', v === 'off' ? false : v === 'on' ? true : v); }}
+            style={{ marginLeft: 8 }}
+          >
+            {['off', 'on', 'low', 'medium', 'high'].map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </label>
+        <label><input type="checkbox" checked={!!draft.showThinking} onChange={e => set('showThinking', e.target.checked)} /> Show thinking pane (off = thinking stays hidden; it is never mixed into answers)</label>
         <label><input type="checkbox" checked={!!draft.quietMode} onChange={e => set('quietMode', e.target.checked)} /> Quiet / focus mode</label>
         <label><input type="checkbox" checked={!!draft.airgapped} onChange={e => set('airgapped', e.target.checked)} /> Air-gapped mode (blocks upgrade downloads)</label>
         <label title="What clicking the window's X does. Minimize keeps Claw Deck on the taskbar; Hide to tray keeps it running with only the tray icon; Quit exits.">
