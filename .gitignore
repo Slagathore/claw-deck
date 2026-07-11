@@ -17,3 +17,6 @@ docs/fusion/oracleJdk-*/
 # claw-bridge extension build output / installed deps
 claw-bridge/node_modules/
 claw-bridge/out/
+
+# VS Code extension package artifact
+*.vsix
