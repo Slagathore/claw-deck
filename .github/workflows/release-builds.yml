@@ -1,0 +1,52 @@
+# Builds the macOS + Linux artifacts and attaches them to the GitHub release
+# for the pushed tag. Windows is built (and Azure-signed) locally — see
+# SIGNING.md — so it is deliberately absent here.
+name: release-builds
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag to attach assets to (e.g. v1.0.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            args: --mac
+            assets: dist-installer/*.dmg
+          - os: ubuntu-latest
+            args: --linux
+            assets: dist-installer/*.AppImage
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # npm install (not ci) so a lockfile refresh never blocks a release build;
+      # postinstall runs electron-builder install-app-deps for native modules.
+      - run: npm install
+
+      - run: npm run build
+      - run: npm run stage:source
+      - run: npx electron-builder ${{ matrix.args }} --publish never
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: ${{ matrix.assets }}

@@ -1,6 +1,6 @@
 {
   "name": "claw-deck",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Desktop GUI for OpenClaw + Claude Code over Ollama, with vision, screenshots, secure upgrades, and history.",
   "author": {
     "name": "Cole",
@@ -20,6 +20,7 @@
     "start": "npm run build && electron .",
     "stage:source": "node scripts/stage-source.mjs",
     "dist": "npm run build && npm run stage:source && electron-builder --win nsis portable --publish never",
+    "dist:signed": "npm run build && npm run stage:source && cross-env CLAW_SIGN=1 electron-builder --win nsis portable --publish never",
     "dist:portable": "npm run build && npm run stage:source && electron-builder --win portable --publish never",
     "dist:nsis": "npm run build && npm run stage:source && electron-builder --win nsis --publish never",
     "cert:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/make-dev-cert.ps1",
@@ -102,11 +103,36 @@
       ],
       "artifactName": "${productName}-${version}-${arch}.${ext}",
       "signtoolOptions": {
-        "certificateSubjectName": "Claw Deck Dev",
         "signingHashAlgorithms": [
           "sha256"
-        ]
+        ],
+        "sign": "./scripts/azure-sign.js"
       }
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.developer-tools",
+      "artifactName": "${productName}-${version}-mac-${arch}.${ext}"
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "category": "Development",
+      "artifactName": "${productName}-${version}-linux-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": false,
