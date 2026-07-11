@@ -189,7 +189,21 @@ app.whenReady().then(async () => {
     return;
   }
 
-  await initDb();
+  // DB init is the one hard startup dependency (native better-sqlite3 + a
+  // writable userData dir). If it fails, show the user *why* instead of leaving
+  // a windowless zombie process, then exit.
+  try {
+    await initDb();
+  } catch (e: any) {
+    dialog.showErrorBox(
+      'Claw Deck could not start',
+      `The local database failed to open:\n\n${e?.message ?? e}\n\n` +
+      `Another copy may be running, or the app may need reinstalling. If this ` +
+      `persists, quit all copies and remove:\n${path.join(app.getPath('userData'), 'data')}`
+    );
+    app.quit();
+    return;
+  }
   registerSettingsHandlers();
   registerHistoryHandlers();
   registerRunnerHandlers(() => mainWindow);
@@ -287,6 +301,11 @@ app.whenReady().then(async () => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+}).catch((e: any) => {
+  // Backstop for any unexpected failure during startup — surface it instead of
+  // dying silently with no window.
+  try { dialog.showErrorBox('Claw Deck failed to start', String(e?.stack ?? e?.message ?? e)); } catch { /* pre-ready */ }
+  app.quit();
 });
 
 // Single-instance lock: second launch focuses the existing window instead of opening a new copy.

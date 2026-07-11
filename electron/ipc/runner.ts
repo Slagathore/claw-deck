@@ -2,7 +2,7 @@ import { ipcMain, type BrowserWindow } from 'electron';
 import { spawn, type ChildProcess } from 'child_process';
 import { randomUUID } from 'crypto';
 import { getActiveMcpEnv } from './mcp';
-import { resolveCliBinary } from './cliResolve';
+import { resolveCliBinary, resolveSpawnTarget } from './cliResolve';
 import { trace } from './trace';
 
 /**
@@ -51,9 +51,7 @@ export function runCaptured(opts: {
   return new Promise((resolve) => {
     const env: Record<string, string | undefined> = { ...process.env, ...getActiveMcpEnv(), ...(opts.env ?? {}) };
     for (const k of opts.unsetEnv ?? []) delete env[k];   // e.g. drop ANTHROPIC_API_KEY → claude uses the login subscription
-    const binary = resolveCliBinary(opts.binary);
-    const bareName = !/[\\/]/.test(binary);
-    const useShell = process.platform === 'win32' && bareName;
+    const { command: binary, shell: useShell } = resolveSpawnTarget(opts.binary);
     const started = Date.now();
     trace('runner:start', { requested: opts.binary, resolved: binary, args: opts.args ?? [], cwd: opts.cwd, inputBytes: opts.input?.length ?? 0, timeoutMs: opts.timeoutMs });
     const proc = spawn(binary, opts.args ?? [], { cwd: opts.cwd, env, shell: useShell });
@@ -125,12 +123,9 @@ export function registerRunnerHandlers(getWindow: () => BrowserWindow | null) {
       }
     }
 
-    // Pipe path. On Windows, bare command names (e.g. `clawhub`, `npm`, `winget`)
-    // are usually `.cmd`/`.exe` resolved via PATHEXT — which spawn() only does
-    // with a shell. Use a shell for bare names so npm-installed CLIs resolve.
-    const binary = resolveCliBinary(opts.binary);
-    const bareName = !/[\\/]/.test(binary);
-    const useShell = process.platform === 'win32' && bareName;
+    // Pipe path. resolveSpawnTarget handles Windows .cmd/.bat launchers
+    // (npm-installed CLIs like clawhub/npm/winget) that can't be spawned directly.
+    const { command: binary, shell: useShell } = resolveSpawnTarget(opts.binary);
     const proc = spawn(binary, opts.args ?? [], { cwd: opts.cwd, env, shell: useShell });
     sessions.set(id, { kind: 'pipe', proc, backend: opts.backend });
     proc.stdout?.on('data', d => emit(id, 'stdout', d.toString()));
@@ -145,7 +140,8 @@ export function registerRunnerHandlers(getWindow: () => BrowserWindow | null) {
   ipcMain.handle('runner:stop', (_e, id: string) => {
     const s = sessions.get(id);
     if (!s) return false;
-    try { s.kind === 'pty' ? s.term.kill() : s.proc.kill(); } catch { /* already dead */ }
+    // Tree-kill piped children so a CLI that spawned sub-processes is fully reaped.
+    try { s.kind === 'pty' ? s.term.kill() : killProcTree(s.proc); } catch { /* already dead */ }
     return true;
   });
 

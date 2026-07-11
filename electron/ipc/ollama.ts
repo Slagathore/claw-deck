@@ -90,33 +90,53 @@ export function registerOllamaHandlers() {
 
   ipcMain.handle('ollama:chat', async (_e, req: ChatReq) => {
     const url = `${req.baseUrl.replace(/\/$/, '')}/api/chat`;
-    const r = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: req.model, messages: req.messages, stream: !!req.stream, options: req.options ?? {} })
-    });
-    if (!req.stream) {
-      const j: any = await r.json();
-      return { content: j.message?.content ?? '', raw: j };
+    // Timeout the connection for non-stream calls so a hung Ollama can't stall
+    // the send forever. Streaming responses manage their own lifetime.
+    const ctrl = new AbortController();
+    const timer = req.stream ? undefined : setTimeout(() => ctrl.abort(), 120000);
+    try {
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: req.model, messages: req.messages, stream: !!req.stream, options: req.options ?? {} }),
+        signal: ctrl.signal
+      });
+      if (!req.stream) {
+        const j: any = await r.json();
+        return { content: j.message?.content ?? '', raw: j };
+      }
+      return streamReader(r, 'native');
+    } catch (e: any) {
+      return { content: '', error: e?.name === 'AbortError' ? 'Ollama request timed out' : (e?.message ?? String(e)) };
+    } finally {
+      if (timer) clearTimeout(timer);
     }
-    return streamReader(r, 'native');
   });
 
   ipcMain.handle('ollama:vision', async (_e, req: VisionReq) => {
     const url = `${req.openaiCompatUrl.replace(/\/$/, '')}/chat/completions`;
-    const r = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(req.apiKey ? { Authorization: `Bearer ${req.apiKey}` } : {})
-      },
-      body: JSON.stringify({ model: req.model, messages: req.messages, stream: !!req.stream })
-    });
-    if (!req.stream) {
-      const j: any = await r.json();
-      return { content: j.choices?.[0]?.message?.content ?? '', raw: j };
+    const ctrl = new AbortController();
+    const timer = req.stream ? undefined : setTimeout(() => ctrl.abort(), 120000);
+    try {
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(req.apiKey ? { Authorization: `Bearer ${req.apiKey}` } : {})
+        },
+        body: JSON.stringify({ model: req.model, messages: req.messages, stream: !!req.stream }),
+        signal: ctrl.signal
+      });
+      if (!req.stream) {
+        const j: any = await r.json();
+        return { content: j.choices?.[0]?.message?.content ?? '', raw: j };
+      }
+      return streamReader(r, 'openai');
+    } catch (e: any) {
+      return { content: '', error: e?.name === 'AbortError' ? 'Vision request timed out' : (e?.message ?? String(e)) };
+    } finally {
+      if (timer) clearTimeout(timer);
     }
-    return streamReader(r, 'openai');
   });
 
   // Pull a model from the Ollama registry, streaming { status, completed, total }

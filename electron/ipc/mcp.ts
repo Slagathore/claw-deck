@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 import { type ChildProcess, spawn } from 'child_process';
 import { getDb } from './db';
+import { resolveSpawnTarget } from './cliResolve';
 
 export interface McpServerConfig {
   name: string;
@@ -74,11 +75,15 @@ function startOne(cfg: McpServerConfig): RunningMcp {
   const existing = running.get(cfg.name);
   if (existing && existing.status === 'running') return existing;
 
-  const proc = spawn(cfg.command, cfg.args ?? [], {
+  // Resolve + shell-wrap so npm/pip launchers (npx.cmd, uvx) actually start on
+  // Windows — a bare `npx` with no shell is ENOENT (there's no npx.exe).
+  const { command, shell } = resolveSpawnTarget(cfg.command);
+  const proc = spawn(command, cfg.args ?? [], {
     cwd: cfg.cwd,
     env: { ...process.env, ...(cfg.env ?? {}) },
     stdio: ['pipe', 'pipe', 'pipe'],
-    windowsHide: true
+    windowsHide: true,
+    shell
   });
 
   const entry: RunningMcp = {
@@ -109,7 +114,16 @@ function startOne(cfg: McpServerConfig): RunningMcp {
 export function stopOne(name: string): boolean {
   const entry = running.get(name);
   if (!entry) return false;
-  try { entry.proc.kill(); } catch { /* already dead */ }
+  try {
+    const { proc } = entry;
+    // Tree-kill on Windows: shell-launched servers (npx → node) spawn children a
+    // plain SIGTERM to the parent won't reap.
+    if (process.platform === 'win32' && proc.pid) {
+      spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { stdio: 'ignore', shell: false });
+    } else {
+      proc.kill();
+    }
+  } catch { /* already dead */ }
   return true;
 }
 
