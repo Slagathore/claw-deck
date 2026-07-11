@@ -135,6 +135,16 @@ npm run dist       # build + sign
 <summary><strong>🔄 Auto-update channel</strong></summary>
 
 The **Update Claw Deck** tab polls the GitHub release feeds under *Settings → Upgrade Feeds*, compares the latest release to `app.getVersion()` via semver, auto-picks the right asset for your platform/arch, and runs it through the full security gate before installing.
+
+**Update visibility.** On launch, Claw Deck checks the self-update feed and shows an *"Update available"* banner when a newer release exists. You can silence it two ways — **Later** (snooze until a newer version ships) or **Don't remind me** (mute forever) — both remembered across restarts.
+
+**Emergency updates override silence.** A release can mark itself urgent by putting a marker in its GitHub release notes; Claw Deck then shows a blocking message *regardless* of a user's snooze/mute. The marker is an HTML comment (invisible in GitHub's rendered notes):
+
+```
+<!-- clawdeck:emergency: Fixes a critical RCE — please update immediately. -->
+```
+
+**Close-window behavior** is configurable under *Settings → UX*: **Minimize to taskbar**, **Hide to system tray** (keep running in the background), or **Quit**.
 </details>
 
 <details>

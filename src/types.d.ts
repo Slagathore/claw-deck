@@ -46,8 +46,9 @@ declare global {
       };
       app: {
         pickPath: (opts?: any) => Promise<string | null>;
-        version: () => Promise<{ version: string; platform: string; arch: string; closeToTray?: boolean }>;
-        setCloseToTray: (value: boolean) => Promise<{ ok: boolean; closeToTray: boolean }>;
+        version: () => Promise<{ version: string; platform: string; arch: string; closeBehavior?: 'tray' | 'minimize' | 'quit' }>;
+        setCloseToTray: (value: boolean) => Promise<{ ok: boolean; closeBehavior: string }>;
+        setCloseBehavior: (mode: 'tray' | 'minimize' | 'quit') => Promise<{ ok: boolean; closeBehavior: string }>;
         quit: () => Promise<void>;
         show: () => Promise<{ ok: boolean }>;
         openPath: (target: string) => Promise<{ ok: boolean; reason?: string }>;

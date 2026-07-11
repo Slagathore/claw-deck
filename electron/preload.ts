@@ -61,6 +61,7 @@ contextBridge.exposeInMainWorld('api', {
     pickPath: (opts?: any) => invoke('app:pickPath', opts ?? {}),
     version: () => invoke('app:version'),
     setCloseToTray: (value: boolean) => invoke('app:setCloseToTray', value),
+    setCloseBehavior: (mode: 'tray' | 'minimize' | 'quit') => invoke('app:setCloseBehavior', mode),
     quit: () => invoke('app:quit'),
     show: () => invoke('app:show'),
     openPath: (target: string) => invoke('app:openPath', target),

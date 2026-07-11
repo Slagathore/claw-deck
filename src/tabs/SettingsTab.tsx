@@ -137,15 +137,21 @@ export default function SettingsTab() {
         <label><input type="checkbox" checked={!!draft.showThinking} onChange={e => set('showThinking', e.target.checked)} /> Show thinking pane</label>
         <label><input type="checkbox" checked={!!draft.quietMode} onChange={e => set('quietMode', e.target.checked)} /> Quiet / focus mode</label>
         <label><input type="checkbox" checked={!!draft.airgapped} onChange={e => set('airgapped', e.target.checked)} /> Air-gapped mode (blocks upgrade downloads)</label>
-        <label title="When on, clicking the window's X hides Claw Deck to the system tray instead of quitting. Right-click the tray icon to actually quit.">
-          <input
-            type="checkbox"
-            checked={draft.closeToTray !== false}
+        <label title="What clicking the window's X does. Minimize keeps Claw Deck on the taskbar; Hide to tray keeps it running with only the tray icon; Quit exits.">
+          When I close the window:
+          <select
+            value={draft.closeBehavior ?? (draft.closeToTray === false ? 'quit' : 'tray')}
             onChange={async e => {
-              set('closeToTray', e.target.checked);
-              try { await window.api.app.setCloseToTray(e.target.checked); } catch { /* ignore */ }
+              const mode = e.target.value as 'tray' | 'minimize' | 'quit';
+              set('closeBehavior', mode);
+              try { await window.api.app.setCloseBehavior(mode); } catch { /* ignore */ }
             }}
-          /> Close to tray (keep running in background)
+            style={{ marginLeft: 8 }}
+          >
+            <option value="minimize">Minimize to taskbar</option>
+            <option value="tray">Hide to system tray (keep running)</option>
+            <option value="quit">Quit the app</option>
+          </select>
         </label>
         <div className="row">
           <button onClick={() => window.api.app.quit()} title="Fully quit the app (bypasses close-to-tray)">

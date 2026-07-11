@@ -34,8 +34,10 @@ const isProbeMode = !!process.env.CLAW_PROBE_ID;
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
-/** When true, close ⇒ hide-to-tray. Toggled via `app:setCloseToTray` IPC. */
-let closeToTray = true;
+/** What clicking the window's X does. Set via `app:setCloseBehavior` IPC.
+ *  'tray' = hide to system tray · 'minimize' = minimize to taskbar · 'quit' = exit. */
+type CloseBehavior = 'tray' | 'minimize' | 'quit';
+let closeBehavior: CloseBehavior = 'tray';
 /** Set when the user explicitly quits via tray menu / Cmd+Q. */
 let quitting = false;
 
@@ -98,21 +100,22 @@ function createWindow() {
     mainWindow.loadFile(indexFile);
   }
 
-  // Close → hide-to-tray (unless user explicitly quitting).
+  // Close behavior (unless the user is really quitting): minimize to taskbar,
+  // hide to system tray, or exit.
   mainWindow.on('close', (e) => {
-    if (!quitting && closeToTray) {
-      e.preventDefault();
-      mainWindow?.hide();
-      // First-time hint via balloon (Windows only).
-      if (tray && process.platform === 'win32') {
-        try {
-          tray.displayBalloon({
-            title: 'Claw Deck is still running',
-            content: 'Right-click the tray icon to quit.',
-            iconType: 'info'
-          });
-        } catch { /* not critical */ }
-      }
+    if (quitting || closeBehavior === 'quit') return; // let the window close → app exits
+    e.preventDefault();
+    if (closeBehavior === 'minimize') { mainWindow?.minimize(); return; }
+    // 'tray': hide the window entirely; only the tray icon remains.
+    mainWindow?.hide();
+    if (tray && process.platform === 'win32') {
+      try {
+        tray.displayBalloon({
+          title: 'Claw Deck is still running',
+          content: 'Right-click the tray icon to quit.',
+          iconType: 'info'
+        });
+      } catch { /* not critical */ }
     }
   });
 }
@@ -212,12 +215,18 @@ app.whenReady().then(async () => {
     version: app.getVersion(),
     platform: process.platform,
     arch: process.arch,
-    closeToTray
+    closeBehavior
   }));
 
+  ipcMain.handle('app:setCloseBehavior', (_e, mode: CloseBehavior) => {
+    if (mode === 'tray' || mode === 'minimize' || mode === 'quit') closeBehavior = mode;
+    return { ok: true, closeBehavior };
+  });
+
+  // Back-compat for older renderer builds that call the boolean setter.
   ipcMain.handle('app:setCloseToTray', (_e, value: boolean) => {
-    closeToTray = Boolean(value);
-    return { ok: true, closeToTray };
+    closeBehavior = value ? 'tray' : 'quit';
+    return { ok: true, closeBehavior };
   });
 
   ipcMain.handle('app:quit', () => { quitting = true; app.quit(); });

@@ -48,12 +48,13 @@ export default function App() {
     if (loaded && shouldShowOnboarding()) setWizardOpen(true);
   }, [loaded]);
 
-  // Push close-to-tray pref to backend whenever it changes (default: on).
+  // Push the close-window behavior to the backend whenever it changes.
+  // Default 'tray'; migrate the old boolean closeToTray (false ⇒ 'quit').
   useEffect(() => {
     if (!loaded) return;
-    const enabled = s.closeToTray !== false;
-    window.api.app.setCloseToTray(enabled).catch(() => { /* ignore */ });
-  }, [loaded, s.closeToTray]);
+    const behavior = s.closeBehavior ?? (s.closeToTray === false ? 'quit' : 'tray');
+    window.api.app.setCloseBehavior(behavior).catch(() => { /* ignore */ });
+  }, [loaded, s.closeBehavior, s.closeToTray]);
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
