@@ -8,11 +8,16 @@ export interface RunResult {
   durationMs: number;
 }
 
-/** Run a command without a shell; capture all output. */
+/** Run a command and capture all output. */
 export function run(cmd: string, args: string[], opts: SpawnOptions & { timeoutMs?: number } = {}): Promise<RunResult> {
   return new Promise(resolve => {
     const started = Date.now();
-    const child = spawn(cmd, args, { ...opts, shell: false });
+    // On Windows, batch launchers (npm.cmd, npx.cmd, clawhub.cmd, …) cannot be
+    // spawned directly — Node >=20.12 / 24 throws EINVAL (the CVE-2024-27980 fix).
+    // Route those through a shell; real executables (git.exe, where.exe) stay
+    // shell-free. Callers may still force `shell` explicitly via opts.
+    const needsShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(cmd);
+    const child = spawn(cmd, args, { ...opts, shell: opts.shell ?? needsShell });
     let out = '';
     let err = '';
     let killed = false;
