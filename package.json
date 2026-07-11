@@ -13,7 +13,7 @@
   },
   "scripts": {
     "dev": "concurrently -k \"vite\" \"npm:dev:electron\"",
-    "dev:electron": "wait-on tcp:5173 && tsc -p electron/tsconfig.json && cross-env CLAW_DEV=1 electron .",
+    "dev:electron": "wait-on tcp:5273 && tsc -p electron/tsconfig.json && cross-env CLAW_DEV=1 electron .",
     "build:renderer": "vite build",
     "build:electron": "tsc -p electron/tsconfig.json",
     "build": "npm run build:renderer && npm run build:electron",

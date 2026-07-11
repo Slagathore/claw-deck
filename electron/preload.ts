@@ -58,6 +58,7 @@ contextBridge.exposeInMainWorld('api', {
     quit: () => invoke('app:quit'),
     show: () => invoke('app:show'),
     openPath: (target: string) => invoke('app:openPath', target),
+    openExternal: (url: string) => invoke('app:openExternal', url),
     showItemInFolder: (target: string) => invoke('app:showItemInFolder', target),
     which: (binary: string) => invoke('app:which', binary),
     traceInfo: () => invoke('app:traceInfo'),

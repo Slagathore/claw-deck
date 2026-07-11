@@ -26,6 +26,15 @@ body {
 .tab-btn .dot { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); width: 7px; height: 7px; border-radius: 50%; background: var(--bad); box-shadow: 0 0 0 2px var(--panel); }
 .main { overflow: auto; padding: 18px 22px; grid-row: 1; grid-column: 2; }
 
+/* --- Donate box (sidebar footer) --- */
+.donate-box { padding: 8px 8px 12px; font-size: 11px; color: var(--muted); line-height: 1.45; }
+.donate-btn {
+  display: block; width: 100%; margin-top: 8px;
+  background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+  padding: 7px 10px; border-radius: 8px; cursor: pointer; font-size: 12.5px;
+}
+.donate-btn:hover { background: var(--accent); border-color: var(--accent); color: white; }
+
 /* --- Status bar (bottom strip across main column) --- */
 .statusbar {
   grid-row: 2; grid-column: 2;

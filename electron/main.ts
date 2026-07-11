@@ -29,7 +29,7 @@ import { executeProbeMode } from './selfUpgrade/probe';
 // `npm start` builds to dist/ and runs no Vite server, so it must load the file.
 const isDev = !app.isPackaged && process.env.CLAW_DEV === '1';
 // Vite dev server URL — overridable so you can point at a different port.
-const devServerUrl = process.env.CLAW_DEV_SERVER_URL || 'http://localhost:5173';
+const devServerUrl = process.env.CLAW_DEV_SERVER_URL || 'http://localhost:5273';
 const isProbeMode = !!process.env.CLAW_PROBE_ID;
 
 let mainWindow: BrowserWindow | null = null;
@@ -231,6 +231,17 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('app:showItemInFolder', (_e, target: string) => {
     shell.showItemInFolder(target);
+    return { ok: true };
+  });
+
+  // Open a URL in the user's default browser. Allowlist http(s) only so a
+  // compromised renderer can't hand the OS shell an arbitrary file:// / app
+  // protocol to launch.
+  ipcMain.handle('app:openExternal', async (_e, url: string) => {
+    if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
+      return { ok: false, reason: 'blocked: only http(s) URLs are allowed' };
+    }
+    await shell.openExternal(url);
     return { ok: true };
   });
 

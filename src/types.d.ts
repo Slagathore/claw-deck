@@ -51,6 +51,7 @@ declare global {
         quit: () => Promise<void>;
         show: () => Promise<{ ok: boolean }>;
         openPath: (target: string) => Promise<{ ok: boolean; reason?: string }>;
+        openExternal: (url: string) => Promise<{ ok: boolean; reason?: string }>;
         showItemInFolder: (target: string) => Promise<{ ok: boolean }>;
         which: (binary: string) => Promise<{ ok: boolean; path?: string; error?: string }>;
         traceInfo: () => Promise<{ ok: boolean; path: string }>;

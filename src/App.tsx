@@ -17,6 +17,8 @@ import CommandPalette from './components/CommandPalette';
 import StatusBar from './components/StatusBar';
 import OnboardingWizard, { shouldShowOnboarding } from './components/OnboardingWizard';
 
+const KOFI_URL = 'https://ko-fi.com/sparklemuffin';
+
 type TabDef = readonly [key: string, icon: string, label: string, hint: string];
 
 const TABS: readonly TabDef[] = [
@@ -101,6 +103,12 @@ export default function App() {
           <span className="ico">❓</span>
           <span>Show tour</span>
         </button>
+        <div className="donate-box">
+          If this helped you, consider donating to help keep me focused on making more useful free apps? Thanks!
+          <button className="donate-btn" onClick={() => window.api.app.openExternal(KOFI_URL)}>
+            ☕ Donate on Ko-fi
+          </button>
+        </div>
       </aside>
       <main className="main">
         {tab === 'chat' && <ChatTab />}

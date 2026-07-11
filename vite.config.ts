@@ -12,7 +12,7 @@ export default defineConfig({
   base: "./",
   resolve: { alias: { "@": path.resolve(__dirname, "src") } },
   build: { outDir: "dist", emptyOutDir: true },
-  server: { port: 5173, strictPort: true },
+  server: { port: 5273, strictPort: true },
   test: {
     environment: "node",
     include: ["tests/**/*.test.ts"],

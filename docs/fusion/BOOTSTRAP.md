@@ -59,7 +59,7 @@ multi-agent software council** that can **discuss, audit, and fix** code in sele
 ## 1. Repo facts you must know (read from the live source — do not guess)
 
 **Stack:** Electron `^42`, React `^18`, Vite `^8`, TypeScript `^5.5` strict. Renderer built by Vite, main by
-`tsc -p electron/tsconfig.json`. Entry `dist-electron/main.js`. Dev: `npm run dev` (Vite :5173 + Electron).
+`tsc -p electron/tsconfig.json`. Entry `dist-electron/main.js`. Dev: `npm run dev` (Vite :5273 + Electron).
 
 **IPC pattern.** Handlers in `electron/ipc/*.ts` as `ipcMain.handle('ns:action', ...)`, exposed to the
 renderer via `electron/preload.ts` `contextBridge` as `window.api.*` (no nodeIntegration / no remote), typed in
