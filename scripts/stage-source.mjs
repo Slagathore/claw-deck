@@ -38,13 +38,13 @@ const ITEMS = [
   "scripts",
   "package.json",
   "package-lock.json",
+  // .npmrc carries legacy-peer-deps — without it, npm installs in the staged
+  // tree (the packaged self-upgrader's gate) fail ERESOLVE on fresh resolves.
+  ".npmrc",
   "tsconfig.json",
   "vite.config.ts",
   "index.html",
   "README.md",
-  "REQUIREMENTS.md",
-  "PLAN.md",
-  "SUMMARY.md",
 ];
 
 let copied = 0;

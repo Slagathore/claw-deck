@@ -11,7 +11,7 @@
 ![Electron](https://img.shields.io/badge/Electron-42-47848F?logo=electron&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.5-3178C6?logo=typescript&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-367%20passing-4ade80)
+[![CI](https://github.com/Slagathore/claw-deck/actions/workflows/ci.yml/badge.svg)](https://github.com/Slagathore/claw-deck/actions/workflows/ci.yml)
 ![Local-first](https://img.shields.io/badge/local--first-no%20cloud%20inference-8b5cf6)
 ![Signed](https://img.shields.io/badge/Windows%20builds-Authenticode%20signed-2ea44f)
 
