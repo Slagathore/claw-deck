@@ -20,3 +20,8 @@ claw-bridge/out/
 
 # VS Code extension package artifact
 *.vsix
+
+# fleet-managed local instruction files (never ship to GitHub)
+CLAUDE.md
+.claude/
+AGENTS.md
