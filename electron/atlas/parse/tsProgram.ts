@@ -12,6 +12,8 @@
 // there). This module owns the `.ts`/`.tsx` story, which is all of claw-deck.
 
 import ts from 'typescript';
+import * as fs from 'fs';
+import * as path from 'path';
 import { type ParseResult, type ParsedSymbol, type ParsedEdge, type SymbolKind, type EdgeKind } from '../types';
 
 const OPTIONS: ts.CompilerOptions = {
@@ -30,6 +32,22 @@ const OPTIONS: ts.CompilerOptions = {
 const norm = (p: string) => p.replace(/\\/g, '/');
 const MODULE_QN = '<module>';
 
+// Packaged builds: electron-builder's default node_modules cleanup strips
+// *.d.ts files, so the TS default libs (lib.es2022.d.ts etc.) ship separately
+// as extraResources under resources/tslibs. When the normal lookup next to
+// typescript.js misses, read them from there. Inert under plain node/vitest,
+// where process.resourcesPath is undefined and node_modules has the real libs.
+const TSLIB_FALLBACK_DIR = (process as any).resourcesPath
+  ? path.join((process as any).resourcesPath, 'tslibs')
+  : undefined;
+
+function readDefaultLibFallback(fileName: string): string | undefined {
+  if (!TSLIB_FALLBACK_DIR) return undefined;
+  const base = path.basename(norm(fileName));
+  if (!/^lib(\..+)?\.d\.ts$/.test(base)) return undefined;
+  try { return fs.readFileSync(path.join(TSLIB_FALLBACK_DIR, base), 'utf8'); } catch { return undefined; }
+}
+
 /** Build an in-memory TS Program over `files` (relPath → content). */
 function createProgram(files: Record<string, string>): { program: ts.Program; rootNames: string[] } {
   const map = new Map<string, string>();
@@ -46,7 +64,7 @@ function createProgram(files: Record<string, string>): { program: ts.Program; ro
         }
         return sourceCache.get(n);
       }
-      const text = ts.sys.readFile(fileName);
+      const text = ts.sys.readFile(fileName) ?? readDefaultLibFallback(fileName);
       return text !== undefined ? ts.createSourceFile(fileName, text, langVersion, true) : undefined;
     },
     getDefaultLibFileName: (o) => ts.getDefaultLibFilePath(o),
@@ -55,8 +73,8 @@ function createProgram(files: Record<string, string>): { program: ts.Program; ro
     getCanonicalFileName: (f) => norm(f),
     useCaseSensitiveFileNames: () => true,
     getNewLine: () => '\n',
-    fileExists: (f) => map.has(norm(f)) || ts.sys.fileExists(f),
-    readFile: (f) => map.get(norm(f)) ?? ts.sys.readFile(f),
+    fileExists: (f) => map.has(norm(f)) || ts.sys.fileExists(f) || readDefaultLibFallback(f) !== undefined,
+    readFile: (f) => map.get(norm(f)) ?? ts.sys.readFile(f) ?? readDefaultLibFallback(f),
     directoryExists: () => true,
     getDirectories: () => [],
   };
