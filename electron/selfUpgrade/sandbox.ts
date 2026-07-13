@@ -2,13 +2,15 @@ import * as path from 'path';
 import * as os from 'os';
 import * as fsp from 'fs/promises';
 import { run } from './exec';
+import { applyPatchSet, type PatchSet } from './patcher';
 
 /**
- * Stages a high-risk patch in isolation before the live tree is trusted: the
- * (already-patched) source is cloned to an OS temp dir, its dependencies are
- * made available (the live node_modules is reused via a junction, falling back
- * to a fresh `npm ci`), and the full test suite runs there. The live process is
- * never executed during this check, and the temp dir is removed afterward.
+ * Stages a high-risk patch in isolation BEFORE the live tree is touched: the
+ * unpatched source is cloned to an OS temp dir, the patch (if any) is applied
+ * to that clone, dependencies are made available (the live node_modules is
+ * reused via a junction, falling back to a fresh `npm ci`), and the full test
+ * suite runs there. The live tree is never written during this check, and the
+ * temp dir is removed afterward.
  */
 export interface SandboxResult {
   ok: boolean;
@@ -32,7 +34,7 @@ async function cloneTo(src: string, dst: string): Promise<void> {
   }
 }
 
-export async function runInSandbox(opts: { sourceRoot: string; timeoutMs?: number }): Promise<SandboxResult> {
+export async function runInSandbox(opts: { sourceRoot: string; patch?: PatchSet; timeoutMs?: number }): Promise<SandboxResult> {
   const started = Date.now();
   const timeoutMs = opts.timeoutMs ?? 600000;
 
@@ -41,6 +43,17 @@ export async function runInSandbox(opts: { sourceRoot: string; timeoutMs?: numbe
     await cloneTo(opts.sourceRoot, tmp);
   } catch (e: any) {
     return { ok: false, mode: 'unavailable', reason: `clone failed: ${e.message}`, durationMs: Date.now() - started };
+  }
+
+  // Apply the patch inside the clone, not the live tree — the whole point of
+  // the sandbox is to judge the patch before `sourceRoot` is ever touched.
+  if (opts.patch) {
+    try {
+      await applyPatchSet(opts.patch, tmp);
+    } catch (e: any) {
+      fsp.rm(tmp, { recursive: true, force: true }).catch(() => { /* ignore */ });
+      return { ok: false, mode: 'tempdir', reason: `patch apply failed in sandbox: ${e.message}`, durationMs: Date.now() - started };
+    }
   }
 
   // Mirror node_modules via symlink — full re-install would dominate runtime.

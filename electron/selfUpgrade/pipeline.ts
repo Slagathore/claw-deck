@@ -45,8 +45,6 @@ export interface PipelineOpts {
   runId: string;
   sourceRoot: string;
   patch: PatchSet;
-  /** When true, automatically promote when all gates pass. */
-  autoApply: boolean;
   /** When true, route high-risk patches through sandbox before applying live. */
   sandboxHighRisk: boolean;
   /** When set, the probe is launched with this electron exe path. */
@@ -93,39 +91,41 @@ export async function runPipeline(opts: PipelineOpts): Promise<PipelineResult> {
     return { runId, success: false, rolledBack: false, risk, repo, error: `snapshot failed: ${e.message}`, durationMs: Date.now() - started };
   }
 
-  // 4. optional sandbox pre-check for high-risk patches.
+  // 4. optional sandbox pre-check for high-risk patches: clone `sourceRoot` to
+  // a tempdir FIRST, apply the patch to that clone, and run the test suite
+  // there. The live tree is not written until the clone proves out — a
+  // high-risk patch gets a real isolated trial run before it can touch
+  // anything real.
   let sandboxResult: SandboxResult | undefined;
   if (opts.sandboxHighRisk && risk.level === 'high') {
-    emit(runId, 'sandbox', 'start', 'high-risk patch — staging in sandbox first');
-    // Apply patch to a *clone* via runInSandbox: easiest path is to apply to live, then clone, then revert if sandbox fails. We do the safer alternative: clone, apply there, run tests there.
+    emit(runId, 'sandbox', 'start', 'high-risk patch — cloning to a sandbox tempdir before touching the live tree');
     try {
-      await applyPatchSet(patch, sourceRoot);
-      sandboxResult = await runInSandbox({ sourceRoot });
-      // Revert the live tree after sandbox test regardless — we only continue if sandbox passed.
-      if (!sandboxResult.ok) {
-        await restoreSnapshot(snapshot);
-        emit(runId, 'sandbox', 'fail', sandboxResult.reason || 'sandbox tests failed', sandboxResult);
-        emit(runId, 'rollback', 'ok', 'restored from snapshot after sandbox failure');
-        return { runId, success: false, rolledBack: true, snapshot, risk, repo, sandbox: sandboxResult, error: 'sandbox stage failed', durationMs: Date.now() - started };
-      }
-      emit(runId, 'sandbox', 'ok', `sandbox passed in ${sandboxResult.durationMs}ms`, sandboxResult);
-      // Patch is already applied to live; skip re-applying below.
+      sandboxResult = await runInSandbox({ sourceRoot, patch });
     } catch (e: any) {
-      try { await restoreSnapshot(snapshot); } catch { /* ignore */ }
       emit(runId, 'sandbox', 'fail', e.message);
-      return { runId, success: false, rolledBack: true, snapshot, risk, repo, error: `sandbox error: ${e.message}`, durationMs: Date.now() - started };
+      // The live tree was never written, so there is nothing to roll back.
+      return { runId, success: false, rolledBack: false, snapshot, risk, repo, error: `sandbox error: ${e.message}`, durationMs: Date.now() - started };
     }
-  } else {
-    // 5. apply patch directly to the live tree (snapshot already protects us).
-    emit(runId, 'apply-patch', 'start');
-    try {
-      const r = await applyPatchSet(patch, sourceRoot);
-      emit(runId, 'apply-patch', 'ok', `wrote ${r.changed.length} file(s)`, r.changed);
-    } catch (e: any) {
-      emit(runId, 'apply-patch', 'fail', e.message);
-      try { await restoreSnapshot(snapshot); } catch { /* ignore */ }
-      return { runId, success: false, rolledBack: true, snapshot, risk, repo, error: `apply failed: ${e.message}`, durationMs: Date.now() - started };
+    if (!sandboxResult.ok) {
+      emit(runId, 'sandbox', 'fail', sandboxResult.reason || 'sandbox tests failed', sandboxResult);
+      // The live tree was never written, so there is nothing to roll back.
+      return { runId, success: false, rolledBack: false, snapshot, risk, repo, sandbox: sandboxResult, error: 'sandbox stage failed', durationMs: Date.now() - started };
     }
+    emit(runId, 'sandbox', 'ok', `sandbox passed in ${sandboxResult.durationMs}ms`, sandboxResult);
+  }
+
+  // 5. apply the patch to the live tree. For low/medium risk this is the
+  // first write; for high risk it only runs after the sandbox clone above
+  // already proved the patch out. Either way the snapshot from step 3 is
+  // what backs the "Revert last upgrade" action if this turns out wrong.
+  emit(runId, 'apply-patch', 'start');
+  try {
+    const r = await applyPatchSet(patch, sourceRoot);
+    emit(runId, 'apply-patch', 'ok', `wrote ${r.changed.length} file(s)`, r.changed);
+  } catch (e: any) {
+    emit(runId, 'apply-patch', 'fail', e.message);
+    try { await restoreSnapshot(snapshot); } catch { /* ignore */ }
+    return { runId, success: false, rolledBack: true, snapshot, risk, repo, sandbox: sandboxResult, error: `apply failed: ${e.message}`, durationMs: Date.now() - started };
   }
 
   // 6. gate (typecheck + tests + delta scan).
@@ -174,8 +174,11 @@ export async function runPipeline(opts: PipelineOpts): Promise<PipelineResult> {
     emit(runId, 'probe', 'skip', 'no electron exe configured');
   }
 
-  // 8. promote.
-  emit(runId, 'promote', opts.autoApply ? 'ok' : 'ok', opts.autoApply ? 'auto-apply enabled — change is live' : 'gates passed; change is live (manual mode)');
+  // 8. promote. There is no separate approval step: the patch has been live
+  // in the source tree since step 5 (or, for high-risk patches, since it
+  // passed the step-4 sandbox clone), so this event just marks the pipeline
+  // as done. Undo with the snapshot from step 3 — see "Revert last upgrade".
+  emit(runId, 'promote', 'ok', 'gate passed — change is live. Use "Revert last upgrade" if you don\'t want it.');
   return {
     runId,
     success: true,
