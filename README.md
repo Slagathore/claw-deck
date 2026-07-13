@@ -87,14 +87,16 @@ Claw Deck treats every update, whether it is an OpenClaw plugin, an MCP server, 
 2. HTTPS and allowlist: the host has to be in `settings.policy.allowlist`.
 3. Quarantine download: lands in `userData/quarantine/<ts>-<file>`, never executed.
 4. SHA-256 compare against the expected hash.
-5. Ed25519 signature verify against `policy.signingKeys`. Set `requireSignature` and it rejects anything unsigned.
-6. AV scan: Windows Defender (`MpCmdRun.exe`) plus ClamAV when present, plus YARA rules.
+5. Ed25519 signature verify against `policy.signingKeys`. `requireSignature` is on by default, so an unsigned manifest is blocked unless you explicitly click through "install unsigned anyway" for that one install (for your own unsigned test builds, say).
+6. AV scan: Windows Defender (`MpCmdRun.exe`) plus ClamAV when present, plus YARA rules. Each engine reports whether it actually ran; if none of them are installed or configured, the result says unscanned, not clean.
 7. VirusTotal hash lookup (optional): queries the file's SHA-256 against VT v3 (no upload). Any malicious or suspicious verdict blocks it.
 8. Install with backup: the vetted file is copied to its target, and any prior file is backed up to `<path>.bak-<ts>`.
-9. Tamper-evident ledger: every decision is appended to a hash-chained audit log, so altering any entry breaks the chain.
+9. Tamper-evident ledger: every decision is appended to a hash-chained audit log, so altering any entry breaks the chain. The Security tab has a Verify chain integrity button that actually walks the chain and recomputes every hash.
 10. Real rollback: restores the backup, or removes the file, on demand.
 
 The same scan engine powers the standalone Deep folder scan on the Security tab. Point it at any downloaded extension or npm package before you trust it.
+
+See [SECURITY.md](SECURITY.md) for the full threat model, including the self-upgrade pipeline (apply-live-then-verify, with a one-click revert, not a pre-approval queue) and what this gate does and does not defend against.
 
 ## Architecture
 
