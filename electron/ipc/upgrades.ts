@@ -16,6 +16,15 @@ interface UpgradeManifest {
   signature?: string;     // base64 ed25519 detached signature over the binary
   installPath?: string;   // absolute path; when set, vetted binary is copied here
   notes?: string;
+  /**
+   * Explicit, one-shot user acknowledgement that this specific install has no
+   * verifiable signature. Only consulted when policy.requireSignature is true
+   * AND no signature was provided — it never bypasses a hash mismatch, a
+   * failed scan, or an actual signature verification failure. The UI must set
+   * this only after a distinct confirmation click in response to
+   * `requiresUnsignedConfirmation` below, never by default.
+   */
+  acceptUnsigned?: boolean;
 }
 
 async function fetchSettings(): Promise<any> {
@@ -103,9 +112,17 @@ export function registerUpgradeHandlers() {
         return { ok: false, reason: `Signature verification failed: ${v.reason}` };
       }
     } else if (settings.policy?.requireSignature) {
-      appendAudit('upgrade:no_signature', { manifest: m });
-      try { fs.unlinkSync(dest); } catch {}
-      return { ok: false, reason: 'Policy requires a signature; none provided.' };
+      // No signature on a manifest, and policy demands one. Block by default —
+      // but if the user already clicked through the "install unsigned anyway"
+      // confirmation for THIS install (m.acceptUnsigned), let it through and
+      // say so in the audit log. requiresUnsignedConfirmation tells the UI to
+      // show that confirmation rather than just a dead end.
+      if (!m.acceptUnsigned) {
+        appendAudit('upgrade:no_signature', { manifest: m });
+        try { fs.unlinkSync(dest); } catch {}
+        return { ok: false, reason: 'Policy requires a signature; none provided.', requiresUnsignedConfirmation: true };
+      }
+      appendAudit('upgrade:unsigned_accepted', { manifest: m });
     }
 
     // 4. AV scan (+ optional VirusTotal hash reputation)
@@ -125,7 +142,7 @@ export function registerUpgradeHandlers() {
     if (settings.virusTotalApiKey) {
       const vt = await vtLookup(actual, settings.virusTotalApiKey, { timeoutMs: 8000 });
       if (vt) {
-        scanResults.push({ engine: 'virustotal', ok: vt.ok, detail: vt.detail });
+        scanResults.push({ engine: 'virustotal', ok: vt.ok, detail: vt.detail, available: true });
         if (!vt.ok) {
           appendAudit('upgrade:vt_flagged', { manifest: m, sha256: actual, vt });
           try { fs.unlinkSync(dest); } catch {}
@@ -133,6 +150,12 @@ export function registerUpgradeHandlers() {
         }
       }
     }
+
+    // Whether any engine actually ran, as opposed to every engine soft-skipping
+    // because it isn't installed/configured. `ok:true` on scanResults with
+    // scanned:false means "nothing blocked it because nothing looked" — the UI
+    // should say "unscanned", not "clean".
+    const scanned = scanResults.some(s => s.available !== false);
 
     // 5. Install: if installPath is set, copy from quarantine (with backup);
     //    otherwise the quarantined file IS the install location.
@@ -156,8 +179,8 @@ export function registerUpgradeHandlers() {
       VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
     `).run(m.kind, m.name, m.version, m.url, actual, m.signature ?? null, Date.now(), 'installed', dest, installPath, backup, m.notes ?? null);
 
-    appendAudit('upgrade:installed', { manifest: m, sha256: actual, file: dest, installPath, backup, scanResults });
-    return { ok: true, id: info.lastInsertRowid, sha256: actual, file: dest, installPath, backup, scanResults };
+    appendAudit('upgrade:installed', { manifest: m, sha256: actual, file: dest, installPath, backup, scanResults, scanned });
+    return { ok: true, id: info.lastInsertRowid, sha256: actual, file: dest, installPath, backup, scanResults, scanned };
   });
 
   ipcMain.handle('upgrades:rollback', (_e, id: number) => {

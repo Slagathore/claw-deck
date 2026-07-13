@@ -39,6 +39,7 @@ declare global {
         scanFile: (file: string) => Promise<any[]>;
         hashFile: (file: string) => Promise<string>;
         auditLog: () => Promise<any[]>;
+        verifyAuditLog: () => Promise<{ ok: boolean; checked: number; brokenAtId?: number; reason?: string }>;
       };
       screenshot: {
         listSources: () => Promise<any[]>;

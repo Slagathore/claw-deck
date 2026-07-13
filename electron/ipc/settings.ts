@@ -58,7 +58,10 @@ export const DEFAULTS = {
   // message.thinking pane is displayed — thinking is never mixed into content, hidden by default.
   think: false as boolean | 'low' | 'medium' | 'high',
   showThinking: false,
-  policy: { allowlist: ['github.com', 'releases.openclaw.org', 'objects.githubusercontent.com'], requireSignature: false, autoScan: true, signingKeys: [] as { name: string; format: 'pem' | 'hex'; key: string }[] },
+  // requireSignature defaults true: an unsigned manifest is blocked unless the
+  // user explicitly clicks through the "install unsigned anyway" confirmation
+  // (see upgrades:install's acceptUnsigned handling) — never a silent bypass.
+  policy: { allowlist: ['github.com', 'releases.openclaw.org', 'objects.githubusercontent.com'], requireSignature: true, autoScan: true, signingKeys: [] as { name: string; format: 'pem' | 'hex'; key: string }[] },
   feeds: { openclaw: [] as string[], self: ['Slagathore/claw-deck'] },
   githubToken: '',
   virusTotalApiKey: '',
@@ -85,7 +88,6 @@ export const DEFAULTS = {
     remoteUrl: 'https://api.openai.com/v1',
     remoteKey: '',
     remoteModel: 'gpt-4o-mini',
-    autoApply: false,
     sandboxHighRisk: true,
     launchProbe: true,
     probeChecks: ['boot', 'db', 'tray', 'ollama', 'render', 'scan'] as string[],

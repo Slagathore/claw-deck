@@ -17,8 +17,21 @@ export default function SecurityTab() {
   const [scanning, setScanning] = useState(false);
   const [report, setReport] = useState<any | null>(null);
   const [showAll, setShowAll] = useState(false);
+  const [chainCheck, setChainCheck] = useState<{ ok: boolean; checked: number; brokenAtId?: number; reason?: string } | null>(null);
+  const [verifying, setVerifying] = useState(false);
 
   useEffect(() => { window.api.security.auditLog().then(setRows); }, []);
+
+  async function verifyChain() {
+    setVerifying(true);
+    setChainCheck(null);
+    try {
+      const r = await window.api.security.verifyAuditLog();
+      setChainCheck(r);
+    } finally {
+      setVerifying(false);
+    }
+  }
 
   async function scanFolder() {
     setScanning(true);
@@ -53,8 +66,18 @@ export default function SecurityTab() {
         {report && <DeepScanReport report={report} showAll={showAll} onToggleShowAll={() => setShowAll(v => !v)} allowlist={allowlist} onToggleIgnore={toggleIgnore} scope={`folder:${report.root ?? ''}`} overrides={overrides} onSetOverride={setOverride} />}
       </div>
 
-      <div className="card">
-        <b>Tamper-evident audit log</b> — every entry hash-chained to the previous. Any modification breaks the chain.
+      <div className="card col">
+        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <b>Tamper-evident audit log</b> — every entry hash-chained to the previous. Any modification breaks the chain.
+          </div>
+          <button onClick={verifyChain} disabled={verifying}>{verifying ? 'Verifying…' : 'Verify chain integrity'}</button>
+        </div>
+        {chainCheck && (
+          chainCheck.ok
+            ? <div className="label" style={{ color: 'var(--good)' }}>Chain intact — {chainCheck.checked} entr{chainCheck.checked === 1 ? 'y' : 'ies'} verified, no gaps or edits.</div>
+            : <div className="label bad">Chain broken at audit id {chainCheck.brokenAtId}: {chainCheck.reason}</div>
+        )}
       </div>
       <div className="card">
         <table>

@@ -24,10 +24,14 @@ describe('yara.yaraScan soft-fail behavior', () => {
     expect(r.ok).toBe(true);
     expect(r.engine).toBe('yara');
     expect(r.detail).toMatch(/skipped/);
+    // Soft-skip must never look like a clean scan: ok=true but available=false,
+    // so the UI can tell "unscanned" apart from "scanned, found nothing".
+    expect(r.available).toBe(false);
   });
   it('soft-skips when the rules file does not exist', async () => {
     const r = await yaraScan('/nonexistent', { rulesPath: '/definitely/not/here.yar' });
     expect(r.ok).toBe(true);
     expect(r.detail).toMatch(/skipped/);
+    expect(r.available).toBe(false);
   });
 });

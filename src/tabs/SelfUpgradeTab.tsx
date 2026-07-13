@@ -115,10 +115,18 @@ export default function SelfUpgradeTab() {
     if (!asset) { setOta({ ...ota, state: 'error', message: 'No matching asset' }); return; }
     setOta({ ...ota, state: 'installing', message: `Downloading ${asset.name}…` });
     try {
-      const r = await window.api.upgrades.install({
+      const manifest = {
         kind: 'self', name: 'claw-deck', version: ota.candidate.version,
         url: asset.url, sha256: asset.sha256, signature: asset.signature
-      });
+      };
+      let r = await window.api.upgrades.install(manifest);
+      if (r?.ok === false && r.requiresUnsignedConfirmation) {
+        const accept = confirm(
+          `"${ota.candidate.version}" has no verifiable signature, and this Claw Deck is set to require one.\n\n` +
+          `Install it anyway? Only do this if you trust where it came from (e.g. your own unsigned build).`
+        );
+        if (accept) r = await window.api.upgrades.install({ ...manifest, acceptUnsigned: true });
+      }
       if (r?.ok === false) setOta({ ...ota, state: 'error', message: r.reason || 'install failed' });
       else setOta({ ...ota, state: 'installed', message: `Installed ${ota.candidate.version}. Restart Claw Deck to use the new version.` });
     } catch (e: any) { setOta({ ...ota, state: 'error', message: e.message }); }
@@ -155,7 +163,6 @@ export default function SelfUpgradeTab() {
     try {
       const r = await window.api.selfUpgrade.run({
         patch: proposal,
-        autoApply: !!su.autoApply,
         sandboxHighRisk: su.sandboxHighRisk !== false,
         probeChecks: su.probeChecks || ['boot', 'db', 'tray'],
         launchProbe
@@ -209,10 +216,35 @@ export default function SelfUpgradeTab() {
     }
   }
 
+  // The snapshot to target for a one-click revert: prefer the one from this
+  // session's most recent pipeline run, and fall back to the newest entry in
+  // the durable on-disk index (so the button still works after an app
+  // restart, or after a run that succeeded and is now just "live but wrong").
+  const lastSnapshotId: string | null = lastResult?.snapshot?.id ?? status?.snapshots?.[0]?.id ?? null;
+  const lastSnapshotAt: number | null = lastResult?.snapshot?.createdAt ?? status?.snapshots?.[0]?.createdAt ?? null;
+
   return (
     <div className="col">
       <div className="card col">
-        <b>Recursive self-upgrade</b> — the app reads its own source, proposes a change, and runs it through snapshot → patch → typecheck → tests → security scan delta → probe-child boot. Rolls back automatically on any failure.
+        <b>Recursive self-upgrade</b> — the app reads its own source, proposes a change, and runs it through snapshot → patch → typecheck → tests → security scan delta → probe-child boot. A patch that passes the gate is live immediately, there is no separate approval click. Auto-rollback fires on a gate/probe failure; if a patch passes but you don't like it anyway, use "Revert last upgrade" below.
+
+        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', marginTop: 8, padding: 8, border: '1px solid #b22222', borderRadius: 6, background: 'rgba(178,34,34,.08)' }}>
+          <div>
+            <b>Revert last upgrade</b>
+            <div className="label">
+              {lastSnapshotId
+                ? <>Restores the snapshot taken before the last self-upgrade run ({lastSnapshotAt ? new Date(lastSnapshotAt).toLocaleString() : lastSnapshotId}), even if that run passed its gates and is already live.</>
+                : 'No snapshot yet — run a self-upgrade or take a manual snapshot first.'}
+            </div>
+          </div>
+          <button
+            disabled={!!busy || !lastSnapshotId}
+            onClick={() => lastSnapshotId && rollback(lastSnapshotId)}
+            style={{ background: '#b22222', color: '#fff', fontWeight: 700, whiteSpace: 'nowrap' }}
+          >
+            ⏮ Revert last upgrade
+          </button>
+        </div>
 
         <div className="row" style={{ gap: 12, flexWrap: 'wrap', marginTop: 8 }}>
           <div><span className="label">Source: </span><code style={{ fontSize: 11 }}>{status?.sourceRoot || '…'}</code></div>

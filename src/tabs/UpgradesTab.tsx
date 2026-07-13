@@ -50,12 +50,20 @@ export default function UpgradesTab({ kind, title, showCheck = true }: { kind: '
   async function install() {
     setBusy(true); setStatus(null);
     try {
-      const r = await window.api.upgrades.install({
+      const manifest = {
         kind, name, version, url,
         sha256: sha || undefined,
         signature: signature || undefined,
         installPath: installPath || undefined
-      });
+      };
+      let r = await window.api.upgrades.install(manifest);
+      if (r?.ok === false && r.requiresUnsignedConfirmation) {
+        const accept = confirm(
+          'This update has no verifiable signature, and this Claw Deck is set to require one.\n\n' +
+          'Install it anyway? Only do this if you trust where it came from.'
+        );
+        if (accept) r = await window.api.upgrades.install({ ...manifest, acceptUnsigned: true });
+      }
       setStatus(r);
       await refresh();
     } finally { setBusy(false); }
@@ -117,9 +125,16 @@ export default function UpgradesTab({ kind, title, showCheck = true }: { kind: '
         {status && (
           <div className={`card`} style={{ background: status.ok ? 'rgba(74,222,128,.08)' : 'rgba(248,113,113,.08)' }}>
             <b>{status.ok ? 'OK' : 'Blocked'}:</b> {status.reason ?? `installed ${status.file}`}
+            {status.ok && status.scanned === false && (
+              <div className="label" style={{ color: 'var(--warn)' }}>No AV engine was available to scan this file — it was not actually checked, install proceeded anyway.</div>
+            )}
             {status.scanResults && (
               <ul>{status.scanResults.map((s: any, i: number) => (
-                <li key={i}><span className={`badge ${s.ok ? 'ok' : 'bad'}`}>{s.engine}</span> {s.detail}</li>
+                <li key={i}>
+                  <span className={`badge ${s.available === false ? 'warn' : (s.ok ? 'ok' : 'bad')}`}>
+                    {s.engine}{s.available === false ? ' (unscanned)' : ''}
+                  </span> {s.detail}
+                </li>
               ))}</ul>
             )}
           </div>

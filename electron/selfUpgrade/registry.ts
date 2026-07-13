@@ -127,7 +127,6 @@ export function registerSelfUpgradeHandlers() {
       _e,
       opts: {
         patch: PatchSet;
-        autoApply?: boolean;
         sandboxHighRisk?: boolean;
         probeChecks?: ("boot" | "db" | "tray" | "ollama" | "render" | "scan")[];
         launchProbe?: boolean;
@@ -140,7 +139,6 @@ export function registerSelfUpgradeHandlers() {
         runId,
         sourceRoot: ensured.path,
         patch: opts.patch,
-        autoApply: !!opts.autoApply,
         sandboxHighRisk: opts.sandboxHighRisk !== false,
         electronExe: opts.launchProbe ? process.execPath : undefined,
         probeChecks: opts.probeChecks,

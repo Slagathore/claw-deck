@@ -1,7 +1,20 @@
 import { spawn } from 'child_process';
 import * as fs from 'fs';
 
-export interface ScanResult { ok: boolean; engine: string; detail: string; }
+export interface ScanResult {
+  ok: boolean;
+  engine: string;
+  detail: string;
+  /**
+   * Whether this engine actually ran and produced a verdict. False on every
+   * soft-skip path (no binary, no rules configured, spawn/ENOENT failure) so
+   * callers — and the UI — can show "unscanned" instead of a green "clean"
+   * badge that looks identical to a real pass. `ok` stays true on those paths
+   * too (a missing engine must never block an install by itself), `available`
+   * is the honest signal.
+   */
+  available: boolean;
+}
 
 export interface YaraOptions {
   /** Path to a yara rules file (.yar / .yara) */
@@ -14,15 +27,16 @@ export interface YaraOptions {
 
 /**
  * Run a YARA scan over `file` using `rulesPath`. Soft-fails (ok=true,
- * "not installed" / "no rules") so a missing yara binary or unconfigured
- * rules never breaks the upgrade pipeline. Any rule match is a hard fail.
+ * available=false, "not installed" / "no rules") so a missing yara binary or
+ * unconfigured rules never breaks the upgrade pipeline. Any rule match is a
+ * hard fail.
  */
 export async function yaraScan(file: string, opts: YaraOptions = {}): Promise<ScanResult> {
   if (!opts.rulesPath) {
-    return { ok: true, engine: 'yara', detail: 'skipped: no rules path configured' };
+    return { ok: true, available: false, engine: 'yara', detail: 'skipped: no rules path configured' };
   }
   if (!fs.existsSync(opts.rulesPath)) {
-    return { ok: true, engine: 'yara', detail: `skipped: rules file not found at ${opts.rulesPath}` };
+    return { ok: true, available: false, engine: 'yara', detail: `skipped: rules file not found at ${opts.rulesPath}` };
   }
   const binary = opts.binary || 'yara';
   const timeoutMs = opts.timeoutMs ?? 30_000;
@@ -35,7 +49,7 @@ export async function yaraScan(file: string, opts: YaraOptions = {}): Promise<Sc
     try {
       p = spawn(binary, ['-r', opts.rulesPath!, file], { shell: false });
     } catch (e: any) {
-      return finish({ ok: true, engine: 'yara', detail: `skipped: spawn failed (${e?.message ?? 'unknown'})` });
+      return finish({ ok: true, available: false, engine: 'yara', detail: `skipped: spawn failed (${e?.message ?? 'unknown'})` });
     }
 
     let out = '';
@@ -44,12 +58,14 @@ export async function yaraScan(file: string, opts: YaraOptions = {}): Promise<Sc
     p.stderr?.on('data', d => (err += d.toString()));
     p.on('error', e => {
       // ENOENT etc. — yara not installed; soft-fail
-      finish({ ok: true, engine: 'yara', detail: `skipped: ${e.message}` });
+      finish({ ok: true, available: false, engine: 'yara', detail: `skipped: ${e.message}` });
     });
 
     const t = setTimeout(() => {
       try { p.kill(); } catch { /* ignore */ }
-      finish({ ok: false, engine: 'yara', detail: `timeout after ${timeoutMs}ms` });
+      // The engine WAS available (it launched); it just didn't finish in time.
+      // Unlike the soft-skip paths this is a hard fail, not an "unscanned" one.
+      finish({ ok: false, available: true, engine: 'yara', detail: `timeout after ${timeoutMs}ms` });
     }, timeoutMs);
 
     p.on('exit', code => {
@@ -57,13 +73,13 @@ export async function yaraScan(file: string, opts: YaraOptions = {}): Promise<Sc
       // yara exits 0 with output lines when matches are found, 0 with no output when none.
       // Non-zero on rule compile errors -> soft fail (do not block install on a broken rule file).
       if (code !== 0) {
-        return finish({ ok: true, engine: 'yara', detail: `skipped: yara exited ${code} ${err.slice(0, 200)}` });
+        return finish({ ok: true, available: false, engine: 'yara', detail: `skipped: yara exited ${code} ${err.slice(0, 200)}` });
       }
       const matches = parseYaraStdout(out, file);
       if (matches.length === 0) {
-        return finish({ ok: true, engine: 'yara', detail: 'no rules matched' });
+        return finish({ ok: true, available: true, engine: 'yara', detail: 'no rules matched' });
       }
-      return finish({ ok: false, engine: 'yara', detail: `matched rules: ${matches.join(', ')}` });
+      return finish({ ok: false, available: true, engine: 'yara', detail: `matched rules: ${matches.join(', ')}` });
     });
   });
 }

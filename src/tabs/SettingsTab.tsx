@@ -246,11 +246,11 @@ export default function SettingsTab() {
           onChange={e => set('selfUpgrade', { ...(draft.selfUpgrade || {}), goal: e.target.value })}
           placeholder="propose a small, safe improvement to code quality or test coverage"
         />
-        <label title="When on and all gates pass, the patch promotes without a click. When off, you must click Apply after gates pass.">
-          <input type="checkbox" checked={!!draft.selfUpgrade?.autoApply}
-            onChange={e => set('selfUpgrade', { ...(draft.selfUpgrade || {}), autoApply: e.target.checked })} />
-          {' '}Auto-apply when gates pass (advisory only — the pipeline already gates everything)
-        </label>
+        <div className="label">
+          There is no separate approval step: a patch that passes the gate is live in the source
+          tree immediately. Use the "Revert last upgrade" button on the Self-Upgrade tab if you
+          don't want to keep a change you already ran.
+        </div>
         <label title="High-risk patches first run in a cloned tempdir; live tree only updated if that passes.">
           <input type="checkbox" checked={draft.selfUpgrade?.sandboxHighRisk !== false}
             onChange={e => set('selfUpgrade', { ...(draft.selfUpgrade || {}), sandboxHighRisk: e.target.checked })} />

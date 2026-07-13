@@ -51,7 +51,8 @@ contextBridge.exposeInMainWorld('api', {
   security: {
     scanFile: (filePath: string) => invoke('security:scan', filePath),
     hashFile: (filePath: string) => invoke('security:hash', filePath),
-    auditLog: () => invoke('security:audit')
+    auditLog: () => invoke('security:audit'),
+    verifyAuditLog: () => invoke('security:verifyAuditLog')
   },
   screenshot: {
     listSources: () => invoke('screenshot:sources'),
