@@ -103,6 +103,17 @@ export function resolveCliBinary(binary: string): string {
  *    Use the ORIGINAL bare name so `cmd.exe` resolves it via PATHEXT, which
  *    avoids handing the shell a possibly-spaced full path like
  *    `C:\Program Files\nodejs\npx.cmd` (which the shell would mis-split).
+ *
+ * SECURITY: `shell: true` is a deliberate, narrow workaround for the
+ * Node/Windows `.cmd`/`.bat` spawn limitation above, not a general-purpose
+ * shell. Every argument passed alongside a `shell: true` result is
+ * interpreted by cmd.exe, so it is only safe because every caller today
+ * (runner.ts, exec.ts) passes fixed, developer- or user-typed CLI args, never
+ * scraped web content, remote API responses, or unreviewed model output. If a
+ * future caller wires attacker- or model-influenced text into `args` for a
+ * `.cmd`/`.bat` binary, that text can break out of its argument and run
+ * arbitrary shell commands — treat that as a real injection risk, not a
+ * theoretical one, and validate/escape before it ever reaches here.
  */
 export function resolveSpawnTarget(requested: string): { command: string; shell: boolean } {
   const resolved = resolveCliBinary(requested);

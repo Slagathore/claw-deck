@@ -16,6 +16,13 @@ export function run(cmd: string, args: string[], opts: SpawnOptions & { timeoutM
     // spawned directly — Node >=20.12 / 24 throws EINVAL (the CVE-2024-27980 fix).
     // Route those through a shell; real executables (git.exe, where.exe) stay
     // shell-free. Callers may still force `shell` explicitly via opts.
+    // SECURITY: once shell:true is chosen, `args` is interpreted by cmd.exe,
+    // not passed straight to the process — every element becomes a piece of a
+    // shell command line. Every caller in this codebase passes fixed,
+    // developer-written args (npm/git subcommands), never attacker- or
+    // model-influenced strings. Keep it that way: do not wire scraped, remote,
+    // or LLM-generated content into `args` for a `.cmd`/`.bat` call without
+    // adding real quoting/validation first.
     const needsShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(cmd);
     const child = spawn(cmd, args, { ...opts, shell: opts.shell ?? needsShell });
     let out = '';

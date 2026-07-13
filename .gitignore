@@ -25,3 +25,8 @@ claw-bridge/out/
 CLAUDE.md
 .claude/
 AGENTS.md
+
+# local secrets - none tracked today, this is a safety net against ever adding one
+.env
+.env.*
+!.env.example

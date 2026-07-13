@@ -51,6 +51,10 @@ export function runCaptured(opts: {
   return new Promise((resolve) => {
     const env: Record<string, string | undefined> = { ...process.env, ...getActiveMcpEnv(), ...(opts.env ?? {}) };
     for (const k of opts.unsetEnv ?? []) delete env[k];   // e.g. drop ANTHROPIC_API_KEY → claude uses the login subscription
+    // SECURITY: resolveSpawnTarget may return shell:true for Windows .cmd/.bat
+    // binaries (see cliResolve.ts) — when it does, `opts.args` is interpreted
+    // by cmd.exe. Callers here pass developer- or user-typed args only; never
+    // feed scraped/remote/model-generated text into `args` without validation.
     const { command: binary, shell: useShell } = resolveSpawnTarget(opts.binary);
     const started = Date.now();
     trace('runner:start', { requested: opts.binary, resolved: binary, args: opts.args ?? [], cwd: opts.cwd, inputBytes: opts.input?.length ?? 0, timeoutMs: opts.timeoutMs });
@@ -125,6 +129,8 @@ export function registerRunnerHandlers(getWindow: () => BrowserWindow | null) {
 
     // Pipe path. resolveSpawnTarget handles Windows .cmd/.bat launchers
     // (npm-installed CLIs like clawhub/npm/winget) that can't be spawned directly.
+    // SECURITY: same shell:true caveat as runCaptured above — opts.args must
+    // never carry attacker- or model-influenced content when useShell is true.
     const { command: binary, shell: useShell } = resolveSpawnTarget(opts.binary);
     const proc = spawn(binary, opts.args ?? [], { cwd: opts.cwd, env, shell: useShell });
     sessions.set(id, { kind: 'pipe', proc, backend: opts.backend });
