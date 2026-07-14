@@ -119,7 +119,7 @@ export async function runPipeline(opts: PipelineOpts): Promise<PipelineResult> {
   // anything real.
   let sandboxResult: SandboxResult | undefined;
   if (opts.sandboxHighRisk && risk.level === 'high') {
-    emit(runId, 'sandbox', 'start', 'high-risk patch — cloning to a sandbox tempdir before touching the live tree');
+    emit(runId, 'sandbox', 'start', 'high-risk patch: cloning to a sandbox tempdir before touching the live tree');
     try {
       sandboxResult = await runInSandbox({ sourceRoot, patch });
     } catch (e: any) {
@@ -291,7 +291,7 @@ export async function runPipeline(opts: PipelineOpts): Promise<PipelineResult> {
   // in the source tree since step 5 (or, for high-risk patches, since it
   // passed the step-4 sandbox clone), so this event just marks the pipeline
   // as done. Undo with the snapshot from step 3 — see "Revert last upgrade".
-  emit(runId, 'promote', 'ok', `${describeGate(gate)} — change is live in the source tree. Use "Revert last upgrade" if you don't want it.`);
+  emit(runId, 'promote', 'ok', `${describeGate(gate)}. Change is live in the source tree. Use "Revert last upgrade" if you don't want it.`);
   return {
     runId,
     success: true,

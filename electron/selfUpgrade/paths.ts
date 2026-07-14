@@ -147,7 +147,7 @@ export async function ensureSourceTree(): Promise<SourceTreeState> {
     return {
       path: root,
       ready: false,
-      reason: `no bundled source at ${bundled || '(unknown resourcesPath)'} — this build shipped without resources/source`
+      reason: `no bundled source at ${bundled || '(unknown resourcesPath)'} (this build shipped without resources/source)`
     };
   }
 

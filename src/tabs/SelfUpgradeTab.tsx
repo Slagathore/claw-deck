@@ -119,7 +119,7 @@ export default function SelfUpgradeTab() {
       const asset = pickAssetFor(newer, info.platform, info.arch);
       setOta({
         state: 'updateFound', candidate: newer, pickedAssetName: asset?.name,
-        message: asset ? `Update ${newer.version} available — asset: ${asset.name}` : `Update ${newer.version} available but no installable asset for ${info.platform}/${info.arch}.`
+        message: asset ? `Update ${newer.version} available (asset: ${asset.name})` : `Update ${newer.version} available but no installable asset for ${info.platform}/${info.arch}.`
       });
     } catch (e: any) { setOta({ state: 'error', message: e.message }); }
   }
@@ -159,7 +159,7 @@ export default function SelfUpgradeTab() {
         // Honest failure: download/verify may have passed but the install did not.
         setOta({ ...ota, state: 'error', message: r.reason || 'install failed' });
       } else if (r?.installerLaunched) {
-        setOta({ ...ota, state: 'installed', message: `Installer for ${ota.candidate.version} launched. Claw Deck is closing so it can update — reopen it when the installer finishes.` });
+        setOta({ ...ota, state: 'installed', message: `Installer for ${ota.candidate.version} launched. Claw Deck is closing so it can update. Reopen it when the installer finishes.` });
       } else {
         // Should not happen with launchInstaller:true, but never lie about it.
         setOta({ ...ota, state: 'error', message: `Verified but not installed: ${r?.installerReason || 'the installer did not run'}. File is in quarantine: ${r?.file ?? '(unknown)'}` });
@@ -277,7 +277,7 @@ export default function SelfUpgradeTab() {
   return (
     <div className="col">
       <div className="card col">
-        <b>Recursive self-upgrade</b> — the app reads its own source, proposes a change, and runs it through snapshot → patch → security-scan delta → (typecheck + tests, when the tree has deps){status?.packaged ? ' → esbuild build → child-process boot probe → promote' : ' → optional probe-child boot'}. {status?.packaged
+        <b>Recursive self-upgrade.</b> The app reads its own source, proposes a change, and runs it through snapshot → patch → security-scan delta → (typecheck + tests, when the tree has deps){status?.packaged ? ' → esbuild build → child-process boot probe → promote' : ' → optional probe-child boot'}. {status?.packaged
           ? 'Because the packaged app boots from the read-only asar, a passing patch is BUILT into a promoted bundle that the app loads on its next launch; if that bundle fails to boot it is rolled back to the shipped build automatically.'
           : 'A patch that passes the gate is live in the source tree immediately, there is no separate approval click.'} Auto-rollback fires on any gate/build/probe failure; to undo a passing change, use "Revert last upgrade" below{status?.packaged ? ', and "Revert to shipped build" for a promoted bundle' : ''}.
 
@@ -287,7 +287,7 @@ export default function SelfUpgradeTab() {
             <div className="label">
               {lastSnapshotId
                 ? <>Restores the snapshot taken before the last self-upgrade run ({lastSnapshotAt ? new Date(lastSnapshotAt).toLocaleString() : lastSnapshotId}), even if that run passed its gates and is already live.</>
-                : 'No snapshot yet — run a self-upgrade or take a manual snapshot first.'}
+                : 'No snapshot yet. Run a self-upgrade or take a manual snapshot first.'}
             </div>
           </div>
           <button
@@ -351,7 +351,7 @@ export default function SelfUpgradeTab() {
           The gate runs <code>npm run lint</code> + <code>npm test</code> in the source tree. In a packaged
           install that tree is bundled without <code>node_modules</code>, so click <strong>Prepare deps</strong>{' '}
           once (needs Node + npm on PATH). The security-scan delta gate runs regardless. If the gate can't run,
-          the patch is rolled back automatically — it's never applied unverified.
+          the patch is rolled back automatically; it's never applied unverified.
         </div>
 
         <details style={{ marginTop: 8 }}>
@@ -417,7 +417,7 @@ export default function SelfUpgradeTab() {
               <div key={i} style={{
                 color: e.status === 'fail' ? '#ff6b6b' : e.status === 'ok' ? '#6bcf6b' : e.status === 'skip' ? '#888' : '#cfcfcf'
               }}>
-                [{new Date(e.at).toLocaleTimeString()}] {e.phase} · {e.status}{e.message ? ` — ${e.message}` : ''}
+                [{new Date(e.at).toLocaleTimeString()}] {e.phase} · {e.status}{e.message ? `: ${e.message}` : ''}
               </div>
             ))}
           </div>
@@ -451,7 +451,7 @@ export default function SelfUpgradeTab() {
       )}
 
       <div className="card col">
-        <b>OTA update (binary install)</b> — uses the same allowlist + hash + signature + scan gate as the OpenClaw tab.
+        <b>OTA update (binary install).</b> Uses the same allowlist + hash + signature + scan gate as the OpenClaw tab.
         <div className="label">Current version: <code>{info?.version ?? '…'}</code> · {info ? `${info.platform}/${info.arch}` : ''}</div>
         <div className="row">
           <button className="primary" onClick={check} disabled={ota.state === 'checking' || ota.state === 'installing'}>

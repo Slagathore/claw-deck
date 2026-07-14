@@ -84,7 +84,7 @@ export async function runGate(opts: {
   const mode = gateMode(caps);
   const missing = !caps.npm
     ? 'npm is not on PATH'
-    : `the source tree at ${opts.root} has no node_modules — click "Prepare deps" to install them and get the full gate`;
+    : `the source tree at ${opts.root} has no node_modules; click "Prepare deps" to install them and get the full gate`;
 
   if (opts.runTypecheck) {
     if (mode === 'reduced') {
@@ -131,7 +131,7 @@ export async function baselineAudit(root: string): Promise<AuditReport> {
 export function describeGate(g: GateResult): string {
   const ranPart = g.ran.length ? `ran: ${g.ran.join(', ')}` : 'ran: nothing';
   const skipPart = g.skipped.length ? `; skipped: ${g.skipped.map(s => s.check).join(', ')}` : '';
-  return `${g.mode} gate — ${ranPart}${skipPart}`;
+  return `${g.mode} gate: ${ranPart}${skipPart}`;
 }
 
 // Re-export for caller convenience.

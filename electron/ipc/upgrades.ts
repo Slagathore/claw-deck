@@ -55,7 +55,7 @@ export function registerUpgradeHandlers() {
       return {
         kind,
         candidates: [],
-        note: 'Air-gapped mode is enabled — no remote feeds polled.'
+        note: 'Air-gapped mode is enabled. No remote feeds polled.'
       };
     }
     const feeds: Record<string, string[] | undefined> = settings.feeds ?? {};
@@ -195,7 +195,7 @@ export function registerUpgradeHandlers() {
         manifest: m, file: dest, pid: r.pid, args: r.args, reason: r.reason
       });
     } else if (!m.installPath) {
-      installerReason = 'no install step was requested — the vetted file was left in quarantine';
+      installerReason = 'no install step was requested; the vetted file was left in quarantine';
     }
 
     // 6. Record. `status` says what really happened, so the history tab cannot
@@ -220,7 +220,7 @@ export function registerUpgradeHandlers() {
     if (m.launchInstaller && !installerLaunched) {
       return {
         ok: false,
-        reason: `Downloaded and verified, but the installer did not run: ${installerReason}. The vetted file is at ${dest} — you can run it yourself.`,
+        reason: `Downloaded and verified, but the installer did not run: ${installerReason}. The vetted file is at ${dest}, you can run it yourself.`,
         id: info.lastInsertRowid, sha256: actual, file: dest, status, scanResults, scanned, installerLaunched: false
       };
     }
