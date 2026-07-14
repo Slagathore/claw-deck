@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron';
+import { ipcMain, app } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getDb } from './db';
@@ -6,6 +6,7 @@ import { isHostAllowed, scanFile, sha256OfFile, appendAudit, quarantineDir } fro
 import { fetchSources, type FeedSource } from './feeds';
 import { verifyEd25519, type KeySpec } from './signing';
 import { vtLookup, installWithBackup, restoreBackup } from './reputation';
+import { launchInstaller } from './installer';
 
 interface UpgradeManifest {
   kind: 'openclaw' | 'self';
@@ -16,6 +17,14 @@ interface UpgradeManifest {
   signature?: string;     // base64 ed25519 detached signature over the binary
   installPath?: string;   // absolute path; when set, vetted binary is copied here
   notes?: string;
+  /**
+   * Run the vetted file as an installer once it passes every gate (Windows NSIS).
+   * This is how Claw Deck updates itself: the app cannot overwrite its own files
+   * while it is running, so the installer is launched and the app then quits.
+   */
+  launchInstaller?: boolean;
+  /** Pass /S to the NSIS installer (no wizard). */
+  silentInstall?: boolean;
   /**
    * Explicit, one-shot user acknowledgement that this specific install has no
    * verifiable signature. Only consulted when policy.requireSignature is true
@@ -172,15 +181,64 @@ export function registerUpgradeHandlers() {
       }
     }
 
-    // 6. Record
+    // 5b. Run the installer. This is the step that makes an update an update:
+    //     the vetted NSIS .exe is launched detached and the app quits so the
+    //     installer can replace files that are currently open. Nothing here is
+    //     reported as installed unless the OS confirmed the process started.
+    let installerLaunched = false;
+    let installerReason: string | null = null;
+    if (m.launchInstaller) {
+      const r = await launchInstaller(dest, { quarantineDir: qDir, silent: !!m.silentInstall });
+      installerLaunched = r.ok;
+      installerReason = r.ok ? null : (r.reason ?? 'unknown');
+      appendAudit(r.ok ? 'upgrade:installer_launched' : 'upgrade:installer_launch_failed', {
+        manifest: m, file: dest, pid: r.pid, args: r.args, reason: r.reason
+      });
+    } else if (!m.installPath) {
+      installerReason = 'no install step was requested — the vetted file was left in quarantine';
+    }
+
+    // 6. Record. `status` says what really happened, so the history tab cannot
+    //    claim an install that never occurred.
+    const status = installerLaunched ? 'installer_launched' : (installPath ? 'installed' : 'downloaded');
     const db = getDb();
     const info = db.prepare(`
       INSERT INTO upgrades(kind,name,version,source_url,sha256,signature,installed_at,status,rollback_path,install_path,backup_path,notes)
       VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
-    `).run(m.kind, m.name, m.version, m.url, actual, m.signature ?? null, Date.now(), 'installed', dest, installPath, backup, m.notes ?? null);
+    `).run(m.kind, m.name, m.version, m.url, actual, m.signature ?? null, Date.now(), status, dest, installPath, backup, m.notes ?? null);
 
-    appendAudit('upgrade:installed', { manifest: m, sha256: actual, file: dest, installPath, backup, scanResults, scanned });
-    return { ok: true, id: info.lastInsertRowid, sha256: actual, file: dest, installPath, backup, scanResults, scanned };
+    appendAudit('upgrade:recorded', { manifest: m, sha256: actual, file: dest, status, installPath, backup, scanResults, scanned });
+
+    if (installerLaunched) {
+      // Give the renderer a beat to show "installer launched", then get out of the
+      // installer's way. NSIS cannot replace an executable that is still running.
+      setTimeout(() => { try { app.quit(); } catch { /* already quitting */ } }, 1500);
+    }
+
+    // A launch that was asked for and did not happen is a FAILURE, even though the
+    // download and every security gate passed. Say so.
+    if (m.launchInstaller && !installerLaunched) {
+      return {
+        ok: false,
+        reason: `Downloaded and verified, but the installer did not run: ${installerReason}. The vetted file is at ${dest} — you can run it yourself.`,
+        id: info.lastInsertRowid, sha256: actual, file: dest, status, scanResults, scanned, installerLaunched: false
+      };
+    }
+
+    return {
+      ok: true,
+      id: info.lastInsertRowid,
+      sha256: actual,
+      file: dest,
+      status,
+      installPath,
+      backup,
+      scanResults,
+      scanned,
+      installerLaunched,
+      installerReason,
+      quitting: installerLaunched
+    };
   });
 
   ipcMain.handle('upgrades:rollback', (_e, id: number) => {

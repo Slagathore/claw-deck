@@ -129,7 +129,10 @@ export function registerExecutorHandlers() {
     const run = runs.get(opts.runId);
     if (!run) return { ok: false, error: 'unknown run' };
     if (!run.validation?.ok) return { ok: false, error: 'validation must pass before approval' };
-    const snap = await createSnapshot(run.repo, `fusion pre-approve ${run.runId}`);
+    // 'workspace' scope: this is the USER's repo, not Claw Deck's source tree. It is
+    // recorded in the workspace snapshot index so the self-upgrade UI can never offer
+    // to hard-reset it.
+    const snap = await createSnapshot(run.repo, `fusion pre-approve ${run.runId}`, 'workspace');
     run.snapshotId = snap.id;
     const ap = await applyToLiveTree(run.wt, run.diff);
     if (!ap.ok) { upsertRun(run, { error: ap.error ?? 'apply failed' }); return { ok: false, error: `apply to live tree failed: ${ap.error}`, snapshotId: snap.id }; }
@@ -159,7 +162,7 @@ export function registerExecutorHandlers() {
   });
 
   ipcMain.handle('exec:rollback', async (_e, opts: { snapshotId: string }) => {
-    const snap = await findSnapshotById(opts.snapshotId);
+    const snap = await findSnapshotById(opts.snapshotId, 'workspace');
     if (!snap) return { ok: false, error: 'snapshot not found' };
     try {
       await restoreSnapshot(snap);

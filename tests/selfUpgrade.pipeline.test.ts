@@ -32,6 +32,11 @@ async function makeFixture(opts: { lint?: string; test?: string } = {}): Promise
   }, null, 2));
   await fs.mkdir(path.join(root, 'docs'), { recursive: true });
   await fs.writeFile(path.join(root, 'docs', 'NOTES.md'), 'original notes\n');
+  // The gate only runs `npm run lint` / `npm test` when the tree actually has a
+  // toolchain (npm on PATH AND node_modules present) — otherwise it honestly
+  // reports a reduced gate and skips them. These fixtures exercise the full
+  // gate, so give them a node_modules dir to satisfy that capability check.
+  await fs.mkdir(path.join(root, 'node_modules'), { recursive: true });
   fixtures.push({ root });
   return root;
 }

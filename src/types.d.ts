@@ -163,6 +163,10 @@ declare global {
         snapshot: (label?: string) => Promise<{ ok: boolean; snapshot?: any; reason?: string }>;
         setOrigin: (url: string) => Promise<{ ok: boolean; reason?: string }>;
         openSourceRoot: () => Promise<{ ok: boolean; path: string }>;
+        promotedStatus: () => Promise<any>;
+        revertPromotion: () => Promise<{ ok: boolean; reverted?: string; note?: string; reason?: string }>;
+        dismissRollbackNotice: () => Promise<{ ok: boolean }>;
+        relaunch: () => Promise<{ ok: boolean }>;
         onEvent: (cb: (e: any) => void) => () => void;
       };
     };
