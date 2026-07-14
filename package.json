@@ -1,6 +1,6 @@
 {
   "name": "claw-deck",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Desktop GUI for OpenClaw + Claude Code over Ollama, with vision, screenshots, secure upgrades, and history.",
   "author": {
     "name": "Cole",
