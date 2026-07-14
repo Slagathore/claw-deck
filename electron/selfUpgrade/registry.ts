@@ -1,6 +1,11 @@
 import { ipcMain, app, dialog } from "electron";
 import * as crypto from "crypto";
-import { ensureSourceTree, sourceRoot } from "./paths";
+import { ensureSourceTree, sourceRoot, isPathWithin } from "./paths";
+import {
+  promotedStatus,
+  discardPromotion,
+  clearLastRollback,
+} from "./promoted";
 import { repoStatus, setOrigin } from "./github";
 import {
   createSnapshot,
@@ -67,11 +72,46 @@ export function registerSelfUpgradeHandlers() {
       sourceRoot: ensured.path,
       ready: ensured.ready,
       reason: ensured.reason,
+      reseeded: ensured.reseeded ?? false,
+      archivedTo: ensured.archivedTo,
+      supersededVersion: ensured.supersededVersion,
       repo,
       snapshots: snaps,
       electronExe: process.execPath,
       version: app.getVersion(),
+      packaged: app.isPackaged,
+      promoted: promotedStatus(app.getVersion()),
     };
+  });
+
+  // What the app is actually running right now, and what it will run next launch.
+  ipcMain.handle("selfUpgrade:promotedStatus", async () =>
+    promotedStatus(app.getVersion()),
+  );
+
+  // Undo a promotion: next launch boots the pristine build that shipped in the asar.
+  ipcMain.handle("selfUpgrade:revertPromotion", async () => {
+    const dropped = discardPromotion(
+      "user reverted the promoted self-upgrade from the Self-Upgrade tab",
+      "manual-revert",
+    );
+    if (!dropped) return { ok: false, reason: "no promoted upgrade is active" };
+    return {
+      ok: true,
+      reverted: dropped.id,
+      note: "Restart Claw Deck to go back to the build that shipped with the installer.",
+    };
+  });
+
+  ipcMain.handle("selfUpgrade:dismissRollbackNotice", async () => {
+    clearLastRollback();
+    return { ok: true };
+  });
+
+  ipcMain.handle("selfUpgrade:relaunch", async () => {
+    app.relaunch();
+    app.quit();
+    return { ok: true };
   });
 
   ipcMain.handle("selfUpgrade:facts", async () => {
@@ -140,8 +180,14 @@ export function registerSelfUpgradeHandlers() {
         sourceRoot: ensured.path,
         patch: opts.patch,
         sandboxHighRisk: opts.sandboxHighRisk !== false,
-        electronExe: opts.launchProbe ? process.execPath : undefined,
+        // Packaged: the boot probe of the built bundle is mandatory, so the
+        // electron exe is always needed. Dev: only when the user asked for it.
+        electronExe:
+          app.isPackaged || opts.launchProbe ? process.execPath : undefined,
         probeChecks: opts.probeChecks,
+        packaged: app.isPackaged,
+        appRoot: app.getAppPath(),
+        appVersion: app.getVersion(),
       });
       if (result.snapshot)
         lastSnapshots.set(result.snapshot.id, result.snapshot);
@@ -156,13 +202,23 @@ export function registerSelfUpgradeHandlers() {
       // on-disk index so rollback still works after an app restart.
       const snap =
         lastSnapshots.get(opts.snapshotId) ??
-        (await findSnapshotById(opts.snapshotId));
+        (await findSnapshotById(opts.snapshotId, "self"));
       if (!snap)
         return {
           ok: false,
           reason:
             "snapshot not found (no in-session record and no entry in the on-disk index)",
         };
+      // Containment: restoring a snapshot means `git reset --hard` (or a tree
+      // wipe) at snap.root. The self-upgrade UI may only ever do that to Claw
+      // Deck's own source tree — never to one of the user's other repos that the
+      // council/executor snapshotted.
+      const root = sourceRoot();
+      if (!isPathWithin(root, snap.root)) {
+        const reason = `refusing to restore snapshot ${snap.id}: it is rooted at ${snap.root}, outside the Claw Deck source tree (${root})`;
+        console.error(`[selfUpgrade] ${reason}`);
+        return { ok: false, reason };
+      }
       try {
         await restoreSnapshot(snap);
         return { ok: true };
@@ -181,6 +237,7 @@ export function registerSelfUpgradeHandlers() {
         const snap = await createSnapshot(
           ensured.path,
           opts?.label || "manual snapshot",
+          "self",
         );
         lastSnapshots.set(snap.id, snap);
         return { ok: true, snapshot: snap };

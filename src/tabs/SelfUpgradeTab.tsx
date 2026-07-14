@@ -35,6 +35,21 @@ interface RecursiveStatus {
   snapshots: { id: string; createdAt: number }[];
   electronExe: string;
   version: string;
+  packaged?: boolean;
+  reseeded?: boolean;
+  archivedTo?: string;
+  supersededVersion?: string;
+  promoted?: PromotedStatus;
+}
+
+interface PromotedStatus {
+  active: boolean;
+  running: boolean;
+  runningRoot?: string | null;
+  appVersion: string;
+  current?: { id: string; appVersion: string; promotedAt: number; gateMode?: string; gateSkipped?: { check: string; reason: string }[] } | null;
+  lastRollback?: { at: number; id: string; reason: string } | null;
+  journal?: { at: number; event: string; id?: string; reason?: string }[];
 }
 
 interface PatchFile {
@@ -104,7 +119,7 @@ export default function SelfUpgradeTab() {
       const asset = pickAssetFor(newer, info.platform, info.arch);
       setOta({
         state: 'updateFound', candidate: newer, pickedAssetName: asset?.name,
-        message: asset ? `Update ${newer.version} available — asset: ${asset.name}` : `Update ${newer.version} available but no installable asset for ${info.platform}/${info.arch}.`
+        message: asset ? `Update ${newer.version} available (asset: ${asset.name})` : `Update ${newer.version} available but no installable asset for ${info.platform}/${info.arch}.`
       });
     } catch (e: any) { setOta({ state: 'error', message: e.message }); }
   }
@@ -113,11 +128,24 @@ export default function SelfUpgradeTab() {
     if (!info || !ota.candidate) return;
     const asset = pickAssetFor(ota.candidate, info.platform, info.arch);
     if (!asset) { setOta({ ...ota, state: 'error', message: 'No matching asset' }); return; }
-    setOta({ ...ota, state: 'installing', message: `Downloading ${asset.name}…` });
+    if (info.platform !== 'win32') {
+      setOta({ ...ota, state: 'error', message: `Automatic install is only wired up for the Windows NSIS installer (this is ${info.platform}). Use the manual install section below.` });
+      return;
+    }
+    if (!confirm(
+      `Download and install Claw Deck ${ota.candidate.version}?\n\n` +
+      `This downloads the installer, verifies its hash/signature, then RUNS it. ` +
+      `Windows will show the installer (and may ask for elevation). Claw Deck will close so it can update itself; ` +
+      `your settings and history in %APPDATA% are left untouched. Reopen Claw Deck when the installer finishes.`
+    )) return;
+    setOta({ ...ota, state: 'installing', message: `Downloading and verifying ${asset.name}…` });
     try {
+      // launchInstaller:true is what turns "downloaded" into "installed": the
+      // vetted NSIS .exe is run and the app quits so it can replace its own files.
       const manifest = {
         kind: 'self', name: 'claw-deck', version: ota.candidate.version,
-        url: asset.url, sha256: asset.sha256, signature: asset.signature
+        url: asset.url, sha256: asset.sha256, signature: asset.signature,
+        launchInstaller: true
       };
       let r = await window.api.upgrades.install(manifest);
       if (r?.ok === false && r.requiresUnsignedConfirmation) {
@@ -127,8 +155,15 @@ export default function SelfUpgradeTab() {
         );
         if (accept) r = await window.api.upgrades.install({ ...manifest, acceptUnsigned: true });
       }
-      if (r?.ok === false) setOta({ ...ota, state: 'error', message: r.reason || 'install failed' });
-      else setOta({ ...ota, state: 'installed', message: `Installed ${ota.candidate.version}. Restart Claw Deck to use the new version.` });
+      if (r?.ok === false) {
+        // Honest failure: download/verify may have passed but the install did not.
+        setOta({ ...ota, state: 'error', message: r.reason || 'install failed' });
+      } else if (r?.installerLaunched) {
+        setOta({ ...ota, state: 'installed', message: `Installer for ${ota.candidate.version} launched. Claw Deck is closing so it can update. Reopen it when the installer finishes.` });
+      } else {
+        // Should not happen with launchInstaller:true, but never lie about it.
+        setOta({ ...ota, state: 'error', message: `Verified but not installed: ${r?.installerReason || 'the installer did not run'}. File is in quarantine: ${r?.file ?? '(unknown)'}` });
+      }
     } catch (e: any) { setOta({ ...ota, state: 'error', message: e.message }); }
   }
 
@@ -188,6 +223,22 @@ export default function SelfUpgradeTab() {
     finally { setBusy(null); }
   }
 
+  async function revertPromotion() {
+    if (!confirm('Revert the promoted self-upgrade? On the next launch Claw Deck will load the build that shipped with the installer.')) return;
+    setBusy('Reverting promotion…');
+    try {
+      const r = await window.api.selfUpgrade.revertPromotion();
+      if (!r.ok) alert(`Revert failed: ${r.reason}`);
+      else if (confirm(`${r.note}\n\nRelaunch now?`)) { await window.api.selfUpgrade.relaunch(); return; }
+      await refreshStatus();
+    } finally { setBusy(null); }
+  }
+
+  async function dismissRollbackNotice() {
+    await window.api.selfUpgrade.dismissRollbackNotice();
+    await refreshStatus();
+  }
+
   async function setOrigin() {
     const url = prompt('Paste the GitHub remote URL for this source tree (use a PRIVATE repo).\n\nExample: git@github.com:Slagathore/claw-deck.git');
     if (!url) return;
@@ -226,7 +277,9 @@ export default function SelfUpgradeTab() {
   return (
     <div className="col">
       <div className="card col">
-        <b>Recursive self-upgrade</b> — the app reads its own source, proposes a change, and runs it through snapshot → patch → typecheck → tests → security scan delta → probe-child boot. A patch that passes the gate is live immediately, there is no separate approval click. Auto-rollback fires on a gate/probe failure; if a patch passes but you don't like it anyway, use "Revert last upgrade" below.
+        <b>Recursive self-upgrade.</b> The app reads its own source, proposes a change, and runs it through snapshot → patch → security-scan delta → (typecheck + tests, when the tree has deps){status?.packaged ? ' → esbuild build → child-process boot probe → promote' : ' → optional probe-child boot'}. {status?.packaged
+          ? 'Because the packaged app boots from the read-only asar, a passing patch is BUILT into a promoted bundle that the app loads on its next launch; if that bundle fails to boot it is rolled back to the shipped build automatically.'
+          : 'A patch that passes the gate is live in the source tree immediately, there is no separate approval click.'} Auto-rollback fires on any gate/build/probe failure; to undo a passing change, use "Revert last upgrade" below{status?.packaged ? ', and "Revert to shipped build" for a promoted bundle' : ''}.
 
         <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', marginTop: 8, padding: 8, border: '1px solid #b22222', borderRadius: 6, background: 'rgba(178,34,34,.08)' }}>
           <div>
@@ -234,7 +287,7 @@ export default function SelfUpgradeTab() {
             <div className="label">
               {lastSnapshotId
                 ? <>Restores the snapshot taken before the last self-upgrade run ({lastSnapshotAt ? new Date(lastSnapshotAt).toLocaleString() : lastSnapshotId}), even if that run passed its gates and is already live.</>
-                : 'No snapshot yet — run a self-upgrade or take a manual snapshot first.'}
+                : 'No snapshot yet. Run a self-upgrade or take a manual snapshot first.'}
             </div>
           </div>
           <button
@@ -245,6 +298,37 @@ export default function SelfUpgradeTab() {
             ⏮ Revert last upgrade
           </button>
         </div>
+
+        {status?.promoted?.lastRollback && (
+          <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', marginTop: 8, padding: 8, border: '1px solid #b8860b', borderRadius: 6, background: 'rgba(184,134,11,.10)' }}>
+            <div>
+              <b>Self-upgrade rolled back automatically</b>
+              <div className="label" style={{ whiteSpace: 'pre-wrap' }}>{status.promoted.lastRollback.reason}</div>
+            </div>
+            <button onClick={dismissRollbackNotice} style={{ whiteSpace: 'nowrap' }}>Dismiss</button>
+          </div>
+        )}
+
+        {status?.promoted?.active && (
+          <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', marginTop: 8, padding: 8, border: '1px solid #1e7e34', borderRadius: 6, background: 'rgba(30,126,52,.10)' }}>
+            <div>
+              <b>Promoted self-upgrade active</b>
+              <div className="label">
+                Bundle <code>{status.promoted.current?.id}</code>
+                {status.promoted.current?.gateMode ? <> · {status.promoted.current.gateMode} gate</> : null}
+                {status.promoted.running ? <> · running now</> : <> · loads on next launch</>}
+                {status.promoted.current?.gateSkipped?.length ? <><br/>Not verified in this build: {status.promoted.current.gateSkipped.map(s => s.check).join(', ')}</> : null}
+              </div>
+            </div>
+            <button onClick={revertPromotion} disabled={!!busy} style={{ whiteSpace: 'nowrap' }}>Revert to shipped build</button>
+          </div>
+        )}
+
+        {status?.reseeded && (
+          <div className="label" style={{ marginTop: 8, padding: 8, border: '1px solid #b8860b', borderRadius: 6 }}>
+            Source tree re-seeded from {status.supersededVersion} to {status.version} (the old tree was stale and could not carry patches forward). Previous tree archived at <code>{status.archivedTo}</code>.
+          </div>
+        )}
 
         <div className="row" style={{ gap: 12, flexWrap: 'wrap', marginTop: 8 }}>
           <div><span className="label">Source: </span><code style={{ fontSize: 11 }}>{status?.sourceRoot || '…'}</code></div>
@@ -267,7 +351,7 @@ export default function SelfUpgradeTab() {
           The gate runs <code>npm run lint</code> + <code>npm test</code> in the source tree. In a packaged
           install that tree is bundled without <code>node_modules</code>, so click <strong>Prepare deps</strong>{' '}
           once (needs Node + npm on PATH). The security-scan delta gate runs regardless. If the gate can't run,
-          the patch is rolled back automatically — it's never applied unverified.
+          the patch is rolled back automatically; it's never applied unverified.
         </div>
 
         <details style={{ marginTop: 8 }}>
@@ -333,7 +417,7 @@ export default function SelfUpgradeTab() {
               <div key={i} style={{
                 color: e.status === 'fail' ? '#ff6b6b' : e.status === 'ok' ? '#6bcf6b' : e.status === 'skip' ? '#888' : '#cfcfcf'
               }}>
-                [{new Date(e.at).toLocaleTimeString()}] {e.phase} · {e.status}{e.message ? ` — ${e.message}` : ''}
+                [{new Date(e.at).toLocaleTimeString()}] {e.phase} · {e.status}{e.message ? `: ${e.message}` : ''}
               </div>
             ))}
           </div>
@@ -342,6 +426,8 @@ export default function SelfUpgradeTab() {
               Result: <b style={{ color: lastResult.success ? '#1e7e34' : '#b22222' }}>{lastResult.success ? 'SUCCESS' : 'FAILED'}</b>
               {lastResult.rolledBack && ' (rolled back)'}
               {lastResult.snapshot && <> · snapshot <code>{lastResult.snapshot.id}</code></>}
+              {lastResult.promoted && <> · promoted bundle <code>{lastResult.promoted.id}</code> (loads next launch)</>}
+              {lastResult.gate?.mode && <> · {lastResult.gate.mode} gate</>}
               {typeof lastResult.durationMs === 'number' && <> · {(lastResult.durationMs / 1000).toFixed(1)}s</>}
             </div>
           )}
@@ -365,7 +451,7 @@ export default function SelfUpgradeTab() {
       )}
 
       <div className="card col">
-        <b>OTA update (binary install)</b> — uses the same allowlist + hash + signature + scan gate as the OpenClaw tab.
+        <b>OTA update (binary install).</b> Uses the same allowlist + hash + signature + scan gate as the OpenClaw tab.
         <div className="label">Current version: <code>{info?.version ?? '…'}</code> · {info ? `${info.platform}/${info.arch}` : ''}</div>
         <div className="row">
           <button className="primary" onClick={check} disabled={ota.state === 'checking' || ota.state === 'installing'}>

@@ -24,6 +24,7 @@ import { ensureTraceFile, tracePath } from './ipc/trace';
 import { closeAllAtlas } from './atlas/db';
 import { registerSelfUpgradeHandlers } from './selfUpgrade/registry';
 import { executeProbeMode } from './selfUpgrade/probe';
+import { clearBootSentinel } from './selfUpgrade/promoted';
 
 // Last-resort guards: a stray rejection or throw in the main process should be
 // logged, not crash the whole app to the desktop. (Startup-critical failures
@@ -37,6 +38,19 @@ const isDev = !app.isPackaged && process.env.CLAW_DEV === '1';
 // Vite dev server URL — overridable so you can point at a different port.
 const devServerUrl = process.env.CLAW_DEV_SERVER_URL || 'http://localhost:5273';
 const isProbeMode = !!process.env.CLAW_PROBE_ID;
+/**
+ * Set by boot.ts when this process is running a *promoted* self-upgrade bundle
+ * instead of the code inside the asar. When it is set, the renderer and preload
+ * must come from the bundle too — otherwise we would run patched main-process
+ * code against the pristine UI.
+ */
+const promotedRoot = process.env.CLAW_PROMOTED_ROOT || null;
+const preloadFile = promotedRoot
+  ? path.join(promotedRoot, 'preload.js')
+  : path.join(__dirname, 'preload.js');
+const rendererIndexFile = promotedRoot
+  ? path.join(promotedRoot, 'renderer', 'index.html')
+  : path.join(__dirname, '..', 'dist', 'index.html');
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -89,14 +103,14 @@ function createWindow() {
     minHeight: 700,
     backgroundColor: '#0f1115',
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: preloadFile,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true
     }
   });
 
-  const indexFile = path.join(__dirname, '..', 'dist', 'index.html');
+  const indexFile = rendererIndexFile;
   if (isDev) {
     // `npm run dev` runs the Vite server; `npm start` builds to dist/ with no
     // server. Try the dev server and fall back to the built file when it isn't up.
@@ -105,6 +119,14 @@ function createWindow() {
   } else {
     mainWindow.loadFile(indexFile);
   }
+
+  // Boot sentinel: boot.ts wrote a marker before loading a promoted bundle. We
+  // clear it only once a window has actually rendered, so a promotion that
+  // hangs or crashes before this point is auto-rolled-back on the next launch.
+  // (Probe children never touch it — they return long before createWindow.)
+  mainWindow.webContents.once('did-finish-load', () => {
+    try { clearBootSentinel(); } catch { /* nothing to clear */ }
+  });
 
   // Close behavior (unless the user is really quitting): minimize to taskbar,
   // hide to system tray, or exit.
@@ -171,8 +193,7 @@ app.whenReady().then(async () => {
           w.webContents.once('did-finish-load', () => finish(true, 'index loaded'));
           w.webContents.once('did-fail-load', (_e, _c, desc) => finish(false, desc));
           setTimeout(() => finish(false, 'render timeout'), 8000);
-          const indexPath = path.join(__dirname, '..', 'dist', 'index.html');
-          w.loadFile(indexPath).catch(e => finish(false, e.message));
+          w.loadFile(rendererIndexFile).catch(e => finish(false, e.message));
         } catch (e: any) { resolve({ ok: false, detail: e.message }); }
       });
     }
@@ -309,11 +330,15 @@ app.whenReady().then(async () => {
 });
 
 // Single-instance lock: second launch focuses the existing window instead of opening a new copy.
-const gotLock = app.requestSingleInstanceLock();
-if (!gotLock) {
-  app.quit();
-} else {
-  app.on('second-instance', () => showWindow());
+// Probe children are deliberately exempt — they are a second process by design, and
+// taking the lock (or losing it) would make every boot probe fail while the app is running.
+if (!isProbeMode) {
+  const gotLock = app.requestSingleInstanceLock();
+  if (!gotLock) {
+    app.quit();
+  } else {
+    app.on('second-instance', () => showWindow());
+  }
 }
 
 app.on('before-quit', () => {

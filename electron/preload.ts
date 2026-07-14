@@ -176,6 +176,10 @@ contextBridge.exposeInMainWorld('api', {
     snapshot: (label?: string) => invoke('selfUpgrade:snapshot', { label }),
     setOrigin: (url: string) => invoke('selfUpgrade:setOrigin', { url }),
     openSourceRoot: () => invoke('selfUpgrade:openSourceRoot'),
+    promotedStatus: () => invoke('selfUpgrade:promotedStatus'),
+    revertPromotion: () => invoke('selfUpgrade:revertPromotion'),
+    dismissRollbackNotice: () => invoke('selfUpgrade:dismissRollbackNotice'),
+    relaunch: () => invoke('selfUpgrade:relaunch'),
     onEvent: (cb: (e: any) => void) => on('selfUpgrade:event', cb)
   }
 });

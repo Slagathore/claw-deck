@@ -618,7 +618,7 @@ function makeExecutorHooks(repo: string, runId: string, abortSignal?: AbortSigna
     },
     approve: async () => {
       if (!wt) return { ok: false, error: 'no worktree' };
-      const snap = await createSnapshot(wt.repo, `fusion council pre-approve ${runId}`);
+      const snap = await createSnapshot(wt.repo, `fusion council pre-approve ${runId}`, 'workspace');
       const ap = await applyToLiveTree(wt, lastDiff);
       if (ap.ok) { appendAudit('council:approved', { runId, diffBytes: lastDiff.length, snapshotId: snap.id }); persist('approved', { snapshotId: snap.id, validationOk: 1 }); await removeWorktree(wt); }
       else persist('apply-failed', { snapshotId: snap.id, error: ap.error ?? 'apply failed' });

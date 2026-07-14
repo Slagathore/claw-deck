@@ -26,10 +26,17 @@ export interface ProbeResult {
 export interface ProbeOpts {
   /** Path to the electron executable to launch (parent's process.execPath is fine in dev). */
   electronExe: string;
-  /** Arg to pass — usually the path to the *patched* main.js or the project root. */
-  appArg: string;
+  /**
+   * Arg to pass — the app directory to run. Only meaningful for a bare electron
+   * binary: a PACKAGED app ignores a path argument and always loads its own asar,
+   * which is why the packaged boot probe steers the child with `env` instead
+   * (CLAW_BOOT_PROMOTED, read by boot.ts) and passes no appArg.
+   */
+  appArg?: string;
   /** Working directory (the patched source root). */
   cwd: string;
+  /** Extra env for the child — e.g. CLAW_BOOT_PROMOTED / CLAW_USER_DATA. */
+  env?: Record<string, string>;
   timeoutMs?: number;
   checks: ProbeCheck[];
 }
@@ -68,10 +75,11 @@ export async function runProbe(opts: ProbeOpts): Promise<ProbeResult> {
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const port = (server.address() as any).port as number;
 
-  const child = spawn(opts.electronExe, [opts.appArg], {
+  const child = spawn(opts.electronExe, opts.appArg ? [opts.appArg] : [], {
     cwd: opts.cwd,
     env: {
       ...process.env,
+      ...(opts.env ?? {}),
       CLAW_PROBE_PORT: String(port),
       CLAW_PROBE_TOKEN: token,
       CLAW_PROBE_ID: id,
