@@ -5,6 +5,7 @@ import { getDb } from './db';
 import { isHostAllowed, scanFile, sha256OfFile, appendAudit, quarantineDir } from './security';
 import { fetchSources, type FeedSource } from './feeds';
 import { verifyEd25519, type KeySpec } from './signing';
+import { verifyAuthenticode } from './authenticode';
 import { vtLookup, installWithBackup, restoreBackup } from './reputation';
 import { launchInstaller } from './installer';
 
@@ -111,8 +112,18 @@ export function registerUpgradeHandlers() {
       return { ok: false, reason: `SHA-256 mismatch. expected ${m.sha256} got ${actual}` };
     }
 
-    // 3. Signature verification (Ed25519 over the downloaded bytes)
+    // 3. Signature verification.
+    //
+    // Two independent, real trust signals — a file is trusted if EITHER holds:
+    //   (a) Ed25519: a detached signature in the manifest verifies against a
+    //       configured public key (the manual-install path).
+    //   (b) Authenticode: the Windows installer we are about to RUN carries a
+    //       valid Authenticode signature from the pinned publisher. This is the
+    //       signature Windows itself validates; verifying it here is what lets a
+    //       genuine update install without the "install unsigned anyway" prompt.
     const signingKeys: KeySpec[] = settings.policy?.signingKeys ?? [];
+    let signatureTrust: 'ed25519' | 'authenticode' | 'none' = 'none';
+
     if (m.signature) {
       const v = verifyEd25519(buf, m.signature, signingKeys);
       if (!v.ok) {
@@ -120,12 +131,31 @@ export function registerUpgradeHandlers() {
         try { fs.unlinkSync(dest); } catch {}
         return { ok: false, reason: `Signature verification failed: ${v.reason}` };
       }
-    } else if (settings.policy?.requireSignature) {
-      // No signature on a manifest, and policy demands one. Block by default —
-      // but if the user already clicked through the "install unsigned anyway"
-      // confirmation for THIS install (m.acceptUnsigned), let it through and
-      // say so in the audit log. requiresUnsignedConfirmation tells the UI to
-      // show that confirmation rather than just a dead end.
+      signatureTrust = 'ed25519';
+    }
+
+    // Authenticode: only for a Windows installer we were actually asked to launch.
+    // A launchable .exe that fails this check is exactly what we must never run,
+    // so a failure REFUSES outright — it is not offered the unsigned bypass.
+    if (signatureTrust === 'none' && m.launchInstaller && process.platform === 'win32') {
+      const auth = await verifyAuthenticode(dest);
+      if (auth.ok) {
+        signatureTrust = 'authenticode';
+        appendAudit('upgrade:authenticode_verified', { manifest: m, subject: auth.subject, cn: auth.cn });
+      } else {
+        appendAudit('upgrade:authenticode_failed', { manifest: m, status: auth.status, cn: auth.cn, reason: auth.reason });
+        try { fs.unlinkSync(dest); } catch {}
+        return { ok: false, reason: `Authenticode verification failed: ${auth.reason}. Refusing to run this installer.` };
+      }
+    }
+
+    // No trusted signature and policy demands one. Block by default — but if the
+    // user already clicked through the "install unsigned anyway" confirmation for
+    // THIS install (m.acceptUnsigned), let it through and say so in the audit log.
+    // requiresUnsignedConfirmation tells the UI to show that confirmation rather
+    // than a dead end. (Not reachable for a valid Windows installer above: that
+    // path either trusts Authenticode or has already refused.)
+    if (signatureTrust === 'none' && settings.policy?.requireSignature) {
       if (!m.acceptUnsigned) {
         appendAudit('upgrade:no_signature', { manifest: m });
         try { fs.unlinkSync(dest); } catch {}
