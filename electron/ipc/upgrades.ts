@@ -138,7 +138,16 @@ export function registerUpgradeHandlers() {
     // A launchable .exe that fails this check is exactly what we must never run,
     // so a failure REFUSES outright — it is not offered the unsigned bypass.
     if (signatureTrust === 'none' && m.launchInstaller && process.platform === 'win32') {
-      const auth = await verifyAuthenticode(dest);
+      // Fail closed: if the verifier itself throws, treat it exactly like a
+      // failed check — delete the quarantine file and refuse to launch.
+      let auth: Awaited<ReturnType<typeof verifyAuthenticode>>;
+      try {
+        auth = await verifyAuthenticode(dest);
+      } catch (e: any) {
+        appendAudit('upgrade:authenticode_error', { manifest: m, error: e?.message ?? String(e) });
+        try { fs.unlinkSync(dest); } catch {}
+        return { ok: false, reason: `Authenticode verification could not complete: ${e?.message ?? e}. Refusing to run this installer.` };
+      }
       if (auth.ok) {
         signatureTrust = 'authenticode';
         appendAudit('upgrade:authenticode_verified', { manifest: m, subject: auth.subject, cn: auth.cn });

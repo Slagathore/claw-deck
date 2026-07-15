@@ -101,17 +101,23 @@ function unescapeRDNValue(raw: string): string {
  * when there is no CN. Handles quoted values and escaped commas so that a value
  * like  CN=Chambers\, Charles  yields  "Chambers, Charles"  rather than
  * splitting into two RDNs.
+ *
+ * Defense-in-depth: a subject with MORE THAN ONE CN RDN is treated as untrusted
+ * and returns null, so a synthetic subject like `CN=Charles Chambers, CN=Mallory`
+ * (or the reverse) can never be trimmed down to the pinned name.
  */
 export function parseCertificateCN(subject: string | null | undefined): string | null {
   if (!subject) return null;
+  const cns: string[] = [];
   for (const rdn of splitDN(subject)) {
     const eq = findUnescapedEquals(rdn);
     if (eq < 0) continue;
     const type = rdn.slice(0, eq).trim().toUpperCase();
     if (type !== 'CN') continue;
-    return unescapeRDNValue(rdn.slice(eq + 1));
+    cns.push(unescapeRDNValue(rdn.slice(eq + 1)));
   }
-  return null;
+  if (cns.length !== 1) return null;
+  return cns[0];
 }
 
 /**

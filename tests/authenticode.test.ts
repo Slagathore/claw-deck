@@ -38,6 +38,19 @@ describe('parseCertificateCN', () => {
     expect(parseCertificateCN('')).toBeNull();
     expect(parseCertificateCN(null)).toBeNull();
   });
+  it('rejects a subject with more than one CN RDN (multi-CN is untrusted)', () => {
+    // A synthetic subject must not be trimmable down to the pinned name.
+    expect(parseCertificateCN('CN=Charles Chambers, CN=Mallory, O=Acme')).toBeNull();
+    expect(parseCertificateCN('CN=Mallory, CN=Charles Chambers')).toBeNull();
+  });
+});
+
+describe('evaluateAuthenticode rejects multi-CN subjects', () => {
+  it('refuses a Valid signature whose subject carries two CN RDNs', () => {
+    const r = evaluateAuthenticode({ status: 'Valid', subject: 'CN=Charles Chambers, CN=Mallory' });
+    expect(r.ok).toBe(false);
+    expect(r.cn).toBeNull();
+  });
 });
 
 describe('evaluateAuthenticode', () => {
