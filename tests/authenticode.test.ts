@@ -153,8 +153,14 @@ describe('verifyAuthenticode (real signed installer, if present)', () => {
       try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
       for (const e of entries) {
         const full = path.join(dir, e.name);
-        if (e.isDirectory()) walk(full, depth + 1);
-        else if (/\.exe$/i.test(e.name) && /(setup|claw.?deck)/i.test(e.name)) found.push(full);
+        // Only descend into release output, never the *-unpacked staging dirs,
+        // which hold the RAW unsigned electron exe that would fail this check.
+        if (e.isDirectory()) {
+          if (!/unpacked/i.test(e.name)) walk(full, depth + 1);
+        }
+        // Only the signed NSIS installer is named "...Setup...". The portable
+        // and the raw electron exe are not what this test validates.
+        else if (/setup.*\.exe$/i.test(e.name)) found.push(full);
       }
     };
     for (const r of roots) walk(path.join(repo, r), 0);

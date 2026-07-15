@@ -189,7 +189,6 @@ export async function verifyAuthenticode(file: string, opts: VerifyOptions = {})
   }
 
   const runner = opts.runner ?? run;
-  const powershell = opts.powershell ?? 'powershell.exe';
   const b64 = Buffer.from(file, 'utf16le').toString('base64');
   const script = [
     "$ErrorActionPreference='Stop';",
@@ -199,10 +198,24 @@ export async function verifyAuthenticode(file: string, opts: VerifyOptions = {})
     '[pscustomobject]@{ status=[string]$s.Status; statusMessage=[string]$s.StatusMessage; subject=$subj } | ConvertTo-Json -Compress'
   ].join(' ');
 
-  const r = await runner(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script], { timeoutMs: opts.timeoutMs ?? 20000 });
-  if (!r.ok) {
-    const detail = (r.stderr || r.stdout || '').trim().slice(0, 300);
-    return { ok: false, signed: false, reason: `could not run Get-AuthenticodeSignature: ${detail || `exit ${r.code}`}` };
+  // Prefer PowerShell 7 (pwsh) and fall back to Windows PowerShell. pwsh loads
+  // Get-AuthenticodeSignature cleanly; some Windows PowerShell installs fail to
+  // autoload Microsoft.PowerShell.Security under -NoProfile -NonInteractive (or
+  // carry corrupted type data), which would fail the check CLOSED and refuse a
+  // genuinely signed update. An explicit override (opts.powershell) is honored
+  // as the only candidate.
+  const candidates = opts.powershell ? [opts.powershell] : ['pwsh.exe', 'powershell.exe'];
+  let r: RunResult | undefined;
+  for (const ps of candidates) {
+    r = await runner(ps, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script], { timeoutMs: opts.timeoutMs ?? 20000 });
+    if (r.ok) break;   // exit 0 = a real Get-AuthenticodeSignature result (even 'NotSigned')
+    // r.code === null means the executable itself wasn't found — try the next.
+    // A non-null non-zero code means the shell ran but the script errored
+    // (e.g. a broken Security module); also worth trying the next candidate.
+  }
+  if (!r || !r.ok) {
+    const detail = (r?.stderr || r?.stdout || '').trim().slice(0, 300);
+    return { ok: false, signed: false, reason: `could not run Get-AuthenticodeSignature: ${detail || `exit ${r?.code}`}` };
   }
 
   let parsed: RawSignature;
