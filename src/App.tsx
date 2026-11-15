@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useSettings, useUI } from './store/ui';
 import { useConsole } from './store/console';
+import { useChat } from './store/chat';
+import { TABS } from './lib/tabs';
 import ChatTab from './tabs/ChatTab';
 import LibraryTab from './tabs/LibraryTab';
 import ConsoleTab from './tabs/ConsoleTab';
@@ -21,23 +23,6 @@ import ErrorBoundary from './components/ErrorBoundary';
 
 const KOFI_URL = 'https://ko-fi.com/sparklemuffin';
 
-type TabDef = readonly [key: string, icon: string, label: string, hint: string];
-
-const TABS: readonly TabDef[] = [
-  ['chat',      '💬', 'Chat',           'Talk to your local LLM. Auto-routes to chat / vision / reasoning. Flip on Agent mode to plan & execute multi-step tasks.'],
-  ['library',   '📚', 'Library',        'One-click installs: popular Ollama models, real MCP servers, OpenClaw plugins, system tools.'],
-  ['console',   '🐚', 'Console',        'Run OpenClaw / Claude Code or any shell (PowerShell / cmd / Git Bash / WSL / custom) with live streaming + UAC elevation.'],
-  ['brain',     '🧠', 'Project Brain',  'Atlas: a queryable map of a target codebase — symbols, call/reference edges, and active/orphaned/deprecated/superseded status tags. Powers the code-brain MCP server.'],
-  ['council',   '⚖️', 'Council',        'Multi-workspace agent council: assign panelists/judge/QA from the roster, run a debate protocol, watch the theater, and approve/reject the diff in-tab.'],
-  ['skills',    '🧩', 'Skills',         'Create, organize, search, install, and publish OpenClaw SKILL.md skills via ClawHub.'],
-  ['history',   '📜', 'History',        'Searchable log of every chat turn. Click ↳ to branch a prior prompt back into Chat.'],
-  ['prompts',   '📋', 'Prompts',        'Reusable prompt templates with {{variable}} substitution.'],
-  ['settings',  '⚙️', 'Settings',       'Configure Ollama URL, models, CLI paths, signing keys, MCP servers.'],
-  ['upgrades',  '⬆️', 'OpenClaw',       'Install/update OpenClaw through the hardened gate (allowlist → hash → signature → AV+YARA → VirusTotal).'],
-  ['self',      '🔄', 'Update Claw Deck','Check for Claw Deck updates from your configured GitHub release feed.'],
-  ['security',  '🛡️', 'Security',       'Append-only, hash-chained ledger of every install / scan decision.']
-] as const;
-
 export default function App() {
   const { tab, setTab, paletteOpen, togglePalette } = useUI();
   const { data: s, load, loaded } = useSettings();
@@ -48,6 +33,18 @@ export default function App() {
   useEffect(() => {
     if (loaded && shouldShowOnboarding()) setWizardOpen(true);
   }, [loaded]);
+
+  // Bring back the chat that was open last time (survives app and PC restarts).
+  useEffect(() => {
+    if (loaded) void useChat.getState().hydrate();
+  }, [loaded]);
+
+  // One global stream subscription feeds the chat store, so a reply keeps
+  // arriving while another tab is showing.
+  useEffect(() => {
+    const off = window.api.ollama.onChunk((c: any) => useChat.getState().handleChunk(c));
+    return off;
+  }, []);
 
   // Push the close-window behavior to the backend whenever it changes.
   // Default 'tray'; migrate the old boolean closeToTray (false ⇒ 'quit').

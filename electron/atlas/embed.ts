@@ -24,7 +24,7 @@ async function pool<T>(items: T[], concurrency: number, worker: (item: T) => Pro
 }
 
 /** Batched embed via Ollama /api/embed (input array). Returns one vector per input (null on miss). */
-async function embedBatch(baseUrl: string, model: string, texts: string[]): Promise<(Float32Array | null)[]> {
+export async function embedBatch(baseUrl: string, model: string, texts: string[]): Promise<(Float32Array | null)[]> {
   try {
     const r = await fetch(`${baseUrl.replace(/\/$/, '')}/api/embed`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },

@@ -142,3 +142,27 @@ th { color: var(--muted); font-weight: 500; }
 .palette ul { list-style: none; padding: 0; margin: 0; max-height: 300px; overflow: auto; }
 .palette li { padding: 8px 10px; border-radius: 6px; cursor: pointer; }
 .palette li.sel { background: var(--panel-2); }
+
+/* --- Chat memory note (recalled excerpts / history lookups under a reply) --- */
+.memory-note { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: -2px 0 8px 2px; font-size: 11px; }
+
+/* --- History: thread list + transcript --- */
+.history { display: grid; grid-template-columns: minmax(260px, 340px) 1fr; gap: 12px; height: 100%; min-height: 0; }
+.history .threads { overflow: auto; padding: 6px; display: flex; flex-direction: column; gap: 4px; }
+.history .thread-item { text-align: left; background: transparent; border: 1px solid transparent; border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 3px; }
+.history .thread-item:hover { background: var(--panel-2); }
+.history .thread-item.sel { background: var(--panel-2); border-color: var(--accent); }
+.history .thread-item .t-title { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history .thread-item .t-sub { color: var(--muted); font-size: 11px; display: flex; gap: 8px; align-items: center; }
+.history .thread-item .t-snip { color: var(--muted); font-size: 11px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.history .transcript { overflow: auto; display: flex; flex-direction: column; min-height: 0; }
+.history .msg-tools { display: flex; gap: 6px; justify-content: flex-end; margin: -4px 0 8px; opacity: .0; transition: opacity .1s; }
+.history .turn:hover .msg-tools { opacity: 1; }
+.history .msg-tools button { font-size: 11px; padding: 3px 8px; }
+
+/* --- Model picker (Settings) --- */
+.model-pick { display: flex; flex-direction: column; gap: 6px; padding: 8px 0; border-top: 1px solid var(--border); }
+.model-pick:first-of-type { border-top: none; }
+.model-pick .caps { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.model-pick .opts { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.model-pick .opts input[type=number] { width: 110px; }

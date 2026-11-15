@@ -19,10 +19,24 @@ contextBridge.exposeInMainWorld('api', {
     set: (patch: any) => invoke('settings:set', patch)
   },
   history: {
-    list: (q?: any) => invoke('history:list', q),
-    add: (entry: any) => invoke('history:add', entry),
-    delete: (id: number) => invoke('history:delete', id),
-    clear: () => invoke('history:clear')
+    // One-shot records (finished console sessions). Chat lives in `threads`.
+    add: (entry: any) => invoke('history:add', entry)
+  },
+  threads: {
+    list: (q?: any) => invoke('threads:list', q),
+    count: (kind?: string) => invoke('threads:count', kind),
+    get: (id: string) => invoke('threads:get', id),
+    create: (opts?: any) => invoke('threads:create', opts),
+    append: (threadId: string, msg: any) => invoke('threads:append', threadId, msg),
+    setMeta: (messageId: number, meta: any) => invoke('threads:setMeta', messageId, meta),
+    truncate: (threadId: string, fromSeq: number) => invoke('threads:truncate', threadId, fromSeq),
+    update: (id: string, patch: any) => invoke('threads:update', id, patch),
+    branch: (id: string, uptoSeq?: number) => invoke('threads:branch', id, uptoSeq),
+    delete: (id: string) => invoke('threads:delete', id),
+    clear: () => invoke('threads:clear'),
+    search: (opts: any) => invoke('threads:search', opts),
+    indexStatus: () => invoke('threads:indexStatus'),
+    reindex: () => invoke('threads:reindex')
   },
   runner: {
     start: (opts: any) => invoke('runner:start', opts),
@@ -33,6 +47,7 @@ contextBridge.exposeInMainWorld('api', {
   },
   ollama: {
     listModels: (baseUrl?: string) => invoke('ollama:listModels', baseUrl),
+    modelInfo: (baseUrl?: string) => invoke('ollama:modelInfo', baseUrl),
     ps: (baseUrl?: string) => invoke('ollama:ps', baseUrl),
     chat: (req: any) => invoke('ollama:chat', req),
     vision: (req: any) => invoke('ollama:vision', req),

@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useSettings } from '../store/ui';
+import { useChat } from '../store/chat';
+import ModelSelect from '../components/ModelSelect';
 
 interface McpStatus {
   name: string; status: string; pid?: number; lastError?: string;
@@ -12,6 +14,11 @@ export default function SettingsTab() {
   const [ollamaHealth, setOllamaHealth] = useState<'unknown' | 'ok' | 'bad'>('unknown');
   const [agentProbe, setAgentProbe] = useState<Record<string, { ok: boolean; detail: string }>>({});
   function set<K extends string>(k: K, v: any) { setDraft({ ...draft, [k]: v }); }
+  const modelInfo = useChat(c => c.modelInfo);
+  const refreshModels = useChat(c => c.refreshModels);
+
+  // What is installed, and what each model can do, for the pickers in the Models card.
+  useEffect(() => { void refreshModels(data.ollamaUrl); }, [refreshModels, data.ollamaUrl]);
 
   useEffect(() => {
     let cancelled = false;
@@ -30,6 +37,7 @@ export default function SettingsTab() {
     try {
       const r = await window.api.ollama.listModels(draft.ollamaUrl);
       setOllamaHealth(r.error ? 'bad' : 'ok');
+      if (!r.error) void refreshModels(draft.ollamaUrl);
     } catch { setOllamaHealth('bad'); }
   }
 
@@ -56,13 +64,24 @@ export default function SettingsTab() {
       </div>
 
       <div className="card col">
-        <h3 style={{ margin: 0 }}>Models</h3>
-        <label className="label">Default chat model</label>
-        <input value={draft.chatModel ?? ''} onChange={e => set('chatModel', e.target.value)} />
-        <label className="label">Reasoning model</label>
-        <input value={draft.reasoningModel ?? ''} onChange={e => set('reasoningModel', e.target.value)} />
-        <label className="label">Vision model (e.g. kimi-k2.7-code:cloud, or whatever your endpoint exposes)</label>
-        <input value={draft.visionModel ?? ''} onChange={e => set('visionModel', e.target.value)} />
+        <div className="row">
+          <h3 style={{ margin: 0, flex: 1 }}>Models</h3>
+          <span className="label">{modelInfo.length} installed in Ollama</span>
+          <button onClick={() => refreshModels(draft.ollamaUrl)} title="Re-read the installed models and what each can do">Refresh</button>
+        </div>
+        <div className="label">Each picker lists what is installed, best match for the slot first, with what the model can do. The options under a picker belong to that model and only show what it supports.</div>
+        <ModelSelect slot="chat" label="Default chat model" hint="everyday chat, and Auto routing's default"
+          value={draft.chatModel ?? ''} onChange={v => set('chatModel', v)} models={modelInfo}
+          params={draft.modelParams} onParams={v => set('modelParams', v)} globalThink={draft.think} />
+        <ModelSelect slot="reasoning" label="Reasoning model" hint="used for /reason, reasoning-style prompts, and Agent mode planning"
+          value={draft.reasoningModel ?? ''} onChange={v => set('reasoningModel', v)} models={modelInfo}
+          params={draft.modelParams} onParams={v => set('modelParams', v)} globalThink={draft.think} />
+        <ModelSelect slot="vision" label="Vision model" hint="used when an image is attached; goes through the OpenAI-compatible URL above"
+          value={draft.visionModel ?? ''} onChange={v => set('visionModel', v)} models={modelInfo} />
+        <ModelSelect slot="embed" label="Embedding model" hint="powers semantic search over chat history and Project Brain"
+          value={draft.embedModel ?? ''} onChange={v => set('embedModel', v)} models={modelInfo} />
+        <ModelSelect slot="summary" label="Summary model" hint="short symbol summaries in Project Brain; a small fast model is best"
+          value={draft.summaryModel ?? ''} onChange={v => set('summaryModel', v)} models={modelInfo} />
       </div>
 
       <div className="card col">
@@ -99,8 +118,6 @@ export default function SettingsTab() {
         <input value={draft.ollamaCloudUrl ?? ''} onChange={e => set('ollamaCloudUrl', e.target.value)} placeholder="(blank — uses local Ollama)" />
         <label className="label">Remote API key (optional; blank for local)</label>
         <input type="password" value={draft.ollamaCloudKey ?? ''} onChange={e => set('ollamaCloudKey', e.target.value)} />
-        <label className="label">Embedding model (Atlas, 768-dim)</label>
-        <input value={draft.embedModel ?? ''} onChange={e => set('embedModel', e.target.value)} placeholder="nomic-embed-text" />
         <label className="label" title="When OFF (default), Claw Deck drops ANTHROPIC_API_KEY when spawning Claude Code so it uses your `claude login` Pro/Max subscription. Turn ON only if you specifically want pay-per-token API billing.">
           <input type="checkbox" checked={!!draft.claudeUseApiKey} onChange={e => set('claudeUseApiKey', e.target.checked)} /> Bill Claude Code to the API key (off = use your <code>claude login</code> subscription)
         </label>

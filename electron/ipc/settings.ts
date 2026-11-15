@@ -8,8 +8,10 @@ export const DEFAULTS = {
   visionModel: 'kimi-k2.7-code:cloud',
   chatModel: 'llama3.2',
   reasoningModel: 'deepseek-r1',
-  embedModel: 'nomic-embed-text',          // Atlas embeddings (768-dim, locked)
+  embedModel: 'nomic-embed-text',          // Atlas embeddings (768-dim, locked) + chat-history memory search
   summaryModel: 'qwen2.5:3b',              // Atlas symbol summaries — fast + terse (≈4× quicker than llama3.2 at comparable quality)
+  // Per-model options set from the Settings pickers: { [model]: { think?, num_ctx?, temperature? } }.
+  modelParams: {} as Record<string, { think?: boolean | 'low' | 'medium' | 'high'; num_ctx?: number; temperature?: number }>,
   openclawPath: '',
   claudeCodePath: 'claude',
   codexPath: 'codex',                          // Fusion QA-gate actor (Cole is installing the CLI)

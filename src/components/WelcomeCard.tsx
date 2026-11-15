@@ -28,7 +28,7 @@ export default function WelcomeCard({ models, running }: Props) {
 
   useEffect(() => {
     if (dismissed) return;
-    window.api.history.list({ limit: 1 }).then(r => setHistoryCount((r ?? []).length));
+    window.api.threads.count().then(n => setHistoryCount(n ?? 0)).catch(() => { /* ignore */ });
   }, [dismissed]);
 
   if (dismissed) return null;
@@ -75,7 +75,7 @@ export default function WelcomeCard({ models, running }: Props) {
               Send your first message — Ollama loads the model into VRAM lazily. The header shows live VRAM use.
             </Step>
             <Step done={hasHistory} onClick={() => setTab('history')}>
-              Anything you send shows up in History — branch (↳) to reuse a prompt
+              Every chat is saved in History — reopen a thread any time to keep going
             </Step>
           </ol>
           <div className="label" style={{ marginTop: 8 }}>

@@ -14,8 +14,9 @@
  *   ```
  *
  * This module parses that, validates it, and provides the step-type registry.
- * Actual execution lives in AssistantTab so it can use the React + IPC layer.
+ * Actual execution lives in the chat store so it can use the IPC layer.
  */
+import { agentGuide } from './appGuide';
 
 export type StepStatus = 'pending' | 'running' | 'ok' | 'error' | 'skipped';
 
@@ -26,6 +27,7 @@ export type PlanStep =
   | { type: 'shell'; command: string; args?: string[]; cwd?: string; description?: string }
   | { type: 'openTab'; tab: string }
   | { type: 'webFetch'; url: string; description?: string }
+  | { type: 'searchHistory'; query: string }
   | { type: 'note'; text: string };
 
 export interface Plan {
@@ -45,7 +47,7 @@ export interface ParsedPlan {
 }
 
 const STEP_TYPES = new Set([
-  'pullModel', 'setSetting', 'addMcpServer', 'shell', 'openTab', 'webFetch', 'note'
+  'pullModel', 'setSetting', 'addMcpServer', 'shell', 'openTab', 'webFetch', 'searchHistory', 'note'
 ]);
 
 /** Strip <think>...</think> blocks (deepseek-r1, qwq, qwen3-thinking, etc.). */
@@ -167,6 +169,7 @@ export function parsePlan(text: string): ParsedPlan {
       case 'shell':        if (typeof s.command !== 'string' || !s.command) return { ok: false, intent: 'malformed', error: `Step ${i} shell.command missing`, raw: json }; break;
       case 'openTab':      if (typeof s.tab !== 'string' || !s.tab) return { ok: false, intent: 'malformed', error: `Step ${i} openTab.tab missing`, raw: json }; break;
       case 'webFetch':     if (typeof s.url !== 'string' || !s.url) return { ok: false, intent: 'malformed', error: `Step ${i} webFetch.url missing`, raw: json }; break;
+      case 'searchHistory': if (typeof s.query !== 'string' || !s.query) return { ok: false, intent: 'malformed', error: `Step ${i} searchHistory.query missing`, raw: json }; break;
       case 'note':         if (typeof s.text !== 'string') return { ok: false, intent: 'malformed', error: `Step ${i} note.text missing`, raw: json }; break;
     }
     steps.push(s as PlanStep);
@@ -185,6 +188,7 @@ export function describeStep(s: PlanStep): string {
     case 'shell':        return `Run shell: ${s.command}${s.args && s.args.length ? ' ' + s.args.join(' ') : ''}${s.cwd ? ` (cwd: ${s.cwd})` : ''}`;
     case 'openTab':      return `Open tab: ${s.tab}`;
     case 'webFetch':     return `Fetch URL: ${s.url}`;
+    case 'searchHistory': return `Search saved conversations: ${s.query}`;
     case 'note':         return `Note: ${s.text}`;
   }
 }
@@ -221,8 +225,9 @@ Allowed step types (use only these):
 - { "type": "setSetting",   "key": "<settings-key>", "value": <any-json> }
 - { "type": "addMcpServer", "name": "<id>", "command": "<bin>", "args": ["..."], "env": {...} }
 - { "type": "shell",        "command": "<bin>", "args": ["..."], "cwd": "<path?>", "description": "<why>" }
-- { "type": "openTab",      "tab": "chat|console|library|history|prompts|settings|upgrades|self|security" }
+- { "type": "openTab",      "tab": "chat|library|console|brain|council|skills|history|prompts|settings|upgrades|self|security" }
 - { "type": "webFetch",     "url": "<https-url>", "description": "<why>" }
+- { "type": "searchHistory", "query": "<what to look for in earlier saved conversations>" }
 - { "type": "note",         "text": "<info for the user>" }
 
 Rules:
@@ -230,5 +235,8 @@ Rules:
 - Use pullModel/setSetting/addMcpServer instead of raw shell when the action maps to one.
 - Never run \`rm\`, \`del\`, \`Remove-Item -Recurse\`, \`format\`, or anything destructive without an obvious justification in description.
 - When you only need to explain something, omit the JSON block entirely.
-- Common settings keys: ollamaUrl, chatModel, reasoningModel, visionModel, openclawPath, claudeCodePath.
-- Tab names (use exactly these): chat, console, library, history, prompts, settings, upgrades, self, security. (The Console tab runs CLIs and shells; Agent mode lives inside Chat.)`;
+- Use searchHistory (alone, as a one-step plan) when the user refers to an earlier conversation; the results come back to you and you can answer or plan from them.
+- Common settings keys: ollamaUrl, chatModel, reasoningModel, visionModel, embedModel, openclawPath, claudeCodePath.
+- Tab names (use exactly these): chat, library, console, brain, council, skills, history, prompts, settings, upgrades, self, security. (The Console tab runs CLIs and shells; Agent mode lives inside Chat.)
+
+${agentGuide()}`;

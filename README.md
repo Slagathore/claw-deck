@@ -25,14 +25,14 @@ Everything runs against `localhost`. No account, no cloud inference, no telemetr
 
 | | |
 |---|---|
-| **Chat** | Streaming Ollama chat with an `Auto` backend that routes to chat, vision, or reasoning by content, plus `/vision` `/reason` `/chat` overrides. Turn on Agent mode and it writes a JSON plan, you approve it, then it runs each step and feeds the results back to itself. |
+| **Chat** | Streaming Ollama chat with an `Auto` backend that routes to chat, vision, or reasoning by content, plus `/vision` `/reason` `/chat` overrides. Turn on Agent mode and it writes a JSON plan, you approve it, then it runs each step and feeds the results back to itself. Chats are saved as you go, the model knows the app it lives in, and it can pull in what was said in earlier chats. |
 | **Library** | One-click installs for 21 models, 20 real MCP servers (verified `npx`/`uvx` packages), 12 OpenClaw plugins, and system tools. Each one gets scanned before it installs. |
 | **Council** | An agent council across workspaces. Assign panelists, judge, and QA from a roster, run a debate protocol, watch the theater, and approve or reject the resulting diff in the tab. |
 | **Project Brain** | Atlas, a queryable map of any codebase: symbols, call and reference edges, and active / orphaned / deprecated / superseded status tags. Powers the `code-brain` MCP server. |
 | **Skills** | The full OpenClaw `SKILL.md` pipeline. Scaffold, organize, and publish skills, with semantic search and install/inspect through the real ClawHub registry. |
 | **Console** | OpenClaw or Claude Code, and any shell (PowerShell, cmd, Git Bash, WSL) in a real pseudo-terminal (node-pty + xterm.js, so colors, line editing, and `isatty` all work), with UAC-elevated launch. |
 | **Secure upgrades** | Every install runs a gate: allowlist, quarantine, SHA-256, Ed25519 signature, AV plus YARA, VirusTotal, install with backup, tamper-evident ledger, real rollback. |
-| **History** | A SQLite-backed searchable log of every turn (chat, agent plans, console sessions), with one click to branch off a prior prompt and reuse it. |
+| **History** | Every conversation saved in full (chat, agent plans, console sessions). Search by keyword or by meaning, reopen a thread in Chat to keep going, or branch it from any message. Chats survive tab switches, app restarts, and reboots. |
 | **Vision** | Attach multiple images, or grab a desktop screenshot and region crop in one click, routed through the OpenAI-compatible path so tool-calling stays reliable. |
 | **Command palette** | `Ctrl+K` from anywhere. Plus a live status bar (tok/s, TTFT, VRAM) and an offline mode that kills every outbound call with one toggle. |
 

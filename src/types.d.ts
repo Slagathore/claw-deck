@@ -1,3 +1,7 @@
+type ThreadKind = import('../electron/memory/store').ThreadKind;
+type ThreadRow = import('../electron/memory/store').ThreadRow;
+type MessageRow = import('../electron/memory/store').MessageRow;
+
 declare global {
   interface Window {
     api: {
@@ -6,10 +10,24 @@ declare global {
         set: (patch: any) => Promise<boolean>;
       };
       history: {
-        list: (q?: { search?: string; limit?: number }) => Promise<any[]>;
-        add: (entry: any) => Promise<number>;
-        delete: (id: number) => Promise<boolean>;
+        /** One-shot record (a finished console session), stored as its own thread. */
+        add: (entry: any) => Promise<string>;
+      };
+      threads: {
+        list: (q?: { search?: string; kind?: ThreadKind; limit?: number }) => Promise<ThreadRow[]>;
+        count: (kind?: ThreadKind) => Promise<number>;
+        get: (id: string) => Promise<{ thread: ThreadRow; messages: MessageRow[] } | null>;
+        create: (opts?: { kind?: ThreadKind; title?: string; agent?: boolean; backend?: string; model?: string }) => Promise<ThreadRow>;
+        append: (threadId: string, msg: import('../electron/memory/store').NewMessage) => Promise<{ id: number; seq: number }>;
+        setMeta: (messageId: number, meta: Record<string, any>) => Promise<boolean>;
+        truncate: (threadId: string, fromSeq: number) => Promise<boolean>;
+        update: (id: string, patch: { title?: string; agent?: boolean; backend?: string; model?: string }) => Promise<boolean>;
+        branch: (id: string, uptoSeq?: number) => Promise<ThreadRow | null>;
+        delete: (id: string) => Promise<boolean>;
         clear: () => Promise<boolean>;
+        search: (opts: { query: string; k?: number; excludeThreadId?: string | null; kind?: ThreadKind; strict?: boolean }) => Promise<import('../electron/memory/store').SearchHit[]>;
+        indexStatus: () => Promise<{ chunks: number; embedded: number; threads: number; messages: number; available: boolean | null; lastError: string; running: boolean; model: string }>;
+        reindex: () => Promise<boolean>;
       };
       runner: {
         start: (opts: any) => Promise<{ id: string; pty?: boolean }>;
@@ -20,9 +38,10 @@ declare global {
       };
       ollama: {
         listModels: (baseUrl?: string) => Promise<{ models: string[]; error?: string }>;
+        modelInfo: (baseUrl?: string) => Promise<{ models: import('../electron/lib/modelCaps').ModelInfo[]; error?: string }>;
         ps: (baseUrl?: string) => Promise<{ running: { name: string; size?: number; sizeVram?: number; expiresAt?: number }[]; error?: string }>;
-        chat: (req: any) => Promise<{ content: string; thinking?: string; raw?: any }>;
-        vision: (req: any) => Promise<{ content: string; raw?: any }>;
+        chat: (req: any) => Promise<{ content: string; thinking?: string; tools?: { name: string; args: any }[]; error?: string; raw?: any }>;
+        vision: (req: any) => Promise<{ content: string; error?: string; raw?: any }>;
         pull: (opts: { baseUrl?: string; model: string; id: string }) => Promise<{ ok: boolean; error?: string }>;
         stop: (opts: { baseUrl?: string; model: string }) => Promise<{ ok: boolean; error?: string }>;
         delete: (opts: { baseUrl?: string; model: string }) => Promise<{ ok: boolean; error?: string; status?: number }>;

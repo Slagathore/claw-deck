@@ -8,7 +8,7 @@ import { registerUpgradeHandlers } from './ipc/upgrades';
 import { registerSecurityHandlers } from './ipc/security';
 import { registerScreenshotHandlers } from './ipc/screenshot';
 import { registerSettingsHandlers } from './ipc/settings';
-import { registerHistoryHandlers } from './ipc/history';
+import { registerThreadHandlers, initMemory } from './ipc/threads';
 import { registerPromptHandlers } from './ipc/prompts';
 import { registerMcpHandlers, stopAllMcp, ensureWellKnownMcpServers } from './ipc/mcp';
 import { registerTerminalHandlers } from './ipc/terminal';
@@ -225,8 +225,9 @@ app.whenReady().then(async () => {
     app.quit();
     return;
   }
+  try { initMemory(); } catch (e) { console.error('[memory] init failed', e); }
   registerSettingsHandlers();
-  registerHistoryHandlers();
+  registerThreadHandlers();
   registerRunnerHandlers(() => mainWindow);
   registerOllamaHandlers();
   registerUpgradeHandlers();
