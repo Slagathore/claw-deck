@@ -37,6 +37,15 @@ describe('app guide', () => {
     expect(noTools).toContain('2026-10-02');
   });
 
+  it('tells the model plainly when saved history is being kept from it', () => {
+    const held = buildChatSystem({ canSearchHistory: false, historyShared: false });
+    expect(held).toContain('not shared with you');
+    expect(held).toContain('Everything in this conversation');
+    expect(held).toContain('Settings, Memory');
+    expect(held).not.toContain('search_history, read_thread');
+    expect(appGuide()).toContain('Memory card');
+  });
+
   it('recall block is bounded', () => {
     const hits = Array.from({ length: 20 }, (_, i) => hit('x'.repeat(2000), `Thread ${i}`));
     const block = formatRecall(hits, 3200);
@@ -60,5 +69,20 @@ describe('planner: history and the full tab list', () => {
     expect(describeStep(step)).toBe('Search saved conversations: docker dns fix');
     expect(isDestructive(step)).toBe(false);
     expect(parsePlan('```json\n{"summary":"x","steps":[{"type":"searchHistory"}]}\n```').ok).toBe(false);
+  });
+
+  it('a plan with args as a string (a common small-model slip) parses and can always be described', () => {
+    const p = parsePlan('```json\n{"summary":"check git","steps":[{"type":"shell","command":"git","args":"--version \\"two words\\""},{"type":"addMcpServer","name":"fs","command":"npx","args":42,"env":"nope"},{"type":"shell","command":"dir","args":null,"cwd":7}]}\n```');
+    expect(p.ok).toBe(true);
+    const [a, b, c] = p.plan!.steps as any[];
+    expect(a.args).toEqual(['--version', 'two words']);
+    expect(b.args).toBeUndefined();
+    expect(b.env).toBeUndefined();
+    expect(c.cwd).toBeUndefined();
+    expect(() => p.plan!.steps.map(describeStep)).not.toThrow();
+    expect(describeStep(a)).toBe('Run shell: git --version two words');
+    // even a step object that skipped parsePlan cannot throw
+    expect(() => describeStep({ type: 'shell', command: 'git', args: '--version' } as any)).not.toThrow();
+    expect(() => describeStep({ type: 'addMcpServer', name: 'x', command: 'npx', args: 'a b' } as any)).not.toThrow();
   });
 });

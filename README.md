@@ -19,7 +19,9 @@ A local desktop command deck for OpenClaw and Claude Code that runs on your own 
 
 Claw Deck wraps your local Ollama stack in a real desktop GUI, then adds the parts most local-LLM front-ends skip: an agent council, a queryable code map, an OpenClaw skills pipeline, and a security gate that scans, hashes, and signature-checks anything before it touches your machine.
 
-Everything runs against `localhost`. No account, no cloud inference, no telemetry. The only outbound calls are the ones you opt into: GitHub release polling and optional VirusTotal hash lookups.
+Everything runs against `localhost`. No account, no telemetry, and no cloud inference unless you pick a cloud model yourself. The only outbound calls are the ones you opt into: GitHub release polling and optional VirusTotal hash lookups.
+
+Your chats are saved and indexed on your own machine. If you do pick a cloud model, it gets the chat you are in, the same as any cloud chat. Excerpts from your other saved chats only go to models running on your PC, unless you turn that on for cloud models under Settings, Memory.
 
 ## What it does
 

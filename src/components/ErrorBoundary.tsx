@@ -1,6 +1,11 @@
 import React from 'react';
+import { useChat } from '../store/chat';
 
-interface Props { children: React.ReactNode; }
+interface Props {
+  children: React.ReactNode;
+  /** Set on the Chat tab: offers "Start a new chat", since the saved thread is restored on every mount. */
+  chat?: boolean;
+}
 interface State { error: Error | null; }
 
 /**
@@ -31,6 +36,14 @@ export default class ErrorBoundary extends React.Component<Props, State> {
           </pre>
           <div className="row" style={{ marginTop: 12 }}>
             <button className="primary" onClick={() => this.setState({ error: null })}>Try again</button>
+            {this.props.chat && (
+              <button
+                onClick={() => { useChat.getState().newChat(); this.setState({ error: null }); }}
+                title="Leave the thread that failed to display. It stays saved in History."
+              >
+                Start a new chat
+              </button>
+            )}
             <button onClick={() => location.reload()}>Reload window</button>
           </div>
         </div>

@@ -3,7 +3,8 @@
 // name-based guess as the last resort, flagged as such so the UI can say so.
 // Pure: no Electron or Node imports, so it runs under vitest as is.
 
-export type ModelCapability = 'completion' | 'vision' | 'tools' | 'thinking' | 'embedding';
+/** 'image' = an image generation model (it produces pictures; it cannot chat). */
+export type ModelCapability = 'completion' | 'vision' | 'tools' | 'thinking' | 'embedding' | 'image';
 
 export interface ModelInfo {
   name: string;
@@ -22,13 +23,14 @@ export interface ModelInfo {
   cloud: boolean;
 }
 
-const KNOWN: ModelCapability[] = ['completion', 'vision', 'tools', 'thinking', 'embedding'];
+const KNOWN: ModelCapability[] = ['completion', 'vision', 'tools', 'thinking', 'embedding', 'image'];
 
 export const isCloudModel = (name: string): boolean => /(:|-)cloud$/i.test(name);
 
 export function guessCapabilities(name: string): ModelCapability[] {
   const n = name.toLowerCase();
   if (/embed|bge-|minilm|e5-/.test(n)) return ['embedding'];
+  if (/z-image|flux|stable-diffusion|sdxl/.test(n)) return ['image'];
   const caps: ModelCapability[] = ['completion'];
   if (/vision|llava|moondream|minicpm-v|bakllava|gemma3|qwen3\.5|kimi/.test(n)) caps.push('vision');
   if (/deepseek-r1|qwq|qwen3|gpt-oss|kimi|magistral|-thinking/.test(n)) caps.push('thinking');

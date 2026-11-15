@@ -11,6 +11,10 @@ import { embedModel, embedQuery, embedderStatus, kickEmbedder } from '../memory/
 
 const db = () => getDb() as unknown as Queryable;
 
+/** Automatic recall runs before every chat send, so it gets a short budget; if the
+ *  embedding is not back by then the send goes ahead on keyword matches alone. */
+const RECALL_EMBED_TIMEOUT_MS = 1500;
+
 /** Create the memory tables, carry over the old per-turn history, and start embedding. */
 export function initMemory(): void {
   migrateMemory(db());
@@ -21,7 +25,7 @@ export function initMemory(): void {
 async function search(opts: { query: string; k?: number; excludeThreadId?: string | null; kind?: ThreadKind; strict?: boolean }): Promise<SearchHit[]> {
   const q = (opts.query || '').trim();
   if (!q) return [];
-  const emb = await embedQuery(q).catch(() => null);
+  const emb = await embedQuery(q, opts.strict ? RECALL_EMBED_TIMEOUT_MS : undefined).catch(() => null);
   return searchMemory(db(), { ...opts, query: q, queryVec: emb?.vec, model: emb?.model });
 }
 

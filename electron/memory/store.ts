@@ -118,12 +118,29 @@ export function migrateMemory(db: Queryable): MemorySchema {
       dim INTEGER NOT NULL,
       vec BLOB NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS memory_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
   `);
   let fts = true;
   try {
     db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(text, tokenize='porter unicode61')`);
   } catch { fts = false; } // SQLite built without FTS5: keyword search falls back to LIKE
   return { fts };
+}
+
+function getMeta(db: Queryable, key: string): string | null {
+  const r = db.prepare(`SELECT value FROM memory_meta WHERE key = ?`).get(key) as { value: string } | undefined;
+  return r ? r.value : null;
+}
+function setMeta(db: Queryable, key: string, value: string): void {
+  db.prepare(`INSERT INTO memory_meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(key, value);
+}
+
+/** The pre-1.0.5 per-turn `history` table, when this database has one. */
+function hasLegacyTable(db: Queryable): boolean {
+  try { return !!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='history'`).get(); } catch { return false; }
 }
 
 function hasFts(db: Queryable): boolean {
@@ -200,12 +217,16 @@ export function searchTerms(text: string, max = 12): string[] {
 }
 
 /** Build a safe FTS5 MATCH expression. Every term is quoted, so user text can
- *  never be parsed as FTS syntax. `all` requires every term (AND) instead of any (OR). */
-export function ftsQuery(text: string, all = false): string | null {
+ *  never be parsed as FTS syntax. `all` requires every term (AND) instead of any (OR).
+ *  `prefix` also matches words that merely start with a term ("config" finds "configuration"). */
+export function ftsQuery(text: string, all = false, prefix = false): string | null {
   const terms = searchTerms(text, all ? 6 : 12);
   if (!terms.length) return null;
-  return terms.map(t => `"${t.replace(/"/g, '""')}"`).join(all ? ' AND ' : ' OR ');
+  return terms.map(t => `"${t.replace(/"/g, '""')}"${prefix ? '*' : ''}`).join(all ? ' AND ' : ' OR ');
 }
+
+/** Escape a string for use inside a LIKE pattern with ESCAPE '\\'. */
+const likeEscape = (s: string) => s.replace(/[\\%_]/g, c => `\\${c}`);
 
 export function normalize(v: Float32Array): Float32Array {
   let n = 0;
@@ -330,18 +351,25 @@ export function truncateThread(db: Queryable, threadId: string, fromSeq: number)
 
 export function deleteThread(db: Queryable, threadId: string): void {
   const fts = hasFts(db);
+  const legacy = hasLegacyTable(db);
   tx(db, () => {
+    const row = db.prepare(`SELECT legacy_id FROM threads WHERE id = ?`).get(threadId) as { legacy_id: number | null } | undefined;
     dropIndexWhere(db, `thread_id = ?`, [threadId], fts);
     db.prepare(`DELETE FROM thread_messages WHERE thread_id = ?`).run(threadId);
     db.prepare(`DELETE FROM threads WHERE id = ?`).run(threadId);
+    // A thread carried over from the old history table: remove the original row too, so a
+    // deleted conversation is really gone from disk and can never be imported again.
+    if (legacy && row?.legacy_id != null) db.prepare(`DELETE FROM history WHERE id = ?`).run(row.legacy_id);
   });
 }
 
 export function clearThreads(db: Queryable): void {
   const fts = hasFts(db);
+  const legacy = hasLegacyTable(db);
   tx(db, () => {
     if (fts) db.exec(`DELETE FROM memory_fts`);
     db.exec(`DELETE FROM memory_vecs; DELETE FROM memory_chunks; DELETE FROM thread_messages; DELETE FROM threads;`);
+    if (legacy) db.exec(`DELETE FROM history`); // "Clear all" clears the pre-upgrade history as well
   });
 }
 
@@ -382,23 +410,34 @@ export function branchThread(db: Queryable, id: string, uptoSeq?: number): Threa
   });
 }
 
+const LEGACY_WATERMARK = 'legacy_imported_upto';
+
 /** One-time carry-over of the old per-turn `history` table: each row becomes a
- *  two-message thread. Tracked by legacy_id, so it is safe to call on every boot. */
+ *  two-message thread. How far the import got is recorded in memory_meta (not on the
+ *  imported threads, which the user can delete), so it is safe to call on every boot
+ *  and a deleted or cleared conversation never comes back. */
 export function importLegacyHistory(db: Queryable): number {
-  let rows: any[];
-  try {
-    const done = Number((db.prepare(`SELECT COALESCE(MAX(legacy_id), 0) AS n FROM threads`).get() as { n: number }).n);
-    rows = db.prepare(`SELECT * FROM history WHERE id > ? ORDER BY id`).all(done);
-  } catch { return 0; } // no legacy table
-  if (!rows.length) return 0;
+  if (!hasLegacyTable(db)) return 0;
+  let upto = Number(getMeta(db, LEGACY_WATERMARK));
+  if (!Number.isFinite(upto) || getMeta(db, LEGACY_WATERMARK) == null) {
+    // No watermark yet: fall back to what the threads themselves say (a database first
+    // opened by a build that tracked the import that way).
+    upto = Number((db.prepare(`SELECT COALESCE(MAX(legacy_id), 0) AS n FROM threads`).get() as { n: number }).n);
+  }
+  const rows = db.prepare(`SELECT * FROM history WHERE id > ? ORDER BY id`).all(upto) as any[];
   tx(db, () => {
     for (const r of rows) {
       const backend = String(r.backend ?? 'chat');
       const isConsole = backend.startsWith('console');
-      const t = createThread(db, { kind: isConsole ? 'console' : 'chat', title: titleFrom(r.prompt ?? ''), agent: backend === 'agent', backend, model: r.model ?? null, ts: r.ts, legacyId: Number(r.id) });
+      // Old rows recorded the backend a turn was routed to (chat / vision), not what the
+      // picker was set to. Leaving it unset means reopening the thread keeps the picker on Auto.
+      const keepBackend = isConsole || backend === 'agent';
+      const t = createThread(db, { kind: isConsole ? 'console' : 'chat', title: titleFrom(r.prompt ?? ''), agent: backend === 'agent', backend: keepBackend ? backend : null, model: r.model ?? null, ts: r.ts, legacyId: Number(r.id) });
       appendMessage(db, t.id, { role: 'user', content: r.prompt ?? '', ts: r.ts });
       appendMessage(db, t.id, { role: 'assistant', content: r.response ?? '', thinking: r.thinking ?? '', ts: r.ts, meta: backend === 'agent' ? { agent: true } : {} });
     }
+    const last = rows.length ? Number(rows[rows.length - 1].id) : upto;
+    setMeta(db, LEGACY_WATERMARK, String(Math.max(upto, last)));
   });
   return rows.length;
 }
@@ -414,8 +453,10 @@ export function pendingChunks(db: Queryable, model: string, limit = 32): { id: n
 
 export function putVec(db: Queryable, chunkId: number, model: string, vec: Float32Array): void {
   const v = normalize(vec);
-  db.prepare(`INSERT INTO memory_vecs(chunk_id,model,dim,vec) VALUES(?,?,?,?)
-    ON CONFLICT(chunk_id) DO UPDATE SET model = excluded.model, dim = excluded.dim, vec = excluded.vec`).run(chunkId, model, v.length, toBlob(v));
+  // The SELECT guard drops the write when the passage was deleted while its batch was in flight.
+  db.prepare(`INSERT INTO memory_vecs(chunk_id,model,dim,vec)
+    SELECT ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM memory_chunks WHERE id = ?)
+    ON CONFLICT(chunk_id) DO UPDATE SET model = excluded.model, dim = excluded.dim, vec = excluded.vec`).run(chunkId, model, v.length, toBlob(v), chunkId);
 }
 
 export function indexStats(db: Queryable, model: string): { chunks: number; embedded: number; threads: number; messages: number } {
@@ -458,18 +499,34 @@ export function searchVectors(db: Queryable, model: string, query: Float32Array,
   return top.slice(0, k);
 }
 
+/**
+ * Passage ids matching the text by keyword, best first.
+ * `all` (used for automatic recall when no embedding is available) demands every
+ * term and nothing fuzzier. Otherwise words are matched by prefix, and when the
+ * word index finds nothing the raw text is tried as a plain substring, which is
+ * what catches two-letter words, stop words, and fragments of longer words.
+ */
 export function searchKeywords(db: Queryable, text: string, k: number, all = false): number[] {
-  if (hasFts(db)) {
-    const q = ftsQuery(text, all);
-    if (!q) return [];
-    try {
-      return db.prepare(`SELECT rowid AS id FROM memory_fts WHERE memory_fts MATCH ? ORDER BY bm25(memory_fts) LIMIT ?`).all(q, k).map((r: any) => Number(r.id));
-    } catch { return []; }
+  const fts = hasFts(db);
+  if (fts) {
+    const q = ftsQuery(text, all, !all);
+    if (q) {
+      try {
+        const ids = db.prepare(`SELECT rowid AS id FROM memory_fts WHERE memory_fts MATCH ? ORDER BY bm25(memory_fts) LIMIT ?`).all(q, k).map((r: any) => Number(r.id));
+        if (ids.length || all) return ids;
+      } catch { if (all) return []; }
+    } else if (all) return [];
+  } else {
+    const terms = searchTerms(text, 6);
+    if (terms.length) {
+      const like = terms.map(() => `text LIKE ? ESCAPE '\\'`).join(all ? ' AND ' : ' OR ');
+      const ids = db.prepare(`SELECT id FROM memory_chunks WHERE ${like} ORDER BY id DESC LIMIT ?`).all(...terms.map(t => `%${likeEscape(t)}%`), k).map((r: any) => Number(r.id));
+      if (ids.length || all) return ids;
+    } else if (all) return [];
   }
-  const terms = searchTerms(text, 6);
-  if (!terms.length) return [];
-  const like = terms.map(() => `text LIKE ?`).join(all ? ' AND ' : ' OR ');
-  return db.prepare(`SELECT id FROM memory_chunks WHERE ${like} ORDER BY id DESC LIMIT ?`).all(...terms.map(t => `%${t}%`), k).map((r: any) => Number(r.id));
+  const raw = (text || '').trim().slice(0, 100);
+  if (raw.length < 2) return [];
+  return db.prepare(`SELECT id FROM memory_chunks WHERE text LIKE ? ESCAPE '\\' ORDER BY id DESC LIMIT ?`).all(`%${likeEscape(raw)}%`, k).map((r: any) => Number(r.id));
 }
 
 export interface SearchOpts {
@@ -539,9 +596,11 @@ export function searchThreads(db: Queryable, opts: SearchOpts & { limit?: number
   }
   // Title matches count too (a thread can be found by its name alone).
   const terms = searchTerms(opts.query, 4);
-  if (terms.length) {
-    const like = terms.map(() => `title LIKE ?`).join(' AND ');
-    const titled = db.prepare(`SELECT id FROM threads WHERE ${like} ORDER BY updated DESC LIMIT 20`).all(...terms.map(t => `%${t}%`)) as { id: string }[];
+  const raw = (opts.query || '').trim().slice(0, 100);
+  const titleNeedles = terms.length ? terms : raw.length >= 2 ? [raw] : [];
+  if (titleNeedles.length) {
+    const like = titleNeedles.map(() => `title LIKE ? ESCAPE '\\'`).join(' AND ');
+    const titled = db.prepare(`SELECT id FROM threads WHERE ${like} ORDER BY updated DESC LIMIT 20`).all(...titleNeedles.map(t => `%${likeEscape(t)}%`)) as { id: string }[];
     for (const t of titled) if (!snippet.has(t.id)) { order.push(t.id); snippet.set(t.id, ''); }
   }
   const out: ThreadRow[] = [];

@@ -25,6 +25,8 @@ export interface GuideState {
   installedModels?: string[];
   /** True when the model was handed the search_history / read_thread / list_threads tools. */
   canSearchHistory?: boolean;
+  /** False when the user's Memory setting keeps saved history away from this model (for example a cloud model). */
+  historyShared?: boolean;
   threadTitle?: string;
 }
 
@@ -46,6 +48,7 @@ CHAT TAB (where you are):
 HISTORY AND MEMORY:
 - The History tab lists every saved thread (chats, agent runs, console sessions) with the full transcript. A thread can be reopened in Chat to continue it, branched from any message, renamed, or deleted.
 - History is indexed for keyword search and, when an embedding model is pulled in Ollama, semantic search. Relevant excerpts from older threads may be attached below as RECALLED CONTEXT.
+- Settings has a Memory card that decides which models may be shown saved history: off, only models running on this PC (the default, so nothing from older chats goes to a cloud model), or any model.
 
 SETTINGS people ask about:
 - Models card: default chat, reasoning, vision, embedding, and summary models. Each picker lists installed models with what they can do (vision, tools, thinking, embedding) and exposes per-model options (thinking level, context window, temperature).
@@ -86,7 +89,9 @@ export function buildChatSystem(state: GuideState, recall: RecallHit[] = []): st
   lines.push('');
   lines.push(state.canSearchHistory
     ? 'You have tools to look things up in saved conversations: search_history, read_thread, list_threads. Use them when the user refers to something from an earlier chat that is not in this one. Do not claim to remember something you have not found.'
-    : 'You cannot search history on demand with this model; rely on the recalled context below when present, and say so plainly if something from an earlier chat is not in it.');
+    : state.historyShared === false
+      ? 'Everything in this conversation, including its earlier turns, is in front of you as usual; use it normally. What is not attached are excerpts from the user\'s OTHER saved chats: those are not shared with you in this chat (the user controls that under Settings, Memory). Only when they ask about something that was said in a different chat and appears nowhere in this one, say plainly that you cannot see it here, and that they can allow it in Settings or reopen that thread from History.'
+      : 'You cannot search history on demand with this model; rely on the recalled context below when present, and say so plainly if something from an earlier chat is not in it.');
   const block = formatRecall(recall);
   if (block) {
     lines.push('');

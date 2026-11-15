@@ -101,12 +101,59 @@ describe('memory store: threads', () => {
     expect(importLegacyHistory(db)).toBe(0); // idempotent
     const rows = listThreads(db);
     expect(rows.map(r => r.kind).sort()).toEqual(['chat', 'console']);
-    expect(rows.find(r => r.kind === 'chat')).toMatchObject({ created: 1000, messageCount: 2 });
+    expect(rows.find(r => r.kind === 'chat')).toMatchObject({ created: 1000, messageCount: 2, backend: null, model: 'llama3.2' });
+    expect(rows.find(r => r.kind === 'console')).toMatchObject({ backend: 'console:shell' });
     expect(searchMemory(db, { query: 'endofunctors' })[0].threadTitle).toBe('what is a monad');
   });
 
   it('skips the legacy import cleanly when there is no old table', () => {
     expect(importLegacyHistory(open())).toBe(0);
+  });
+
+  function withLegacy(n: number) {
+    const db = open();
+    db.exec(`CREATE TABLE history (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, backend TEXT NOT NULL, model TEXT, prompt TEXT, response TEXT, thinking TEXT, tags TEXT, meta TEXT)`);
+    const ins = db.prepare(`INSERT INTO history(ts,backend,model,prompt,response,thinking) VALUES(?,?,?,?,?,?)`);
+    for (let i = 1; i <= n; i++) ins.run(1000 * i, 'chat', 'llama3.2', `old question ${i} about walruses`, `old answer ${i}`, '');
+    return db;
+  }
+
+  it('Clear all really clears: imported history does not come back on the next launch', () => {
+    const db = withLegacy(3);
+    expect(importLegacyHistory(db)).toBe(3);
+    clearThreads(db);
+    expect(count(db, 'history')).toBe(0);            // the pre-upgrade rows are gone from disk too
+    expect(importLegacyHistory(db)).toBe(0);         // next boot
+    expect(listThreads(db)).toHaveLength(0);
+    expect(searchMemory(db, { query: 'walruses' })).toEqual([]);
+  });
+
+  it('a deleted imported thread stays deleted, including the newest one', () => {
+    const db = withLegacy(3);
+    importLegacyHistory(db);
+    const newest = listThreads(db).find(t => t.title.includes('question 3'))!;
+    deleteThread(db, newest.id);
+    expect(count(db, 'history')).toBe(2);            // its original row went with it
+    expect(importLegacyHistory(db)).toBe(0);         // next boot does not bring it back
+    expect(listThreads(db).map(t => t.title).sort()).toEqual(['old question 1 about walruses', 'old question 2 about walruses']);
+  });
+
+  it('rows written by an older build after the import are picked up exactly once', () => {
+    const db = withLegacy(2);
+    importLegacyHistory(db);
+    clearThreads(db);
+    db.prepare(`INSERT INTO history(ts,backend,model,prompt,response,thinking) VALUES(?,?,?,?,?,?)`).run(9000, 'chat', 'x', 'written after a downgrade', 'ok', '');
+    expect(importLegacyHistory(db)).toBe(1);
+    expect(importLegacyHistory(db)).toBe(0);
+    expect(listThreads(db).map(t => t.title)).toEqual(['written after a downgrade']);
+  });
+
+  it('a database imported before the watermark existed is not imported twice', () => {
+    const db = withLegacy(2);
+    importLegacyHistory(db);
+    db.exec(`DELETE FROM memory_meta`);              // as left by a build that tracked the import on the threads
+    expect(importLegacyHistory(db)).toBe(0);
+    expect(listThreads(db)).toHaveLength(2);
   });
 });
 
@@ -136,6 +183,27 @@ describe('memory store: text helpers', () => {
     const t = createThread(db);
     appendMessage(db, t.id, { role: 'user', content: 'anything' });
     expect(() => searchMemory(db, { query: '") OR * AND NOT (' })).not.toThrow();
+  });
+
+  it('prefix matching and the substring fallback find what the word index cannot', () => {
+    expect(ftsQuery('docker compose', false, true)).toBe('"docker"* OR "compose"*');
+    const db = open();
+    const t = createThread(db, { title: 'Misc notes' });
+    appendMessage(db, t.id, { role: 'user', content: 'The configuration for docker lives in the UI settings, v2 of the db schema.' });
+    appendMessage(db, t.id, { role: 'user', content: 'Progress is at 100% on file_a, unrelated otherwise.' });
+    const find = (query: string) => searchMemory(db, { query }).map(h => h.text.slice(0, 20));
+    expect(find('config')).toEqual(['The configuration fo']);       // part of a longer word
+    expect(find('dock')).toEqual(['The configuration fo']);
+    expect(find('ui')).toEqual(['The configuration fo']);           // too short for the word index
+    expect(find('v2')).toEqual(['The configuration fo']);
+    expect(find('of the')).toEqual(['The configuration fo']);       // nothing but stop words
+    expect(find('100%')).toEqual(['Progress is at 100% ']);         // % is literal, not a wildcard
+    expect(find('file_a')).toEqual(['Progress is at 100% ']);       // _ is literal too
+    expect(find('zzz')).toEqual([]);
+    expect(searchThreads(db, { query: 'ui' }).map(r => r.id)).toEqual([t.id]);
+    // automatic recall stays strict: no prefix guessing, no substring fallback
+    expect(searchMemory(db, { query: 'config', strict: true })).toEqual([]);
+    expect(searchMemory(db, { query: 'ui', strict: true })).toEqual([]);
   });
 
   it('titles are single-line and capped', () => {
@@ -233,6 +301,14 @@ describe('memory store: search', () => {
     expect(indexStats(db, 'emb')).toMatchObject({ chunks: 3, embedded: 1, threads: 2, messages: 3 });
     expect(pendingChunks(db, 'new-model')).toHaveLength(3); // old vectors are stale for a new model
     putVec(db, c1, 'new-model', vec(0, 1, 0));
+    expect(indexStats(db, 'emb').embedded).toBe(0);
+  });
+
+  it('a vector that arrives after its passage was deleted is dropped', () => {
+    const { db, cooking, c1 } = seeded();
+    deleteThread(db, cooking.id);
+    putVec(db, c1, 'emb', vec(1, 0, 0));
+    expect(count(db, 'memory_vecs')).toBe(0);
     expect(indexStats(db, 'emb').embedded).toBe(0);
   });
 

@@ -112,7 +112,7 @@ export default function App() {
       </aside>
       <main className="main">
         <UpdateNotice />
-        <ErrorBoundary key={tab}>
+        <ErrorBoundary key={tab} chat={tab === 'chat'}>
           {tab === 'chat' && <ChatTab />}
           {tab === 'library' && <LibraryTab />}
           {tab === 'console' && <ConsoleTab />}

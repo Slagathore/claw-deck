@@ -34,7 +34,7 @@ const AGENT_EXAMPLES = [
  * come back to the same thread. This component is only the view.
  */
 export default function ChatTab() {
-  const { data: s } = useSettings();
+  const { data: s, save } = useSettings();
   const consumePending = useUI(u => u.consumePending);
   const chat = useChat();
   const {
@@ -50,8 +50,8 @@ export default function ChatTab() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Models that can hold a conversation (embedding-only models are left out of the picker).
-  const chatModels = modelInfo.filter(m => m.capabilities.includes('completion') || !m.capabilities.includes('embedding'));
+  // Models that can hold a conversation (embedding and image generation models are left out of the picker).
+  const chatModels = modelInfo.filter(m => m.capabilities.includes('completion'));
   const models = chatModels.map(m => m.name);
   const optionLabel = (name: string) => {
     const info = modelInfo.find(m => m.name === name);
@@ -96,6 +96,14 @@ export default function ChatTab() {
   }, [msgs, liveContent]);
 
   const agentModel = s.reasoningModel || model || s.chatModel;
+
+  // Re-planning or running an earlier plan replaces everything after it, in the saved thread too.
+  // That is expected for the newest message; further back it needs a yes first.
+  function confirmDropAfter(i: number): boolean {
+    const later = msgs.length - (i + 1);
+    if (later <= 0) return true;
+    return window.confirm(`This replaces the ${later} later message${later === 1 ? '' : 's'} in this thread. They are removed from the saved thread as well. Continue?`);
+  }
 
   async function captureScreen() {
     const r = await window.api.screenshot.captureScreen();
@@ -200,6 +208,25 @@ export default function ChatTab() {
             {s.showThinking && m.thinking && (
               <div className="thinking"><b>thinking:</b> {m.thinking}</div>
             )}
+            {m.role === 'assistant' && m.meta?.autoHeld && (
+              <div className="label memory-note" title="Auto-approve only runs a plan on its own when nothing from outside the app (a fetched page, command output, saved history) has reached the planner, or when the plan cannot change anything.">
+                <span>⏸ Auto-approve held this plan for you to review, because outside text reached the planner in this chat.</span>
+              </div>
+            )}
+            {m.role === 'assistant' && m.meta?.recallWithheld && (
+              <div className="label memory-note">
+                <span title="Settings, Memory decides which models may be shown your saved chats.">
+                  🧠 {m.meta.recallWithheld} related excerpt{m.meta.recallWithheld === 1 ? '' : 's'} from earlier chats stayed on this PC (this model does not run locally).
+                </span>
+                {(s.memoryRecall ?? 'local') === 'local' && (
+                  <button className="link" style={{ color: 'var(--accent)', background: 'none', border: 'none', padding: 0, cursor: 'pointer', textDecoration: 'underline', fontSize: 11 }}
+                    onClick={() => save({ memoryRecall: 'all' })}
+                    title="Let cloud models be shown related excerpts of your saved chats, and search them, from now on. You can change it back in Settings, Memory.">
+                    Allow for cloud models
+                  </button>
+                )}
+              </div>
+            )}
             {m.role === 'assistant' && (m.meta?.recalled || m.meta?.tools?.length) && (
               <div className="label memory-note">
                 {m.meta?.recalled ? (
@@ -218,18 +245,18 @@ export default function ChatTab() {
                 plan={m.parsed.plan}
                 runs={runs}
                 isRunning={runningPlan === i}
-                onRun={() => runPlan(i, m.parsed!.plan!)}
+                onRun={() => { if (confirmDropAfter(i)) runPlan(i, m.parsed!.plan!); }}
               />
             )}
             {m.parsed && !m.parsed.ok && m.role === 'assistant' && m.parsed.intent === 'malformed' && (
               <div className="banner warn" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ flex: 1 }}>Couldn't parse a plan: {m.parsed.error}</span>
-                <button onClick={() => retryAsPlan(i)} disabled={busy}>↻ Retry as plan</button>
+                <button onClick={() => { if (confirmDropAfter(i)) retryAsPlan(i); }} disabled={busy}>↻ Retry as plan</button>
               </div>
             )}
             {m.parsed && !m.parsed.ok && m.role === 'assistant' && m.parsed.intent === 'explanation' && (
               <div className="row" style={{ marginTop: 4, justifyContent: 'flex-end' }}>
-                <button onClick={() => retryAsPlan(i)} disabled={busy} title="Ask the model to redo this as an executable plan">⚡ Turn this into a plan</button>
+                <button onClick={() => { if (confirmDropAfter(i)) retryAsPlan(i); }} disabled={busy} title="Ask the model to redo this as an executable plan">⚡ Turn this into a plan</button>
               </div>
             )}
           </div>

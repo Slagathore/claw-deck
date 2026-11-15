@@ -28,8 +28,15 @@ export const ATLAS_EMBED_DIM = 768;
 
 const has = (m: ModelInfo, c: ModelCapability) => m.capabilities.includes(c);
 
+/** Why a model with no text completion cannot fill a chat-type slot. */
+function whyNoChat(m: ModelInfo): string {
+  if (has(m, 'embedding')) return 'Embedding model, cannot chat.';
+  if (has(m, 'image')) return 'Image generation model, cannot chat.';
+  return 'Does not do text chat.';
+}
+
 export function slotFit(m: ModelInfo, slot: ModelSlot): SlotFit {
-  const embedOnly = has(m, 'embedding') && !has(m, 'completion');
+  const noChat = !has(m, 'completion');
   switch (slot) {
     case 'embed':
       if (!has(m, 'embedding')) return { fit: 'bad', why: 'Not an embedding model.' };
@@ -38,16 +45,16 @@ export function slotFit(m: ModelInfo, slot: ModelSlot): SlotFit {
       }
       return { fit: 'good', why: m.embeddingLength ? `${m.embeddingLength}-dim embeddings.` : 'Embedding model.' };
     case 'vision':
-      if (embedOnly) return { fit: 'bad', why: 'Embedding model, cannot chat.' };
+      if (noChat) return { fit: 'bad', why: whyNoChat(m) };
       return has(m, 'vision') ? { fit: 'good', why: 'Reads images.' } : { fit: 'bad', why: 'Cannot read images.' };
     case 'reasoning':
-      if (embedOnly) return { fit: 'bad', why: 'Embedding model, cannot chat.' };
+      if (noChat) return { fit: 'bad', why: whyNoChat(m) };
       return has(m, 'thinking')
         ? { fit: 'good', why: 'Has a thinking mode.' }
         : { fit: 'ok', why: 'No separate thinking mode; it will answer directly.' };
     case 'chat':
     case 'summary':
-      if (embedOnly) return { fit: 'bad', why: 'Embedding model, cannot chat.' };
+      if (noChat) return { fit: 'bad', why: whyNoChat(m) };
       return { fit: 'good', why: has(m, 'tools') ? 'Chat model with tool calling (can search history on demand).' : 'Chat model.' };
   }
 }
@@ -74,7 +81,7 @@ export function formatContext(n?: number): string {
 }
 
 const CAP_LABEL: Record<ModelCapability, string> = {
-  completion: 'chat', vision: 'vision', tools: 'tools', thinking: 'thinking', embedding: 'embedding'
+  completion: 'chat', vision: 'vision', tools: 'tools', thinking: 'thinking', embedding: 'embedding', image: 'image generation'
 };
 
 /** Capability words worth showing (plain "chat" is implied unless it is all the model does). */
@@ -101,10 +108,20 @@ export function findModel(models: ModelInfo[], name?: string | null): ModelInfo 
     ?? models.find(m => m.name === `${name}:latest` || `${m.name}:latest` === name);
 }
 
+/** Per-model options, found whether the setting says "llama3.2" or "llama3.2:latest". */
+export function paramsFor(model: string, info: ModelInfo | undefined, params: Record<string, ModelParams> | undefined): ModelParams {
+  if (!params) return {};
+  return params[model]
+    ?? (info ? params[info.name] : undefined)
+    ?? params[`${model}:latest`]
+    ?? (model.endsWith(':latest') ? params[model.slice(0, -':latest'.length)] : undefined)
+    ?? {};
+}
+
 export interface ResolvedParams {
   think?: Exclude<ThinkLevel, false>;
   options: Record<string, number>;
-  /** Whether to offer the history-search tools to this model. */
+  /** Whether this model supports tool calling (needed for the history-search tools). */
   tools: boolean;
 }
 
@@ -115,7 +132,7 @@ export interface ResolvedParams {
  * unknown (not installed, daemon unreachable) the global setting is passed through.
  */
 export function resolveParams(model: string, info: ModelInfo | undefined, globalThink: ThinkLevel | undefined, params: Record<string, ModelParams> | undefined): ResolvedParams {
-  const p = params?.[model] ?? {};
+  const p = paramsFor(model, info, params);
   const wanted = p.think !== undefined ? p.think : globalThink;
   const canThink = info ? has(info, 'thinking') : true;
   const options: Record<string, number> = {};
@@ -130,11 +147,46 @@ export function resolveParams(model: string, info: ModelInfo | undefined, global
   };
 }
 
-/** Rough character budget for the conversation sent to a model. */
+/**
+ * Upper bound, in characters, on the conversation re-sent to a model each turn.
+ *
+ * It is sized to the most the model could ever take (its own maximum window, or
+ * the window the user set for it here), not to Ollama's default window: a window
+ * raised outside this app (OLLAMA_CONTEXT_LENGTH, a Modelfile) must keep working,
+ * and when the real window is smaller Ollama trims the oldest turns itself, as it
+ * always has. The bound exists so a thread that has grown for months is not sent
+ * whole on every message.
+ */
 export function contextBudgetChars(model: string, info: ModelInfo | undefined, params: Record<string, ModelParams> | undefined): number {
-  const set = params?.[model]?.num_ctx;
-  // Local models run at Ollama's default window unless num_ctx is set; assume a modest one.
-  const tokens = info?.cloud ? (info.contextLength ?? 32000) : (set ?? 8192);
-  // ~3 chars per token, and leave 40% for the system prompt, recall, and the reply.
-  return Math.max(8000, Math.min(240_000, Math.floor(tokens * 3 * 0.6)));
+  const set = info?.cloud ? undefined : paramsFor(model, info, params).num_ctx;
+  const tokens = set || info?.contextLength || 131072;
+  // ~3 chars per token, leaving a fifth for the system prompt, recalled history, and the reply.
+  return Math.max(24_000, Math.min(3_000_000, Math.floor(tokens * 3 * 0.8)));
+}
+
+// ---- where a model runs, and whether saved history may be shared with it ----
+
+/** How much of the saved history a model may be given. */
+export type RecallPolicy = 'off' | 'local' | 'all';
+
+const CLOUD_TAG = /(:|-)cloud$/i;
+
+export function isLocalUrl(url?: string | null): boolean {
+  if (!url) return false;
+  try {
+    const host = new URL(url).hostname.replace(/^\[|\]$/g, '');
+    return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '0.0.0.0';
+  } catch { return false; }
+}
+
+/** True when a request to this model stays on this machine: a local endpoint and not a cloud-served model. */
+export function runsLocally(model: string, info: ModelInfo | undefined, baseUrl?: string | null): boolean {
+  if (!isLocalUrl(baseUrl)) return false;
+  return !(info ? info.cloud : CLOUD_TAG.test(model));
+}
+
+/** Whether excerpts of other saved conversations may be put in front of a model. */
+export function mayShareHistory(policy: RecallPolicy | undefined, local: boolean): boolean {
+  const p = policy ?? 'local';
+  return p === 'all' || (p === 'local' && local);
 }

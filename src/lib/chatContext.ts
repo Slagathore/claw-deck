@@ -15,7 +15,10 @@ export function fitContext<T extends CtxMsg>(msgs: T[], maxChars: number): { kep
     used += len;
     start = i;
   }
-  // Do not open on an assistant turn: a reply with no question in front of it reads as noise.
-  while (start < msgs.length - 1 && msgs[start].role === 'assistant') start++;
+  // Prefer not to open on an assistant turn (a reply with no question in front of it reads as
+  // noise), but never at the price of sending the newest message with nothing before it.
+  let from = start;
+  while (from < msgs.length - 1 && msgs[from].role === 'assistant') from++;
+  if (from < msgs.length - 1) start = from;
   return { kept: msgs.slice(start), dropped: start };
 }

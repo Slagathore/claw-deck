@@ -85,6 +85,26 @@ export default function SettingsTab() {
       </div>
 
       <div className="card col">
+        <h3 style={{ margin: 0 }}>Memory</h3>
+        <div className="label">
+          Every chat is saved and indexed on this PC. When you ask something, related excerpts from your other chats can be handed to the model, and models with tool calling can search your saved chats on their own. This decides which models are allowed that. The chat you are in is always sent to the model answering it.
+        </div>
+        <label>
+          Share saved chats with{' '}
+          <select value={draft.memoryRecall ?? 'local'} onChange={e => set('memoryRecall', e.target.value)} style={{ marginLeft: 4 }}>
+            <option value="local">models running on this PC only</option>
+            <option value="all">any model, including cloud models</option>
+            <option value="off">no model (recall off)</option>
+          </select>
+        </label>
+        <div className="label">
+          {(draft.memoryRecall ?? 'local') === 'local' && 'Default. With a cloud model (a name ending in cloud) nothing from your other chats leaves this PC; the reply shows when related history was held back.'}
+          {draft.memoryRecall === 'all' && 'Cloud models are sent related excerpts of your other chats and can search them, console sessions included when they search. Only pick this if you are fine with that text going to the model provider.'}
+          {draft.memoryRecall === 'off' && 'Chats are still saved and searchable in History, but no model is shown anything from another chat.'}
+        </div>
+      </div>
+
+      <div className="card col">
         <h3 style={{ margin: 0 }}>CLIs</h3>
         <div className="row">
           <input value={draft.openclawPath ?? ''} onChange={e => set('openclawPath', e.target.value)} placeholder="Path to openclaw binary" style={{ flex: 1 }} />

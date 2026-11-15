@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   type ModelInfo, type ModelParams, type ModelSlot, type ThinkLevel,
-  capLabels, describeModel, findModel, formatContext, slotFit, sortForSlot
+  capLabels, describeModel, findModel, formatContext, paramsFor, slotFit, sortForSlot
 } from '../lib/modelSlots';
 
 interface Props {
@@ -36,13 +36,15 @@ export default function ModelSelect({ slot, label, hint, value, onChange, models
   const unsuited = sorted.filter(m => slotFit(m, slot).fit === 'bad');
   const fit = info ? slotFit(info, slot) : null;
 
-  const p = params?.[value] ?? {};
+  const p = paramsFor(value, info, params);
   function setParam(patch: Partial<ModelParams>) {
     if (!onParams || !value) return;
     const next: ModelParams = { ...p, ...patch };
     (Object.keys(next) as (keyof ModelParams)[]).forEach(k => { if (next[k] === undefined || (next[k] as any) === '') delete next[k]; });
     const all = { ...(params ?? {}) };
-    if (Object.keys(next).length) all[value] = next; else delete all[value];
+    // Keep one entry per model: reuse the key that already holds this model's options, if any.
+    const key = [value, info?.name, `${value}:latest`].find(k => k && all[k]) ?? value;
+    if (Object.keys(next).length) all[key] = next; else delete all[key];
     onParams(all);
   }
 
@@ -74,7 +76,7 @@ export default function ModelSelect({ slot, label, hint, value, onChange, models
           </select>
         ) : (
           <>
-            <input value={value} onChange={e => onChange(e.target.value)} placeholder="model tag, e.g. llama3.2" style={{ flex: 1 }} />
+            <input value={value} onChange={e => { setCustom(true); onChange(e.target.value); }} placeholder="model tag, e.g. llama3.2" style={{ flex: 1 }} />
             {models.length > 0 && (
               <button onClick={() => { setCustom(false); if (!findModel(models, value)) onChange(suited[0]?.name ?? ''); }} title="Choose from the models installed in Ollama">
                 Pick installed

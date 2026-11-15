@@ -46,6 +46,15 @@ export interface ParsedPlan {
   intent?: 'explanation' | 'malformed' | 'valid';
 }
 
+/** Small models often emit `"args": "--version"` instead of an array. Accept both;
+ *  anything else is dropped, so a saved plan can never crash the view that renders it. */
+function toStringArray(v: unknown): string[] | undefined {
+  if (v == null) return undefined;
+  if (Array.isArray(v)) return v.map(x => String(x));
+  if (typeof v === 'string') return (v.match(/(?:[^\s"]+|"[^"]*")+/g) ?? []).map(x => x.replace(/^"|"$/g, ''));
+  return undefined;
+}
+
 const STEP_TYPES = new Set([
   'pullModel', 'setSetting', 'addMcpServer', 'shell', 'openTab', 'webFetch', 'searchHistory', 'note'
 ]);
@@ -172,10 +181,18 @@ export function parsePlan(text: string): ParsedPlan {
       case 'searchHistory': if (typeof s.query !== 'string' || !s.query) return { ok: false, intent: 'malformed', error: `Step ${i} searchHistory.query missing`, raw: json }; break;
       case 'note':         if (typeof s.text !== 'string') return { ok: false, intent: 'malformed', error: `Step ${i} note.text missing`, raw: json }; break;
     }
+    if (s.type === 'shell' || s.type === 'addMcpServer') {
+      const args = toStringArray(s.args);
+      if (args) s.args = args; else delete s.args;
+      if (s.env != null && (typeof s.env !== 'object' || Array.isArray(s.env))) delete s.env;
+      if (s.cwd != null && typeof s.cwd !== 'string') delete s.cwd;
+    }
     steps.push(s as PlanStep);
   }
   return { ok: true, intent: 'valid', plan: { summary: obj.summary, steps }, raw: json };
 }
+
+const argText = (args: unknown): string => Array.isArray(args) ? args.join(' ') : '';
 
 /**
  * One-line human label for a step, used in the plan preview UI.
@@ -184,8 +201,8 @@ export function describeStep(s: PlanStep): string {
   switch (s.type) {
     case 'pullModel':    return `Pull Ollama model: ${s.model}`;
     case 'setSetting':   return `Set setting "${s.key}" → ${JSON.stringify(s.value)}`;
-    case 'addMcpServer': return `Add MCP server "${s.name}" (${s.command} ${(s.args ?? []).join(' ')})`;
-    case 'shell':        return `Run shell: ${s.command}${s.args && s.args.length ? ' ' + s.args.join(' ') : ''}${s.cwd ? ` (cwd: ${s.cwd})` : ''}`;
+    case 'addMcpServer': return `Add MCP server "${s.name}" (${s.command} ${argText(s.args)})`;
+    case 'shell':        return `Run shell: ${s.command}${argText(s.args) ? ' ' + argText(s.args) : ''}${s.cwd ? ` (cwd: ${s.cwd})` : ''}`;
     case 'openTab':      return `Open tab: ${s.tab}`;
     case 'webFetch':     return `Fetch URL: ${s.url}`;
     case 'searchHistory': return `Search saved conversations: ${s.query}`;
